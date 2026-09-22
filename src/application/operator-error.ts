@@ -15,6 +15,7 @@ export type OperatorErrorCode =
   | "invalid_manifest"
   | "manifest_outdated"
   | "format_mismatch"
+  | "untrusted"
   | "operation_failed";
 
 export interface OperatorFailure {
