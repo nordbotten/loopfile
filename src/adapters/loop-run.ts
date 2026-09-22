@@ -17,6 +17,7 @@ import type { LoopStatus } from "../domain/status.ts";
 import { loadDirectory } from "./directory-loader.ts";
 import { type EventLog, type NewEvent, openEventLog } from "./event-log.ts";
 import { type StartRunOptions, type StartRunResult, startRun } from "./launch-command.ts";
+import { programIdentity } from "./program-identity.ts";
 import { loopPaths, newRunId, runPaths } from "./run-directory.ts";
 import { pingOwner } from "./run-owner.ts";
 
@@ -122,6 +123,18 @@ async function driveLoop(
       continue;
     }
     if (action.kind === "end") return await appendEnd(log, history, statusPath, action);
+
+    const currentProgram = await programIdentity(deps.cli);
+    if (
+      currentProgram.version !== created.program.version ||
+      currentProgram.digest !== created.program.digest
+    ) {
+      return await appendEnd(log, history, statusPath, {
+        kind: "end",
+        reason: "program_changed",
+        detail: `loopfile changed from ${created.program.version} to ${currentProgram.version}`,
+      });
+    }
 
     const runId = newRunId();
     const index = status.runs + 1;

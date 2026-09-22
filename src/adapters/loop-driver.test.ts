@@ -11,6 +11,7 @@ import type { LoopEvent } from "../domain/events.ts";
 import { materializeDirectory } from "./directory-loader.ts";
 import { openEventLog } from "./event-log.ts";
 import { runLoop } from "./loop-run.ts";
+import { programIdentity } from "./program-identity.ts";
 import { loopPaths, runPaths } from "./run-directory.ts";
 
 const run = promisify(execFile);
@@ -61,7 +62,7 @@ async function setup(
     retry: 0,
     maxRuns: null,
     pauseMs: null,
-    program: { version: "test", digest: "test" },
+    program: await programIdentity(cli),
   });
   await log.close();
   return { env: { ...process.env, ...gitEnv, LOOPFILE_HOME: home }, home, loopId };
