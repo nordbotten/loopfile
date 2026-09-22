@@ -49,6 +49,60 @@ test("starts the next run after a completed child", () => {
   });
 });
 
+test("starts next runs from the command result and resolves defaults", () => {
+  const next: LoopStatus = {
+    ...status,
+    source: { kind: "next", command: "next-input" },
+    fixedInputs: { project: "loopfile" },
+    place: null,
+  };
+  const source = { kind: "next" as const, command: "next-input" };
+  assert.deepEqual(
+    nextLoopAction(
+      next,
+      { state: "none" },
+      source,
+      { kind: "output", result: { ok: true, inputs: { issue: "41" } } },
+      {
+        inputs: { project: "The project", issue: "The issue number", optional: "Optional" },
+        inputDefaults: { optional: "yes" },
+      },
+    ),
+    {
+      kind: "start",
+      inputSet: { project: "loopfile", issue: "41", optional: "yes" },
+      sourceIndex: null,
+    },
+  );
+});
+
+test("ends a next loop when its command result is bad", () => {
+  const next: LoopStatus = {
+    ...status,
+    source: { kind: "next", command: "next-input" },
+    place: null,
+  };
+  const source = { kind: "next" as const, command: "next-input" };
+  assert.deepEqual(
+    nextLoopAction(
+      next,
+      { state: "none" },
+      source,
+      { kind: "output", result: { ok: false, messages: ['input "issue" is not a string'] } },
+      { inputs: { issue: "The issue number" } },
+    ),
+    {
+      kind: "end",
+      reason: "source_failed",
+      detail: 'input "issue" is not a string',
+    },
+  );
+  assert.deepEqual(
+    nextLoopAction(next, { state: "none" }, source, { kind: "empty" }, { inputs: {} }),
+    { kind: "end", reason: "source_empty" },
+  );
+});
+
 test("starts list runs with the source set merged into fixed inputs", () => {
   const list: LoopStatus = { ...status, source: { kind: "list", count: 2 }, place: 0 };
   assert.deepEqual(
