@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -85,6 +85,16 @@ async function waitForEnd(home: string, loopId: string): Promise<readonly LoopEv
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
   throw new Error("the loop did not end");
+}
+
+async function waitForRunStart(home: string, loopId: string): Promise<void> {
+  const path = loopPaths(home, loopId).events;
+  for (let tries = 0; tries < 800; tries += 1) {
+    const events = parseEventLog<LoopEvent>(await readFile(path, "utf8").catch(() => ""));
+    if (events.some((event) => event.type === "loop.run_started")) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error("the first loop run did not start");
 }
 
 async function killLoopOwner(home: string, loopId: string): Promise<void> {
@@ -350,6 +360,44 @@ steps:
     assert.equal(loopStatus(events).endReason, "source_failed");
     assert.equal(loopStatus(events).detail, 'input "n" is not a string');
   } finally {
+    await rm(setupResult.root, { recursive: true, force: true });
+  }
+});
+
+test("a changed CLI ends a loop before its second run", async () => {
+  const setupResult = await setup(
+    "formatVersion: 1\nsteps:\n  - id: work\n    kind: command\n    run: sleep 0.3\n",
+  );
+  const cliCopy = join(dirname(cli), `.cli-copy-${process.pid}-${Date.now()}.ts`);
+  await copyFile(cli, cliCopy);
+  try {
+    const captured = io();
+    const code = await loopCommand(
+      ["loop", setupResult.source, "--times", "2", "-d"],
+      cliCopy,
+      captured.value,
+      setupResult.env,
+      { repository: setupResult.repo, pollMs: 10 },
+    );
+    assert.equal(code, 0, captured.errors());
+    const loopId = captured.output().trim();
+    await waitForRunStart(setupResult.home, loopId);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const changed = await readFile(cliCopy);
+    changed[changed.length - 1] = 0x20;
+    await writeFile(cliCopy, changed);
+
+    const events = await waitForEnd(setupResult.home, loopId);
+    const ended = events.at(-1);
+    assert.equal(ended?.type, "loop.ended");
+    assert.equal(ended?.type === "loop.ended" ? ended.reason : undefined, "program_changed");
+    assert.equal(
+      ended?.type === "loop.ended" ? ended.detail : undefined,
+      "loopfile changed from 0.1.0 to 0.1.0",
+    );
+    assert.equal(events.filter((event) => event.type === "loop.run_started").length, 1);
+  } finally {
+    await rm(cliCopy, { force: true });
     await rm(setupResult.root, { recursive: true, force: true });
   }
 });
