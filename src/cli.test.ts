@@ -179,6 +179,22 @@ test("outside an attempt the help does not list step commands", () => {
   assert.match(output, /Options:/);
 });
 
+test("inside an attempt the help explains that the first outcome is final", async () => {
+  const inside = run(["--help"], ATTEMPT);
+  assert.match(inside.output, /first reported outcome is final for the attempt/);
+
+  const resultHelp = run(["result", "--help"], ATTEMPT);
+  assert.equal(await resultHelp.code, 0);
+  assert.equal(resultHelp.output, "");
+  assert.match(resultHelp.errors, /first reported outcome is final for the attempt/);
+
+  const outside = run(["--help"]);
+  assert.doesNotMatch(outside.output, /first reported outcome is final for the attempt/);
+  const operatorResultHelp = run(["result", "--help"]);
+  assert.equal(await operatorResultHelp.code, 0);
+  assert.doesNotMatch(operatorResultHelp.output, /first reported outcome is final for the attempt/);
+});
+
 test("inside an attempt the help lists step commands next to the same options", () => {
   const { output } = run(["--help"], ATTEMPT);
   assert.match(output, /Step commands/);

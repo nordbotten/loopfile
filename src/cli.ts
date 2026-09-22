@@ -29,7 +29,7 @@ import { unpackCommand } from "./adapters/unpack-command.ts";
 import { terminalUpgradeIo, upgradeCommand } from "./adapters/upgrade-command.ts";
 import { parseDataGetKey } from "./application/data-get.ts";
 import { parseDataAppendArgs, parseDataPutArgs } from "./application/data-put.ts";
-import { MESSAGE_LIMIT_BYTES, parseResultArgs } from "./application/result.ts";
+import { MESSAGE_LIMIT_BYTES, parseResultArgs, STEP_RESULT_HELP } from "./application/result.ts";
 import {
   renderStep,
   requireEndpoint,
@@ -314,6 +314,11 @@ function stepResultCommand(
   err: (text: string) => void,
   env: Record<string, string | undefined>,
 ): number | Promise<number> {
+  if (argv.includes("--help")) {
+    err(STEP_RESULT_HELP);
+    return 0;
+  }
+
   const blocked = requireEndpoint("result", env.LOOPFILE_ENDPOINT);
   if (blocked) return finishStep(renderStep(blocked), err);
 

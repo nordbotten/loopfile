@@ -1,3 +1,5 @@
+import { RESULT_FINALITY } from "./result.ts";
+
 /**
  * What a step command prints, and the exit code that goes with it (#83).
  *
@@ -105,7 +107,7 @@ export function stepCommandHelp(endpoint: string | undefined): string {
   const lines = STEP_COMMANDS.map(
     (command) => `  ${command.usage.padEnd(width + 2)}${command.summary}`,
   );
-  return `\nStep commands (inside an attempt only):\n${lines.join("\n")}\n`;
+  return `\nStep commands (inside an attempt only):\n${lines.join("\n")}\nFor loopfile result, the ${RESULT_FINALITY}.\n`;
 }
 
 /**
