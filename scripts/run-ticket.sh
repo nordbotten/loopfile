@@ -53,8 +53,10 @@ done
 # every issue in its "## Blocked by" section closed.
 pick() {
   local n body blocker
-  for n in $(gh issue list --label ready-for-agent --state open --search no:assignee \
-    --json number --limit 200 -q '.[].number' | sort -n); do
+  # Not --search no:assignee: the search index lags, so a loop that picks just
+  # after another would still see the issue as free.
+  for n in $(gh issue list --label ready-for-agent --state open --json number,assignees \
+    --limit 200 -q '.[] | select(.assignees == []) | .number' | sort -n); do
     [ -z "$(gh issue view "$n" --json closedByPullRequestsReferences \
       -q '.closedByPullRequestsReferences[] | select(.state == "OPEN") | .number')" ] || continue
     body=$(gh issue view "$n" --json body -q .body)
