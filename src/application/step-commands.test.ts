@@ -103,7 +103,8 @@ test("the help block lists every step command against its summary", () => {
       "  result <outcome> [--message <text>]  Report this step's outcome\n" +
       "  data get <key>                       Read a data key. Raw bytes on stdout\n" +
       "  data put <key> <file|->              Publish a data key from a file\n" +
-      "  data append <key> <value>            Add a value to a data key's history\n",
+      "  data append <key> <value>            Add a value to a data key's history\n" +
+      "For loopfile result, the first reported outcome is final for the attempt.\n",
   );
 });
 

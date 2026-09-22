@@ -13,6 +13,14 @@ import type { RunEvent } from "../domain/events.ts";
 import type { AttemptId, Outcome } from "../domain/model.ts";
 import type { StepFailure, StepReport } from "./step-commands.ts";
 
+/** Help shared by the step command index and `loopfile result --help`. */
+export const RESULT_FINALITY = "first reported outcome is final for the attempt";
+
+export const STEP_RESULT_HELP = `Usage: loopfile result <outcome> [--message <text>]
+
+Report this step's outcome. The ${RESULT_FINALITY}.
+`;
+
 /** A `--message` longer than this is cut on a UTF-8 boundary (#85). */
 export const MESSAGE_LIMIT_BYTES = 500;
 
