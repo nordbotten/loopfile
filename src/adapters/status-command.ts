@@ -12,6 +12,7 @@
  */
 
 import { createInterface } from "node:readline/promises";
+import { notTerminalMessage } from "../application/monitor.ts";
 import { type OperatorFailure, renderOperatorFailure } from "../application/operator-error.ts";
 import { NO_RUNS_MESSAGE } from "../application/run-list.ts";
 import {
@@ -25,7 +26,6 @@ import {
   unreadableStatusMessage,
 } from "../application/status-view.ts";
 import { unknownRunMessage } from "../application/tail.ts";
-import { notTerminalMessage } from "../application/monitor.ts";
 import { attachMonitor, hasTerminal, type MonitorIo, type MonitorOptions } from "./monitor.ts";
 import { loopfileHome, pathExists, runPaths } from "./run-directory.ts";
 import {

@@ -13,6 +13,7 @@ import { executeRun } from "./workflow-run.ts";
 
 const run = promisify(execFile);
 const TICKET = fileURLToPath(new URL("../../loops/ticket", import.meta.url));
+const CLI = fileURLToPath(new URL("../cli.ts", import.meta.url));
 const TASK = "#273 Fix the fixer prompt";
 const root = await realpath(await mkdtemp(join(tmpdir(), "loopfile-ticket-")));
 after(() => rm(root, { recursive: true, force: true }));
@@ -29,6 +30,14 @@ const gitEnv = {
 async function executable(path: string, body: string): Promise<void> {
   await writeFile(path, `#!/bin/sh\n${body}`);
   await chmod(path, 0o755);
+}
+
+/** The `loopfile` under test, so a step's `loopfile data get` needs no global install. */
+async function loopfileCommand(bin: string): Promise<void> {
+  await executable(
+    join(bin, "loopfile"),
+    `exec ${JSON.stringify(process.execPath)} ${JSON.stringify(CLI)} "$@"\n`,
+  );
 }
 
 /** A repository with one commit and a bare origin. */
@@ -87,6 +96,7 @@ test("the ticket fixer prompt names its sender and only earlier feedback", async
   const ghCount = join(root, "gh-count");
   const pr = join(root, "pr");
   await mkdir(bin);
+  await loopfileCommand(bin);
   await gitRepo(repo, bare);
   await executable(
     join(bin, "npm"),
@@ -193,6 +203,7 @@ test("the ticket Loopfile ships without CI when ci is no", async () => {
   const home = join(dir, "home");
   const runId = "20260921-120000-no-ci";
   await mkdir(bin, { recursive: true });
+  await loopfileCommand(bin);
   await gitRepo(repo, join(dir, "origin.git"));
   await executable(join(bin, "npm"), "exit 0\n");
   await executable(

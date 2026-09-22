@@ -134,9 +134,7 @@ export function projectStatus(
   };
 }
 
-function loopFields(
-  event: RunEvent | undefined,
-): Pick<StatusProjection, "loopId" | "loopIndex"> {
+function loopFields(event: RunEvent | undefined): Pick<StatusProjection, "loopId" | "loopIndex"> {
   if (event?.type !== "run.created") return { loopId: null, loopIndex: null };
   return { loopId: event.loopId ?? null, loopIndex: event.loopIndex ?? null };
 }

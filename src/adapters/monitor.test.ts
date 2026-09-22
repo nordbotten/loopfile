@@ -171,7 +171,7 @@ test("each frame is written with auto-wrap off, so a long line cannot push the r
   assert.equal(await within(result, 500), 0);
   const frames = t.written().split("\x1b[?7l").slice(1);
   assert.ok(frames.length > 1);
-  for (const frame of frames) assert.match(frame, /d detach · run continues\n\x1b\[\?7h/);
+  for (const frame of frames) assert.ok(frame.includes("d detach · run continues\n\x1b[?7h"));
   await owner.close();
 });
 
