@@ -30,6 +30,14 @@ CI failed on the pull request:
 
 {{ $run.previous.data.ship.ci }}
 {{/if}}
+{{#if $run.previous.data.ship.conflict}}
+
+Merging `origin/main` into this branch stopped on a conflict. The merge is still in
+progress. Resolve each conflicted file so that both sides keep working, then commit
+the merge:
+
+{{ $run.previous.data.ship.conflict }}
+{{/if}}
 {{/if}}
 
 ## Feedback you already handled
