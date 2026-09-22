@@ -5,40 +5,77 @@ on:
     branches: [main]
   pull_request:
 
-# Two self-hosted runners serve the whole repository, so a superseded run gives
-# its runner up rather than making the next one wait.
+permissions:
+  contents: read
+
+# A newer push to a PR makes its older run useless, so that run is cancelled.
+# A push to main is never cancelled, so every commit on main gets a result.
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  # Its own job because it runs test files once per mutant. Everything else in
-  # this workflow is meant to answer in seconds. It is first, so the longest job
-  # gets one of the 2 self-hosted runners first.
-  mutation:
-    # Temporary: skipped on a push to main to save runner time.
-    if: github.event_name == 'pull_request'
+  # Docs-only changes skip the other jobs. paths-ignore would leave the required
+  # checks pending forever; a skipped job counts as passed.
+  changes:
     runs-on: [ubuntu-latest]
+    timeout-minutes: 5
+    outputs:
+      code: ${{ steps.diff.outputs.code }}
     steps:
-      # Mutates only the files changed since main, so it needs main's history.
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           fetch-depth: 0
-      - uses: actions/setup-node@v5
+          persist-credentials: false
+      - id: diff
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          if [ "$EVENT" = pull_request ]; then base="origin/$BASE_REF"; else base="$BEFORE"; fi
+          # No usable base (new branch, force push): treat it as a code change.
+          code=true
+          if [ -n "${base//0/}" ] && files=$(git diff --name-only "$base"...HEAD); then
+            if [ -n "$files" ] && ! grep -qvE '\.md$|^docs/' <<<"$files"; then code=false; fi
+          fi
+          echo "code=$code" | tee -a "$GITHUB_OUTPUT"
+
+  # Its own job because it runs test files once per mutant. Everything else in
+  # this workflow is meant to answer in seconds.
+  mutation:
+    needs: changes
+    # It compares the branch with its base, so after a merge it has nothing to
+    # check. It gates the PR.
+    if: github.event_name == 'pull_request' && needs.changes.outputs.code == 'true'
+    runs-on: [ubuntu-latest]
+    timeout-minutes: 45
+    steps:
+      # Mutates only the files changed since main, so it needs main's history.
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: 24
-          package-manager-cache: false
+          cache: npm
       - run: npm ci
       - run: npm run quality:mutation
 
   check:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: [ubuntu-latest]
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: 24
-          package-manager-cache: false
+          cache: npm
       - run: npm ci
       - run: npm run build
       - run: npm run typecheck
@@ -48,17 +85,21 @@ jobs:
   # The ratchet compares this branch's bars with the ones on the base, so this
   # job needs history that the default shallow checkout does not fetch.
   gate:
-    # Temporary: skipped on a push to main to save runner time.
-    if: github.event_name == 'pull_request'
+    needs: changes
+    # It compares the branch with its base, so after a merge it has nothing to
+    # check. It gates the PR.
+    if: github.event_name == 'pull_request' && needs.changes.outputs.code == 'true'
     runs-on: [ubuntu-latest]
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           fetch-depth: 0
-      - uses: actions/setup-node@v5
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: 24
-          package-manager-cache: false
+          cache: npm
       - run: npm ci
       - run: npm run quality:ratchet
       - run: npm run gate
