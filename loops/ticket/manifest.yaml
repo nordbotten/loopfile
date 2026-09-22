@@ -48,7 +48,9 @@ steps:
     kind: command
     run: |
       log="$LOOPFILE_SCRATCH/test.log"
-      if npm run gate:quiet > "$log" 2>&1 && npm run quality:mutation >> "$log" 2>&1; then
+      # Loops run side by side on a shared machine, so stay low and use few cores.
+      if nice -n 10 npm run gate:quiet > "$log" 2>&1 &&
+        nice -n 10 npm run quality:mutation -- --concurrency 4 >> "$log" 2>&1; then
         outcome=passed
       else
         outcome=failed
