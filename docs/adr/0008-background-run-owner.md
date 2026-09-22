@@ -2,6 +2,10 @@
 
 Every run, attached or detached, is carried out by a run owner process that the CLI starts in its own session. The CLI only checks the input, starts the run owner and, in attached mode, shows the monitor. The run owner listens on a control socket, and that socket is how other processes know it is alive, how cancel reaches it, and how two run owners are kept off one run. We picked this so `d` in the monitor only stops the client, and so a reused pid can never make a dead run look alive. Daemon and server mode stay outside the MVP.
 
+## Loop owner
+
+A loop has the same background-owner model as a run. The CLI performs the Loopfile and fixed-input checks, makes `loops/<loopid>/`, materializes the Loopfile, writes `loop.created`, and starts the owner in its own session. The loop owner writes `owner.started`, listens on its own `loops/<loopid>/owner.sock`, and runs the loop driver. It is the only writer after the initial `loop.created` event, and its socket answers the ready handshake and ping with the loop ID.
+
 ## Decisions
 
 - **One process model:** `loopfile <source>` and `loopfile <source> -d` start the run owner the same way. Without `-d` the CLI then attaches the monitor. `d` exits the monitor and nothing else, and `Ctrl+C` in the monitor does the same. Closing the terminal stops only the monitor. `loopfile resume <runid>` starts the run owner by the same rule: it attaches the monitor unless `-d` is given.

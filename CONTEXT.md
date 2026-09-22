@@ -141,6 +141,9 @@ _Avoid_: State file, history
 **Run owner**:
 The one process that carries out a run's steps and the only one that writes its event log. It runs in the background for every run, attached or detached.
 
+**Loop owner**:
+The one process that carries out a loop: it starts each run and is the only writer of the loop's event log. It runs in the background, attached or detached.
+
 **Target repository**:
 The Git repository a run works on. Run state never lives inside it.
 

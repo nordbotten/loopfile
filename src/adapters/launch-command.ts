@@ -53,6 +53,7 @@ import {
 } from "./upgrade-command.ts";
 
 type Out = (text: string) => void;
+type CheckIo = Pick<LaunchIo, "err" | "upgrade">;
 
 const USAGE = "Usage: loopfile <directory|file.loop|-> [-d | --detach] [--input <name>=<value>]...";
 const HELP = `${USAGE}
@@ -129,18 +130,18 @@ export async function launchCommand(
   return await start(args.detach, request, source.workflow, cli, io, env, options);
 }
 
-type LaunchSource =
+export type LaunchSource =
   | { readonly ok: true; readonly kind: InputKind; readonly text?: string }
   | { readonly ok: false; readonly exitCode: number };
 
-type PreparedLaunchSource =
+export type PreparedLaunchSource =
   | (Extract<LaunchSource, { readonly ok: true }> & { readonly workflow: Workflow })
   | Extract<LaunchSource, { readonly ok: false }>;
 
 /** Reads stdin once, because the detached owner cannot read the launcher's stdin. */
 async function readLaunchSource(
   source: string,
-  io: LaunchIo,
+  io: CheckIo,
   readInput: () => Promise<Buffer>,
 ): Promise<LaunchSource> {
   if (source === "-") {
@@ -163,9 +164,9 @@ async function readLaunchSource(
   }
 }
 
-async function prepareLaunchSource(
+export async function prepareLaunchSource(
   source: string,
-  io: LaunchIo,
+  io: CheckIo,
   readInput: () => Promise<Buffer>,
 ): Promise<PreparedLaunchSource> {
   const input = await readLaunchSource(source, io, readInput);
@@ -186,7 +187,7 @@ function isMissingPath(error: unknown): boolean {
   return cause?.code === "ENOENT";
 }
 
-function resolveInputs(flags: readonly string[], workflow: Workflow): InputsCheck {
+export function resolveInputs(flags: readonly string[], workflow: Workflow): InputsCheck {
   const given = parseInputFlags(flags);
   return given.ok
     ? checkAgainstDeclared(given.inputs, workflow.inputs, workflow.inputDefaults)
@@ -226,7 +227,7 @@ function parseLaunchArgs(argv: readonly string[]): LaunchArgs | undefined {
 }
 
 function refuse(
-  io: LaunchIo,
+  io: Pick<LaunchIo, "err">,
   message: string | readonly string[],
   exitCode: 1 | 2,
   code: "bad_argument" | "invalid_manifest" | "operation_failed" = "bad_argument",
@@ -241,7 +242,7 @@ function refuse(
 async function loadWorkflow(
   source: string,
   kind: InputKind,
-  io: LaunchIo,
+  io: CheckIo,
   text?: string,
 ): Promise<Workflow | undefined> {
   let result: LoadResult;
@@ -259,7 +260,7 @@ async function loadWorkflow(
 function refuseLoadResult(
   source: string,
   result: Exclude<LoadResult, { readonly status: "loaded" }>,
-  io: LaunchIo,
+  io: CheckIo,
 ): void {
   if (result.status === "older") {
     refuse(
@@ -386,10 +387,12 @@ export async function startRun(options: StartRunOptions): Promise<StartRunResult
     ...optionalLoopFields(options.loopId, options.loopIndex),
   };
   return await startDetachedOwner({
-    runId: options.runId,
+    ownerId: options.runId,
     paths,
     ownerEnv: { ...options.env, [LAUNCH_ENV]: encodeLaunch(request) },
     cli: options.cli,
+    ownerCommand: "__owner",
+    ownerKind: "run",
     readyTimeoutMs: options.readyTimeoutMs ?? READY_TIMEOUT_MS,
   });
 }
@@ -482,10 +485,12 @@ export async function startOwner(
   options: LaunchOptions,
 ): Promise<number> {
   const started = await startDetachedOwner({
-    runId,
+    ownerId: runId,
     paths,
     ownerEnv,
     cli,
+    ownerCommand: "__owner",
+    ownerKind: "run",
     readyTimeoutMs: options.readyTimeoutMs ?? READY_TIMEOUT_MS,
   });
   if (!started.ok) {
@@ -502,18 +507,26 @@ export async function startOwner(
   return await continueAfterReady(started.runId, detach, confirmation, io, env, options);
 }
 
-interface DetachedOwnerStart {
-  readonly runId: string;
-  readonly paths: RunPaths;
+export interface DetachedOwnerStart {
+  readonly ownerId: string;
+  readonly paths: Pick<RunPaths, "socket" | "ownerLog">;
   readonly ownerEnv: Record<string, string | undefined>;
   readonly cli: string;
+  readonly ownerCommand: "__owner" | "__loop-owner";
+  readonly ownerKind: "run" | "loop";
   readonly readyTimeoutMs: number;
 }
 
-async function startDetachedOwner(options: DetachedOwnerStart): Promise<StartRunResult> {
+export async function startDetachedOwner(options: DetachedOwnerStart): Promise<StartRunResult> {
   let owner: ChildProcess;
   try {
-    owner = spawnOwner(options.cli, options.runId, options.paths.ownerLog, options.ownerEnv);
+    owner = spawnOwner(
+      options.cli,
+      options.ownerCommand,
+      options.ownerId,
+      options.paths.ownerLog,
+      options.ownerEnv,
+    );
   } catch (error) {
     return {
       ok: false,
@@ -529,15 +542,18 @@ async function startDetachedOwner(options: DetachedOwnerStart): Promise<StartRun
   const ready = await waitForReady(
     owner,
     options.paths.socket,
-    options.runId,
+    options.ownerId,
     options.readyTimeoutMs,
   );
   if (ready !== "ready") {
     if (ready === "timeout") owner.kill("SIGTERM");
-    return { ok: false, failure: await failedStart(options.paths.ownerLog, options.runId, ready) };
+    return {
+      ok: false,
+      failure: await failedStart(options.paths.ownerLog, options.ownerId, ready, options.ownerKind),
+    };
   }
   owner.unref();
-  return { ok: true, runId: options.runId };
+  return { ok: true, runId: options.ownerId };
 }
 
 async function continueAfterReady(
@@ -600,13 +616,14 @@ async function reportEnd(
 /** The run owner, in its own session, with stdin ignored and stdout and stderr in `owner.log`. */
 function spawnOwner(
   cli: string,
-  runId: string,
+  command: "__owner" | "__loop-owner",
+  ownerId: string,
   ownerLog: string,
   env: Record<string, string | undefined>,
 ): ChildProcess {
   const log = openSync(ownerLog, "a");
   try {
-    return spawn(process.execPath, [cli, "__owner", runId], {
+    return spawn(process.execPath, [cli, command, ownerId], {
       detached: true,
       stdio: ["ignore", log, log],
       env,
@@ -675,12 +692,13 @@ function askReady(socketPath: string, runId: string): Promise<boolean> {
 
 async function failedStart(
   ownerLog: string,
-  runId: string,
+  ownerId: string,
   waited: Waited,
+  ownerKind: "run" | "loop",
 ): Promise<StartRunFailure> {
   const why = waited === "timeout" ? "did not say ready in time" : "exited before it was ready";
   return startFailure(
-    `the run owner for ${runId} ${why}`,
+    `the ${ownerKind} owner for ${ownerId} ${why}`,
     "operation_failed",
     await ownerLogHelp(ownerLog),
     2,
