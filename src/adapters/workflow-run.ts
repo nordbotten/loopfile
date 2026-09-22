@@ -117,6 +117,8 @@ export interface ExecuteRunOptions {
   /** The loop that started the run, when this is a loop child. */
   readonly loopId?: string;
   readonly loopIndex?: number;
+  /** Overrides the source basename in status and prompt facts. */
+  readonly loopfileName?: string;
   /** The target repository the workspace is made from. */
   readonly repository: string;
   readonly executor: Executor;
@@ -169,9 +171,15 @@ export async function executeRun(options: ExecuteRunOptions): Promise<ExecutedRu
   try {
     if (prepared === undefined) throw new WorkflowRunError("the run was never prepared");
     const entry = prepared.workflow.steps[0]?.id ?? "$success";
-    return await runSteps(options, owner, prepared, basename(options.source), async () => ({
-      to: entry,
-    }));
+    return await runSteps(
+      options,
+      owner,
+      prepared,
+      options.loopfileName ?? basename(options.source),
+      async () => ({
+        to: entry,
+      }),
+    );
   } finally {
     await owner.close();
   }

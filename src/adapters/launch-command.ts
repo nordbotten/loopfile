@@ -33,6 +33,7 @@ import {
 } from "../application/operator-error.ts";
 import { decodeMessage, encodeMessage, PING } from "../application/owner-protocol.ts";
 import { endedHelp, runEndFromStatus } from "../application/run-end.ts";
+import { parseSource, type RemoteSource } from "../application/source.ts";
 import { ownerGoneMessage } from "../application/tail.ts";
 import type { Workflow } from "../domain/model.ts";
 import { loadDirectory, loadInput, loadThinText } from "./directory-loader.ts";
@@ -45,6 +46,7 @@ import {
   waitForRun,
 } from "./monitor.ts";
 import { ownerLogHelp } from "./owner-log.ts";
+import { type FetchedRemote, fetchRemote, RemoteFetchError } from "./remote-fetch.ts";
 import { createRunDirectory, loopfileHome, newRunId, type RunPaths } from "./run-directory.ts";
 import {
   checkManifestVersion,
@@ -55,11 +57,13 @@ import {
 type Out = (text: string) => void;
 type CheckIo = Pick<LaunchIo, "err" | "upgrade">;
 
-const USAGE = "Usage: loopfile <directory|file.loop|-> [-d | --detach] [--input <name>=<value>]...";
+const USAGE =
+  "Usage: loopfile <directory|file.loop|github:owner/repo|-> [-d | --detach] [--trust] [--input <name>=<value>]...";
 const HELP = `${USAGE}
 
 Run a Loopfile in the background. The source may be a directory, a thin file,
-or '-' for a manifest read from stdin. Without --detach, a terminal attaches the
+a GitHub Remote Loopfile (github:owner/repo), or '-' for a manifest read from
+stdin. Without --detach, a terminal attaches the
 live monitor; press d to detach while the run continues. With --detach, print
 the run ID and return immediately.
 
@@ -111,23 +115,81 @@ export async function launchCommand(
   }
   if (args.source === undefined) return refuse(io, USAGE, 2);
 
-  const source = await prepareLaunchSource(args.source, io, options.readStdin ?? readStdin);
+  const parsed = parseSource(args.source);
+  if (parsed.kind === "local") {
+    return await launchSource(args, parsed.source, undefined, undefined, cli, io, env, options);
+  }
+  return await launchRemote(args, parsed, cli, io, env, options);
+}
+
+async function launchSource(
+  args: LaunchArgs,
+  sourceName: string,
+  loopfileName: string | undefined,
+  remote: RemoteSource | undefined,
+  cli: string,
+  io: LaunchIo,
+  env: Record<string, string | undefined>,
+  options: LaunchOptions,
+): Promise<number> {
+  const source = await prepareLaunchSource(sourceName, io, options.readStdin ?? readStdin);
   if (!source.ok) return source.exitCode;
 
   const inputs = resolveInputs(args.inputs, source.workflow);
   if (!inputs.ok) {
     return refuse(io, inputs.messages, 2, "bad_argument", inputHelp(source.workflow.inputDefaults));
   }
+  if (remote !== undefined && !args.trust) {
+    return refuse(
+      io,
+      `untrusted Remote Loopfile ${remote.host}/${remote.repo}`,
+      2,
+      "untrusted",
+      "Run it in a terminal to answer the trust prompt, or pass --trust to run it once.",
+    );
+  }
 
   const request: LaunchRequest = {
-    source: args.source,
+    source: sourceName,
     kind: source.kind,
     sourceText: source.text,
     repository: options.repository ?? process.cwd(),
     inputs: inputs.inputs,
+    loopfileName,
     ...optionalLoopFields(options.loopId, options.loopIndex),
   };
   return await start(args.detach, request, source.workflow, cli, io, env, options);
+}
+
+async function launchRemote(
+  args: LaunchArgs,
+  remote: RemoteSource,
+  cli: string,
+  io: LaunchIo,
+  env: Record<string, string | undefined>,
+  options: LaunchOptions,
+): Promise<number> {
+  let fetched: FetchedRemote | undefined;
+  try {
+    try {
+      fetched = await fetchRemote(remote, env);
+    } catch (error) {
+      const message = error instanceof RemoteFetchError ? error.message : (error as Error).message;
+      return refuse(io, message, 2, "operation_failed");
+    }
+    return await launchSource(
+      args,
+      fetched.path,
+      remote.repo.slice(remote.repo.lastIndexOf("/") + 1),
+      remote,
+      cli,
+      io,
+      env,
+      options,
+    );
+  } finally {
+    await fetched?.cleanup().catch(() => undefined);
+  }
 }
 
 export type LaunchSource =
@@ -199,6 +261,7 @@ interface LaunchArgs {
   readonly detach: boolean;
   readonly inputs: readonly string[];
   readonly help: boolean;
+  readonly trust: boolean;
 }
 
 function parseLaunchArgs(argv: readonly string[]): LaunchArgs | undefined {
@@ -209,6 +272,7 @@ function parseLaunchArgs(argv: readonly string[]): LaunchArgs | undefined {
         detach: { type: "boolean", short: "d" },
         help: { type: "boolean", short: "h" },
         input: { type: "string", multiple: true },
+        trust: { type: "boolean" },
       },
       allowPositionals: true,
     });
@@ -220,6 +284,7 @@ function parseLaunchArgs(argv: readonly string[]): LaunchArgs | undefined {
       detach: values.detach === true,
       inputs: values.input ?? [],
       help: values.help === true,
+      trust: values.trust === true,
     };
   } catch {
     return undefined;
@@ -230,7 +295,7 @@ function refuse(
   io: Pick<LaunchIo, "err">,
   message: string | readonly string[],
   exitCode: 1 | 2,
-  code: "bad_argument" | "invalid_manifest" | "operation_failed" = "bad_argument",
+  code: OperatorErrorCode = "bad_argument",
   help = USAGE,
 ): number {
   const messages = typeof message === "string" ? [message] : message;
@@ -302,6 +367,7 @@ async function start(
     runId: newRunId(),
     loopId: request.loopId,
     loopIndex: request.loopIndex,
+    loopfileName: request.loopfileName,
     cli,
     env,
     readyTimeoutMs: options.readyTimeoutMs,
@@ -322,6 +388,7 @@ export interface StartRunOptions {
   readonly runId: string;
   readonly loopId?: string;
   readonly loopIndex?: number;
+  readonly loopfileName?: string;
   /** The CLI script used to start the detached run owner. */
   readonly cli: string;
   readonly env: Record<string, string | undefined>;
@@ -384,6 +451,7 @@ export async function startRun(options: StartRunOptions): Promise<StartRunResult
     ...(options.sourceText === undefined ? {} : { sourceText: options.sourceText }),
     repository: options.repository,
     inputs: inputs.inputs,
+    loopfileName: options.loopfileName,
     ...optionalLoopFields(options.loopId, options.loopIndex),
   };
   return await startDetachedOwner({

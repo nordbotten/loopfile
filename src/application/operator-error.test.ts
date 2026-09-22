@@ -24,6 +24,7 @@ test("operator failures render an AXI block and exit 2", () => {
     "invalid_manifest",
     "manifest_outdated",
     "format_mismatch",
+    "untrusted",
     "operation_failed",
   ];
   for (const code of codes) {
