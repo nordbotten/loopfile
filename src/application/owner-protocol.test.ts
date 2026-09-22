@@ -5,11 +5,14 @@ import {
   CANCEL,
   checkAttemptCall,
   confirmsCancel,
+  confirmsInterrupt,
   controlReply,
   decodeMessage,
   encodeMessage,
+  INTERRUPT,
   PING,
   readyMessage,
+  refusesInterrupt,
 } from "./owner-protocol.ts";
 
 const RUN = "20260917-160344-k3f9";
@@ -44,6 +47,25 @@ test("ready carries the run ID too, so one greeting proves liveness", () => {
 test("a cancel is answered with cancelling and the run ID", () => {
   assert.equal(CANCEL, "cancel");
   assert.deepEqual(controlReply(line({ type: CANCEL }), RUN), { type: "cancelling", runId: RUN });
+});
+
+test("an interrupt is answered only while an attempt can be stopped", () => {
+  assert.equal(INTERRUPT, "interrupt");
+  assert.deepEqual(controlReply(line({ type: INTERRUPT }), RUN), {
+    type: "interrupting",
+    runId: RUN,
+  });
+  assert.deepEqual(controlReply(line({ type: INTERRUPT }), RUN, false), {
+    type: "error",
+    message: "no attempt is running",
+  });
+});
+
+test("interrupt replies identify success and no attempt", () => {
+  assert.equal(confirmsInterrupt(line({ type: "interrupting", runId: RUN }), RUN), true);
+  assert.equal(confirmsInterrupt(line({ type: "interrupting", runId: "other" }), RUN), false);
+  assert.equal(refusesInterrupt(line({ type: "error", message: "no attempt is running" })), true);
+  assert.equal(refusesInterrupt(line({ type: "ready", runId: RUN })), false);
 });
 
 test("only this run's cancelling reply confirms a cancel", () => {

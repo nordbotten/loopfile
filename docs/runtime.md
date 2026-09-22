@@ -398,6 +398,14 @@ launch.
 5. Loopfile never deletes the run branch. Commit inside the workspace, in a step,
    if you want the work to survive on the branch.
 
+## Operator commands
+
+`loopfile cancel <runid>` stops a run and ends it as cancelled.
+`loopfile interrupt <runid>` stops the current attempt and starts a new attempt
+of the same step; it fails when the run has ended, crashed, or has no attempt
+running. `loopfile resume <runid>` continues a crashed run after the owner is
+startable again.
+
 ## Running from a script
 
 With no terminal, for example in a script or a pipe, `loopfile <source>` and

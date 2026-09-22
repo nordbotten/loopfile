@@ -16,9 +16,9 @@
  * What the two sides say is `owner-protocol.ts`; this file is binding,
  * connecting and unlinking, and nothing else decides anything here.
  *
- * The control socket also takes `cancel` (#63). The run owner answers it and
- * aborts `cancelled`; stopping the run is `workflow-run.ts`'s (#116). Spawning
- * the process is #35.
+ * The control socket also takes `cancel` (#63) and `interrupt` (#53). The run
+ * owner answers them; stopping the run or attempt is `workflow-run.ts`'s
+ * (#116). Spawning the process is #35.
  */
 
 import { unlink } from "node:fs/promises";
@@ -31,10 +31,13 @@ import {
   CANCEL,
   checkAttemptCall,
   confirmsCancel,
+  confirmsInterrupt,
   controlReply,
   encodeMessage,
+  INTERRUPT,
   PING,
   readyMessage,
+  refusesInterrupt,
 } from "../application/owner-protocol.ts";
 import { withActivityHook } from "./activity-log.ts";
 import { type EventLog, type NewEvent, openEventLog } from "./event-log.ts";
@@ -56,6 +59,8 @@ export type AttemptCallHandler = (call: AttemptCall) => Promise<unknown> | unkno
 export interface AttemptEndpoint {
   /** The value to put in `LOOPFILE_ENDPOINT` (ADR 0005). */
   readonly endpoint: string;
+  /** Aborted when `loopfile interrupt` stops this attempt. */
+  readonly interruptSignal: AbortSignal;
   /** Stops answering. Called when the attempt or the iteration ends. */
   close(): Promise<void>;
 }
@@ -131,14 +136,13 @@ export async function startRunOwner(options: StartRunOwnerOptions): Promise<RunO
   let greet: ((socket: Socket) => void) | undefined;
   const waiting = new Set<Socket>();
   const cancel = linkedController(options.cancelSignal);
+  let currentInterrupt: AbortController | undefined;
   const control = lineServer((socket) => {
     if (greet) greet(socket);
     else waiting.add(socket);
-    onLine(socket, (line) => {
-      const reply = controlReply(line, options.runId);
-      if (reply.type === "cancelling") cancel.abort();
-      socket.write(encodeMessage(reply));
-    });
+    onLine(socket, (line) =>
+      handleControlLine(socket, line, options.runId, cancel, () => currentInterrupt),
+    );
   });
   // A bind that fails leaves the server object holding the handle its failed
   // attempt opened, which keeps the process alive after the error is passed on.
@@ -168,10 +172,14 @@ export async function startRunOwner(options: StartRunOwnerOptions): Promise<RunO
     cancelled: cancel.signal,
     async serveAttempt(serve: ServeAttemptOptions): Promise<AttemptEndpoint> {
       const served = await serveAttemptSocket(serve);
+      const interrupt = new AbortController();
+      currentInterrupt = interrupt;
       attempts.add(served);
       return {
         endpoint: serve.socketPath,
+        interruptSignal: interrupt.signal,
         close: async () => {
+          if (currentInterrupt === interrupt) currentInterrupt = undefined;
           attempts.delete(served);
           await served.close();
         },
@@ -188,6 +196,20 @@ export async function startRunOwner(options: StartRunOwnerOptions): Promise<RunO
 }
 
 /** A controller that also aborts when `outside` does. */
+function handleControlLine(
+  socket: Socket,
+  line: string,
+  runId: string,
+  cancel: AbortController,
+  currentInterrupt: () => AbortController | undefined,
+): void {
+  const active = currentInterrupt();
+  const reply = controlReply(line, runId, active !== undefined && !active.signal.aborted);
+  if (reply.type === "cancelling") cancel.abort();
+  if (reply.type === "interrupting") active?.abort();
+  socket.write(encodeMessage(reply));
+}
+
 function linkedController(outside: AbortSignal | undefined): AbortController {
   const controller = new AbortController();
   if (outside?.aborted) controller.abort();
@@ -354,6 +376,25 @@ export async function requestCancel(
 ): Promise<boolean> {
   const confirm = (line: string) => (confirmsCancel(line, runId) ? true : undefined);
   return (await askOwner(path, { type: CANCEL }, confirm, timeoutMs)) === true;
+}
+
+/**
+ * Asks the live owner to interrupt its current attempt.
+ *
+ * `undefined` means no owner answered; `false` means the owner is alive but
+ * there is no attempt to interrupt.
+ */
+export async function requestInterrupt(
+  path: string,
+  runId: string,
+  timeoutMs = PROBE_TIMEOUT_MS,
+): Promise<boolean | undefined> {
+  const reply = (line: string): boolean | undefined => {
+    if (confirmsInterrupt(line, runId)) return true;
+    if (refusesInterrupt(line)) return false;
+    return undefined;
+  };
+  return await askOwner(path, { type: INTERRUPT }, reply, timeoutMs);
 }
 
 /**

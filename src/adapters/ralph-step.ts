@@ -9,7 +9,7 @@
 
 import { readFile } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
-import type { ExecutionContext, Executor, StartFailure } from "../application/executor.ts";
+import type { Ended, ExecutionContext, Executor, StartFailure } from "../application/executor.ts";
 import type { HarnessActivity, HarnessAdapters } from "../application/harness.ts";
 import { checkOutputs } from "../application/output-check.ts";
 import type { AttemptIdentity } from "../application/owner-protocol.ts";
@@ -38,6 +38,8 @@ export interface RalphStepOptions extends Omit<PromptFillOptions, "events"> {
   onActivity(activity: HarnessActivity): void;
   /** A new random attempt secret. Called once per iteration. */
   newSecret(): string;
+  /** Stops this attempt before Ralph starts another iteration. */
+  readonly stopSignal?: AbortSignal;
   /**
    * The identity the run owner answers now: set when an iteration starts and
    * cleared when it ends, so a call from an ended iteration is refused.
@@ -68,56 +70,103 @@ export async function runRalphStep(
   }
   const template = await readFile(join(options.loopfileRoot, step.promptFile), "utf8");
   const adapter = options.adapters[step.harness];
-  const { attemptId } = context;
 
   for (let iteration = 1; iteration <= step.maxIterations; iteration++) {
-    const paths = await createIterationDirectory(attempt, iteration);
-    const secret = options.newSecret();
-    const prompt = await fillPromptForCall(
+    const result = await runRalphIteration(
       options,
-      { attemptId, stepId: step.id, startedAt, step, steps, iteration },
+      step,
+      context,
+      attempt,
+      startedAt,
+      steps,
       template,
-    );
-    const started = await startHarnessCall(
-      options.executor,
       adapter,
-      {
-        context: { ...context, attemptSecret: secret, iteration },
-        prompt,
-        ...modelAndEffort(step),
-        args: step.args,
-        wiringFolder: paths.wiring,
-      },
-      paths,
-      options.onActivity,
-    );
-    if ("reason" in started) return { ...started, iterations: iteration };
-
-    options.setCurrent({ attemptId, secret, iteration });
-    await options.events.append({
-      type: "iteration.started",
-      attemptId,
       iteration,
-      processGroupId: started.processGroupId,
-    });
-    let timedOut = false;
-    const timer = setTimeout(() => {
-      timedOut = true;
-      started.cancel();
-    }, step.timeoutMs);
-    const exit = await started.ended;
-    clearTimeout(timer);
-    options.setCurrent(undefined);
-
-    const outcome = iterationOutcome(options.history(), attemptId, iteration);
-    const reason = classifyIteration(exit, timedOut, outcome);
-    await options.events.append({ type: "iteration.ended", attemptId, iteration, reason });
-
-    if (reason === "outcome" && outcome !== undefined) {
-      return { ...checkedEnd(options, step, attemptId, outcome), iterations: iteration };
-    }
+    );
+    if (result !== undefined) return result;
   }
   return { ...ITERATION_LIMIT_END, iterations: step.maxIterations };
+}
+
+async function runRalphIteration(
+  options: RalphStepOptions,
+  step: RalphStep,
+  context: ExecutionContext,
+  attempt: AttemptPaths,
+  startedAt: string,
+  steps: readonly Step[] | undefined,
+  template: string,
+  adapter: HarnessAdapters[typeof step.harness],
+  iteration: number,
+): Promise<RalphStepResult | undefined> {
+  const { attemptId } = context;
+  if (options.stopSignal?.aborted) {
+    return {
+      kind: "start-failed",
+      message: "the attempt was interrupted",
+      reason: "start_failed",
+      iterations: iteration,
+    };
+  }
+  const paths = await createIterationDirectory(attempt, iteration);
+  const secret = options.newSecret();
+  const prompt = await fillPromptForCall(
+    options,
+    { attemptId, stepId: step.id, startedAt, step, steps, iteration },
+    template,
+  );
+  const started = await startHarnessCall(
+    options.executor,
+    adapter,
+    {
+      context: { ...context, attemptSecret: secret, iteration },
+      prompt,
+      ...modelAndEffort(step),
+      args: step.args,
+      wiringFolder: paths.wiring,
+    },
+    paths,
+    options.onActivity,
+  );
+  if ("reason" in started) return { ...started, iterations: iteration };
+
+  options.setCurrent({ attemptId, secret, iteration });
+  await options.events.append({
+    type: "iteration.started",
+    attemptId,
+    iteration,
+    processGroupId: started.processGroupId,
+  });
+  const { exit, timedOut } = await waitForIteration(options.stopSignal, step.timeoutMs, started);
+  options.setCurrent(undefined);
+
+  const outcome = iterationOutcome(options.history(), attemptId, iteration);
+  const reason = classifyIteration(exit, timedOut, outcome);
+  await options.events.append({ type: "iteration.ended", attemptId, iteration, reason });
+
+  if (reason === "outcome" && outcome !== undefined) {
+    return { ...checkedEnd(options, step, attemptId, outcome), iterations: iteration };
+  }
+  return undefined;
+}
+
+async function waitForIteration(
+  stopSignal: AbortSignal | undefined,
+  timeoutMs: number,
+  started: { readonly ended: Promise<Ended>; cancel(): void },
+): Promise<{ readonly exit: Ended; readonly timedOut: boolean }> {
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    started.cancel();
+  }, timeoutMs);
+  const stop = () => started.cancel();
+  stopSignal?.addEventListener("abort", stop, { once: true });
+  if (stopSignal?.aborted) stop();
+  const exit = await started.ended;
+  clearTimeout(timer);
+  stopSignal?.removeEventListener("abort", stop);
+  return { exit, timedOut };
 }
 
 /** The step's `model` and `effort`, each only when the manifest sets it. */
