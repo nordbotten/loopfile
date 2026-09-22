@@ -151,9 +151,14 @@ export interface LoopStatus {
   readonly state: LoopLifecycle;
   readonly source: LoopStatusSource;
   readonly fixedInputs: InputSet;
+  readonly retry: number;
+  readonly maxRuns: number | null;
   readonly place: number | null;
   readonly runs: number;
   readonly retries: number;
+  readonly lastInputSet: InputSet | null;
+  readonly lastSourceIndex: number | null;
+  readonly lastRetryCount: number;
   readonly runIds: readonly RunId[];
   readonly currentRunId: RunId | null;
   readonly pausedUntil: Timestamp | null;
