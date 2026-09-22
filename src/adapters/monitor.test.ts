@@ -350,8 +350,9 @@ test("a run that ends while the ping waits shows ended, not crashed", async () =
   const t = terminal();
   const result = attachMonitor(runId, t.io, { LOOPFILE_HOME: home }, OPTIONS);
   await sleep(TICK * 2);
+  const endingStatus = `${paths.status}.tmp`;
   await writeFile(
-    paths.status,
+    endingStatus,
     JSON.stringify(
       status(runId, {
         state: "completed",
@@ -360,6 +361,7 @@ test("a run that ends while the ping waits shows ended, not crashed", async () =
       }),
     ),
   );
+  await rename(endingStatus, paths.status);
   assert.equal(await within(result, 2000), 0);
   assert.match(t.text(), /completed \(success\)/);
   assert.doesNotMatch(t.text(), /crashed/);
