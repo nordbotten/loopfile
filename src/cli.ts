@@ -54,7 +54,7 @@ Learn more:
 
 Commands:
   pack <directory> [-o <path>] [--force]
-  loop <source> (--times N | --list <file>) [--input k=v]... [-d]
+  loop <source> (--times N | --list <file> | --next <command>) [--input k=v]... [-d]
   check <source> [--json]
   docs [<topic>]
   list [--json]

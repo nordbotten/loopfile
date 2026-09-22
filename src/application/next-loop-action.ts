@@ -1,6 +1,7 @@
 import type { InputSet, LoopEndReason, LoopSource } from "../domain/events.ts";
+import type { Workflow } from "../domain/model.ts";
 import type { LoopStatus } from "../domain/status.ts";
-import { mergeInputSet } from "./launch-inputs.ts";
+import { checkAgainstDeclared, type InputsCheck, mergeInputSet } from "./launch-inputs.ts";
 
 /** The state a loop driver can observe for its latest child. */
 export type LastChildState = "none" | "running" | "completed" | "failed" | "cancelled" | "crashed";
@@ -12,19 +13,27 @@ export type LastChild =
 
 /** The next deterministic move for a loop driver. */
 export type LoopAction =
-  | { readonly kind: "start"; readonly inputSet: InputSet; readonly sourceIndex: number }
+  | { readonly kind: "start"; readonly inputSet: InputSet; readonly sourceIndex: number | null }
   | { readonly kind: "wait" }
   | { readonly kind: "end"; readonly reason: LoopEndReason; readonly detail?: string };
+
+/** The parsed stdout result of one `--next` command. */
+export type NextSourceResult =
+  | { readonly kind: "empty" }
+  | { readonly kind: "output"; readonly result: InputsCheck };
 
 /** Chooses the next loop action from its status, child and materialized source. */
 export function nextLoopAction(
   status: LoopStatus,
   lastChild: LastChild,
   source?: LoopSource,
+  nextResult?: NextSourceResult,
+  workflow?: Pick<Workflow, "inputs" | "inputDefaults">,
 ): LoopAction {
   if (lastChild.state === "running") return { kind: "wait" };
   const childEnd = childEndAction(lastChild);
   if (childEnd !== undefined) return childEnd;
+  if (source?.kind === "next") return nextCommandAction(status, nextResult, workflow);
   return source?.kind === "list" ? nextListAction(status, source) : nextTimesAction(status);
 }
 
@@ -36,6 +45,33 @@ function childEndAction(child: LastChild): LoopAction | undefined {
     return { kind: "end", reason: "internal_error", detail: `child run ${child.runId} crashed` };
   }
   return undefined;
+}
+
+function nextCommandAction(
+  status: LoopStatus,
+  result: NextSourceResult | undefined,
+  workflow: Pick<Workflow, "inputs" | "inputDefaults"> | undefined,
+): LoopAction {
+  if (result === undefined) {
+    return { kind: "end", reason: "source_failed", detail: "--next did not produce a result" };
+  }
+  if (result.kind === "empty") return { kind: "end", reason: "source_empty" };
+  if (!result.result.ok) {
+    return { kind: "end", reason: "source_failed", detail: result.result.messages.join("; ") };
+  }
+  const merged = mergeInputSet(status.fixedInputs, result.result.inputs);
+  if (!merged.ok) {
+    return { kind: "end", reason: "source_failed", detail: merged.messages.join("; ") };
+  }
+  const checked = checkAgainstDeclared(
+    merged.inputs,
+    workflow?.inputs ?? {},
+    workflow?.inputDefaults,
+  );
+  if (!checked.ok) {
+    return { kind: "end", reason: "source_failed", detail: checked.messages.join("; ") };
+  }
+  return { kind: "start", inputSet: checked.inputs, sourceIndex: null };
 }
 
 function nextListAction(
