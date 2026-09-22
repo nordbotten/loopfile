@@ -7,10 +7,27 @@
 
 # Loopfile
 
-Loopfile is a small, deterministic runtime for agentic software-engineering
-workflows. A loop is a `manifest.yaml` of steps: agent steps run a coding agent,
-command steps run shell checks, and each result routes the run to the next step.
-Every run works in its own Git branch.
+Agent workflows are easy to invent and hard to run.
+Most of them live in bash scripts, tmux panes and hope.
+
+Loopfile turns them into files you commit.
+
+A loop is a `manifest.yaml`. Agents do the work, shell checks judge it, and
+the result picks the next step. Loopfile runs the graph. No LLM decides
+where the run goes.
+
+- **Every run is isolated by default.** Its own Git branch. Your checkout
+  stays clean.
+- **Every run is recorded.** Each attempt goes into an event log. Follow it,
+  inspect it, resume it.
+- **Every run is bounded.** Attempts, timeouts and iteration limits come from
+  the manifest, not from the agent's mood.
+- **Built for agents.** Loopfile follows [AXI](https://axi.md/), the Agent
+  eXperience Interface: `--json` data, fixed error codes, no prompts that
+  wait for input, and a `help:` hint on each failure. An agent can start a
+  loop, watch it and fix what broke.
+
+Loopfile owns execution. You own the process.
 
 Status: early. The format is versioned (`formatVersion: 1`), but expect changes
 before 1.0.
