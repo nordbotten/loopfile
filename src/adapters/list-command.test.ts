@@ -128,6 +128,19 @@ test("with no runs, --json gives an empty array and exits 0", async () => {
   assert.deepEqual(JSON.parse(r.output), { formatVersion: 1, loops: [], runs: [] });
 });
 
+test("list shows a loop row when there are no runs", async () => {
+  const listHome = join(home, "loop-without-runs");
+  const loopId = "loop-20260917-160350-abcd";
+  await mkdir(loopPaths(listHome, loopId).root, { recursive: true });
+  await writeFile(loopPaths(listHome, loopId).status, JSON.stringify(loopStatusBody(loopId)));
+
+  const r = runner();
+  const code = await listCommand(["list"], r.out, r.err, { LOOPFILE_HOME: listHome }, false);
+  assert.equal(code, 0);
+  assert.equal(r.output.includes("no runs found"), false);
+  assert.match(r.output, new RegExp(`${loopId}\\s+completed\\s+times 2\\s+2`));
+});
+
 test("list shows a run as a table row and exits 0", async () => {
   const runId = "20260917-160300-cccc";
   await mkdir(runPaths(home, runId).root, { recursive: true });
