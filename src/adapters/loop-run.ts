@@ -47,7 +47,7 @@ export async function runLoop(
     for (;;) {
       const status = loopStatus(history);
       const child = await lastChild(home, status);
-      const action = nextLoopAction(status, child);
+      const action = nextLoopAction(status, child, created.source);
 
       if (action.kind === "wait") {
         await waitForChild(home, status.currentRunId ?? status.runIds.at(-1) ?? "", deps.pollMs);

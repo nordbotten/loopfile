@@ -79,7 +79,7 @@ function io(onError: (text: string) => void = () => undefined) {
 
 async function waitForEnd(home: string, loopId: string): Promise<readonly LoopEvent[]> {
   const path = loopPaths(home, loopId).events;
-  for (let tries = 0; tries < 200; tries += 1) {
+  for (let tries = 0; tries < 800; tries += 1) {
     const events = parseEventLog<LoopEvent>(await readFile(path, "utf8").catch(() => ""));
     if (events.at(-1)?.type === "loop.ended") return events;
     await new Promise((resolve) => setTimeout(resolve, 25));
@@ -104,6 +104,141 @@ async function killLoopOwner(home: string, loopId: string): Promise<void> {
   }
   throw new Error("the loop owner did not start");
 }
+test("loop --list starts one run per JSON line with its own input set", async () => {
+  const setupResult = await setup(`formatVersion: 1
+inputs:
+  issue: The issue number
+steps:
+  - id: work
+    kind: command
+    run: 'test -n "$(node ${cli} data get input.issue)"'
+`);
+  const list = join(setupResult.root, "inputs.jsonl");
+  await writeFile(list, '{"issue":"41"}\n\n{"issue":"42"}\n{"issue":"43"}\n');
+  try {
+    const captured = io();
+    const code = await loopCommand(
+      ["loop", setupResult.source, "--list", list, "-d"],
+      cli,
+      captured.value,
+      setupResult.env,
+      { repository: setupResult.repo },
+    );
+    assert.equal(code, 0, captured.errors());
+    const events = await waitForEnd(setupResult.home, captured.output().trim());
+    const created = events[0];
+    assert.deepEqual(created?.type === "loop.created" ? created.source : undefined, {
+      kind: "list",
+      sets: [{ issue: "41" }, { issue: "42" }, { issue: "43" }],
+    });
+    const started = events.filter(
+      (event): event is Extract<LoopEvent, { type: "loop.run_started" }> =>
+        event.type === "loop.run_started",
+    );
+    assert.deepEqual(
+      started.map((event) => event.inputSet),
+      [{ issue: "41" }, { issue: "42" }, { issue: "43" }],
+    );
+    for (const event of started) {
+      const child = parseEventLog(
+        await readFile(runPaths(setupResult.home, event.runId).events, "utf8"),
+      );
+      assert.equal(child.at(-1)?.type, "run.ended");
+      assert.equal(
+        await readFile(join(runPaths(setupResult.home, event.runId).inputs, "issue"), "utf8"),
+        event.inputSet.issue,
+      );
+    }
+  } finally {
+    await rm(setupResult.root, { recursive: true, force: true });
+  }
+});
+
+test("a bad list line fails before any loop folder exists", async () => {
+  const setupResult = await setup(`formatVersion: 1
+inputs:
+  issue: The issue number
+steps:
+  - id: work
+    kind: command
+    run: 'true'
+`);
+  const list = join(setupResult.root, "inputs.jsonl");
+  await writeFile(list, '{"issue":"41"}\n42\n{"issue":"43"}\n');
+  try {
+    const captured = io();
+    const code = await loopCommand(
+      ["loop", setupResult.source, "--list", list, "-d"],
+      cli,
+      captured.value,
+      setupResult.env,
+      { repository: setupResult.repo },
+    );
+    assert.equal(code, 2);
+    assert.match(captured.errors(), /error: line 2: input set is not a JSON object/);
+    assert.match(captured.errors(), /code: bad_argument/);
+    await assert.rejects(stat(join(setupResult.home, "loops")));
+  } finally {
+    await rm(setupResult.root, { recursive: true, force: true });
+  }
+});
+
+test("an input given by both --input and a list line fails before a loop starts", async () => {
+  const setupResult = await setup(`formatVersion: 1
+inputs:
+  issue: The issue number
+steps:
+  - id: work
+    kind: command
+    run: 'true'
+`);
+  const list = join(setupResult.root, "inputs.jsonl");
+  await writeFile(list, '{"issue":"41"}\n');
+  try {
+    const captured = io();
+    const code = await loopCommand(
+      ["loop", setupResult.source, "--list", list, "--input", "issue=42", "-d"],
+      cli,
+      captured.value,
+      setupResult.env,
+      { repository: setupResult.repo },
+    );
+    assert.equal(code, 2);
+    assert.match(
+      captured.errors(),
+      /line 1: input \\"issue\\" is given by both --input and the input source/,
+    );
+    await assert.rejects(stat(join(setupResult.home, "loops")));
+  } finally {
+    await rm(setupResult.root, { recursive: true, force: true });
+  }
+});
+
+test("an empty or unreadable list is a bad argument before a loop starts", async () => {
+  const setupResult = await setup();
+  const empty = join(setupResult.root, "empty.jsonl");
+  await writeFile(empty, "\n  \n");
+  try {
+    for (const [list, message] of [
+      [empty, "the list has no input sets"],
+      [join(setupResult.root, "missing.jsonl"), "cannot read"],
+    ] as const) {
+      const captured = io();
+      const code = await loopCommand(
+        ["loop", setupResult.source, "--list", list, "-d"],
+        cli,
+        captured.value,
+        setupResult.env,
+        { repository: setupResult.repo },
+      );
+      assert.equal(code, 2);
+      assert.match(captured.errors(), new RegExp(message));
+    }
+    await assert.rejects(stat(join(setupResult.home, "loops")));
+  } finally {
+    await rm(setupResult.root, { recursive: true, force: true });
+  }
+});
 
 test("loop --times starts a detached owner and two command runs", async () => {
   const setupResult = await setup();
