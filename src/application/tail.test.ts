@@ -106,6 +106,27 @@ test("endInLine keeps internal_error as the failure reason", () => {
   });
 });
 
+test("endInLine carries denied tool calls from terminal metrics", () => {
+  assert.deepEqual(
+    endInLine(
+      RUN,
+      JSON.stringify({
+        type: "run.ended",
+        result: "failure",
+        reason: "end_state",
+        metrics: { permissionDenials: 38 },
+      }),
+    ),
+    {
+      runId: RUN,
+      state: "failed",
+      endReason: "failure",
+      stepId: null,
+      permissionDenials: 38,
+    },
+  );
+});
+
 test("endInLine reads a run.cancelled as a cancelled run", () => {
   const line = JSON.stringify({ type: "run.cancelled", seq: 3, at: "x" });
   assert.deepEqual(endInLine(RUN, line), {

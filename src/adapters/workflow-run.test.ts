@@ -7,6 +7,7 @@ import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { sha256 } from "../application/data-store.ts";
+import { endedHelp, runEndFromEvent } from "../application/run-end.ts";
 import type { HarnessAdapters } from "../application/harness.ts";
 import { parseEventLog, replay } from "../application/replay.ts";
 import type { RunEvent } from "../domain/events.ts";
@@ -449,6 +450,37 @@ test("a failing tests step with no onFailure ends the run in failure", async () 
   assert.equal(end?.type === "run.ended" && end.result, "failure");
   assert.equal(end?.type === "run.ended" && end.reason, "end_state");
   assert.deepEqual(attemptSteps(events), ["implement", "tests"]);
+});
+
+test("denials from a completed attempt do not hint for a later failed attempt", async () => {
+  const script: FakeScript = {
+    implement: [
+      [
+        {
+          do: "activity",
+          activity: {
+            kind: "metrics",
+            metrics: {
+              inputTokens: null,
+              outputTokens: null,
+              totalTokens: null,
+              costUsd: null,
+              toolCalls: null,
+              permissionDenials: 38,
+            },
+          },
+        },
+        { do: "result", outcome: "done" },
+      ],
+    ],
+  };
+  const { events, paths, runId } = await execute(FEEDBACK_LOOP(), fakeHarnessAdapters(script));
+  const end = runEnd(events);
+  assert.equal(end?.type, "run.ended");
+  if (end?.type !== "run.ended") return;
+  assert.equal(end.metrics?.permissionDenials, null);
+  assert.equal(JSON.parse(await readFile(paths.status, "utf8")).metrics.permissionDenials, null);
+  assert.doesNotMatch(endedHelp(runEndFromEvent(runId, end)), /tool calls were denied/);
 });
 
 test("a review that never approves ends the run with attempt_limit and starts no third review", async () => {

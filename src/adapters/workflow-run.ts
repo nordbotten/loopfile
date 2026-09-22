@@ -524,6 +524,8 @@ async function visit(
   loopfileName: string,
 ): Promise<Visited> {
   const attemptId = nextAttemptId(replay(tracked.history), step.id);
+  tracked.harnessData = NO_HARNESS_DATA;
+  tracked.status.onHarnessUpdate(tracked.history, NO_HARNESS_DATA);
   const startedAt = new Date().toISOString();
   const attempt = await createAttemptDirectory(owner.paths.attempts, attemptId);
   let current: AttemptIdentity | undefined;
