@@ -110,6 +110,14 @@ _Avoid_: Job (kept for a possible future scheduler)
 Run a Loopfile many times, one run after another, with `loopfile loop`. Each run it starts is an ordinary run with its own run ID. The whole repeat has an ID of its own that holds the runs it started and its place in the input source.
 _Avoid_: Batch, burn
 
+**Input source**:
+Where a loop gets the input set of its next run: a count, a list or a command. A loop has exactly one. A Loopfile with no inputs still loops from a count or a command.
+_Avoid_: Queue, feed
+
+**Input set**:
+The inputs one run gets, as names and string values. In a loop, the input source and the loop's own `--input` flags make it together, and a name comes from only one of them.
+_Avoid_: Row, item, parameters
+
 **Attempt**:
 One execution of a step within a run. A step visited again gets a new attempt, and earlier attempts are kept.
 _Avoid_: Round
