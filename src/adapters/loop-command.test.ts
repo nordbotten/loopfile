@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -163,14 +163,57 @@ test("an attached loop reports a failed child as an operator failure", async () 
       { repository: setupResult.repo, pollMs: 10, ownerPingTimeoutMs: 50 },
     );
     assert.equal(code, 1);
+    const loopId = captured.output().trim();
     const lines = captured.errors().trim().split("\n");
-    assert.match(lines[0] ?? "", /^started: loop-/);
+    assert.equal(lines[0], `started: ${loopId}`);
     assert.match(lines[1] ?? "", /^run: 1 \S+ started$/);
     assert.match(lines[2] ?? "", /^run: 1 \S+ failed$/);
     assert.match(lines[3] ?? "", /^error: loop loop-\S+ failed: run_failed \(run \S+ failed\)$/);
     assert.equal(lines[4], "code: operation_failed");
-    assert.match(lines[5] ?? "", /^help: See each run with: loopfile result loop-/);
+    assert.equal(lines[5], `help: See each run with: loopfile result ${loopId}`);
   } finally {
+    await rm(setupResult.root, { recursive: true, force: true });
+  }
+});
+
+test("SIGINT detaches from an attached loop without stopping its owner", async () => {
+  const setupResult = await setup(
+    "formatVersion: 1\nsteps:\n  - id: work\n    kind: command\n    run: sleep 1\n",
+  );
+  let loopId: string | undefined;
+  let child: ReturnType<typeof spawn> | undefined;
+  try {
+    child = spawn(process.execPath, [cli, "loop", setupResult.source, "--times", "2"], {
+      cwd: setupResult.repo,
+      env: setupResult.env,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let errors = "";
+    const stderr = child.stderr;
+    assert.ok(stderr);
+    stderr.setEncoding("utf8");
+    const started = new Promise<string>((resolve, reject) => {
+      stderr.on("data", (text: string) => {
+        errors += text;
+        const line = errors.match(/^started: ([^\n]+)$/m);
+        if (line?.[1] !== undefined) resolve(line[1]);
+      });
+      child?.once("error", reject);
+    });
+    const exited = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(
+      (resolve) => {
+        child?.once("close", (code, signal) => resolve({ code, signal }));
+      },
+    );
+    loopId = await started;
+    assert.equal(child.kill("SIGINT"), true);
+    const result = await exited;
+    assert.deepEqual(result, { code: 0, signal: null });
+    assert.equal(await pingOwner(loopPaths(setupResult.home, loopId).socket, 200), loopId);
+    await waitForEnd(setupResult.home, loopId);
+  } finally {
+    child?.kill("SIGKILL");
+    if (loopId !== undefined) await waitForEnd(setupResult.home, loopId).catch(() => undefined);
     await rm(setupResult.root, { recursive: true, force: true });
   }
 });

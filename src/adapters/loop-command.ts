@@ -373,7 +373,7 @@ function reportLoopEnd(status: LoopStatus, err: (text: string) => void): number 
       {
         summary: `loop ${status.loopId} ${status.state}: ${reason}${detail}`,
         code: "operation_failed",
-        help: `See each run with: loopfile result ${status.loopId}.`,
+        help: `See each run with: loopfile result ${status.loopId}`,
       },
       1,
     ).stderr,
