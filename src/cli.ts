@@ -18,6 +18,8 @@ import { interruptCommand } from "./adapters/interrupt-command.ts";
 import { launchCommand } from "./adapters/launch-command.ts";
 import { listCommand } from "./adapters/list-command.ts";
 import { logsCommand } from "./adapters/logs-command.ts";
+import { loopCommand } from "./adapters/loop-command.ts";
+import { loopOwnerCommand } from "./adapters/loop-owner.ts";
 import { ownerCommand } from "./adapters/owner-command.ts";
 import { packCommand } from "./adapters/pack-command.ts";
 import { pruneCommand } from "./adapters/prune-command.ts";
@@ -52,6 +54,7 @@ Learn more:
 
 Commands:
   pack <directory> [-o <path>] [--force]
+  loop <source> (--times N | --list <file>) [--input k=v]... [-d]
   check <source> [--json]
   docs [<topic>]
   list [--json]
@@ -126,6 +129,17 @@ export function main(
   if (argv[0] === "check") return checkCommand(argv, out, err, readStdin);
   if (argv[0] === "docs") return docsCommand(argv, out, err);
   if (argv[0] === "list") return listCommand(argv, out, err, env);
+  if (argv[0] === "loop") {
+    return loopCommand(
+      argv,
+      import.meta.filename,
+      { out, err, upgrade: terminalUpgradeIo(out, err) },
+      env,
+      {
+        readStdin,
+      },
+    );
+  }
   if (argv[0] === "logs") return logsCommand(argv, out, err, env);
   if (argv[0] === "remove") return removeCommand(argv, out, err, env);
   if (argv[0] === "prune") return pruneCommand(argv, out, err, env);
@@ -184,6 +198,9 @@ export function main(
   // Hidden on purpose: `loopfile __owner <runid>` is how the CLI starts a run
   // owner (ADR 0008), not something a person types, so it is not in the help.
   if (positionals[0] === "__owner") return ownerCommand(positionals.slice(1), err, env);
+  if (positionals[0] === "__loop-owner") {
+    return loopOwnerCommand(positionals.slice(1), import.meta.filename, err, env);
+  }
 
   if (values.version) {
     out(`${version}\n`);

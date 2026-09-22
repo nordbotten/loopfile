@@ -141,6 +141,12 @@ export interface LoopPaths {
   readonly ownerLog: string;
 }
 
+export interface CreateLoopDirectoryOptions {
+  readonly home: string;
+  readonly loopId: string;
+  readonly targetRepository: string;
+}
+
 /** Where each of a loop's files goes, given a home and a loop ID. */
 export function loopPaths(home: string, loopId: string): LoopPaths {
   const root = join(home, "loops", loopId);
@@ -152,6 +158,25 @@ export function loopPaths(home: string, loopId: string): LoopPaths {
     socket: join(root, "owner.sock"),
     ownerLog: join(root, "owner.log"),
   };
+}
+
+export async function createLoopDirectory(options: CreateLoopDirectoryOptions): Promise<LoopPaths> {
+  const paths = loopPaths(options.home, options.loopId);
+  await checkOutsideRepository(paths.root, options.targetRepository);
+  checkSocketPathLength(paths.socket);
+
+  await makeDirectory(join(options.home, "loops"), true);
+  await makeDirectory(paths.root, false);
+  await writeFile(paths.ownerLog, "", { flag: "a" }).catch((error: NodeJS.ErrnoException) => {
+    throw loopDirectoryError(error, paths.ownerLog);
+  });
+  return paths;
+}
+
+function loopDirectoryError(error: NodeJS.ErrnoException, path: string): RunDirectoryError {
+  const reason =
+    error.code === "EEXIST" ? "loop folder already exists" : `cannot create (${error.code})`;
+  return new RunDirectoryError(`${reason}: ${path}`, { cause: error });
 }
 
 export function runPaths(home: string, runId: string): RunPaths {

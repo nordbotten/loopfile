@@ -78,6 +78,7 @@ test("--help is a short command index", () => {
       .split("\n"),
     [
       "  pack <directory> [-o <path>] [--force]",
+      "  loop <source> (--times N | --list <file>) [--input k=v]... [-d]",
       "  check <source> [--json]",
       "  docs [<topic>]",
       "  list [--json]",
@@ -102,6 +103,7 @@ test("every operator command has its own help", async () => {
   const commands = [
     ["./source", "--help"],
     ["pack", "--help"],
+    ["loop", "--help"],
     ["check", "--help"],
     ["docs", "--help"],
     ["list", "--help"],

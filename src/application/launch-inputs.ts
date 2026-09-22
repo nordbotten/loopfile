@@ -24,6 +24,34 @@ export function inputHelp(defaults: Readonly<Record<string, string>> = {}): stri
   return optional === "" ? INPUT_HELP : `${INPUT_HELP} Optional inputs: ${optional}`;
 }
 
+/** Parses one JSON Lines input set. */
+export function parseInputSet(text: string): InputsCheck {
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    return refuse("input set is not valid JSON");
+  }
+  if (!isRecord(value)) return refuse("input set is not a JSON object");
+  const problems = Object.entries(value)
+    .filter(([, input]) => typeof input !== "string")
+    .map(([name]) => `input "${name}" is not a string`);
+  return problems.length === 0
+    ? { ok: true, inputs: value as LaunchInputs }
+    : { ok: false, messages: problems };
+}
+
+/** Joins fixed `--input` values with one source input set without overwriting. */
+export function mergeInputSet(fixed: LaunchInputs, fromSource: LaunchInputs): InputsCheck {
+  const duplicates = Object.keys(fixed).filter((name) => Object.hasOwn(fromSource, name));
+  if (duplicates.length > 0) {
+    return refuse(
+      duplicates.map((name) => `input "${name}" is given by both --input and the input source`),
+    );
+  }
+  return { ok: true, inputs: { ...fixed, ...fromSource } };
+}
+
 /** Turns each `--input` value, `name=value`, into a map. The value is everything after the first `=`. */
 export function parseInputFlags(flags: readonly string[]): InputsCheck {
   const inputs = new Map<string, string>();
@@ -46,7 +74,7 @@ export function checkAgainstDeclared(
   declared: Readonly<Record<string, string>>,
   defaults: Readonly<Record<string, string>> = {},
 ): InputsCheck {
-  const undeclared = Object.keys(given).filter((name) => !(name in declared));
+  const undeclared = Object.keys(given).filter((name) => !Object.hasOwn(declared, name));
   if (undeclared.length > 0) return refuse(undeclaredMessages(undeclared, declared));
   const missing = missingInputNames(given, declared, defaults);
   if (missing.length > 0) return refuse(missingMessages(missing, declared));
@@ -68,7 +96,9 @@ function missingInputNames(
   declared: Readonly<Record<string, string>>,
   defaults: Readonly<Record<string, string>>,
 ): readonly string[] {
-  return Object.keys(declared).filter((name) => !(name in given) && !(name in defaults));
+  return Object.keys(declared).filter(
+    (name) => !Object.hasOwn(given, name) && !Object.hasOwn(defaults, name),
+  );
 }
 
 function missingMessages(
@@ -86,7 +116,7 @@ function resolvedInputs(
   if (Object.keys(defaults).length === 0) return given;
   const inputs: Record<string, string> = {};
   for (const name of Object.keys(declared)) {
-    inputs[name] = name in given ? (given[name] ?? "") : (defaults[name] ?? "");
+    inputs[name] = Object.hasOwn(given, name) ? (given[name] ?? "") : (defaults[name] ?? "");
   }
   return inputs;
 }
