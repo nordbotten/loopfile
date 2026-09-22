@@ -1,0 +1,53 @@
+# Reference loop: implement -> test -> review.
+formatVersion: 1
+inputs:
+  task: what to build, usually a whole issue body
+maxTransitions: 40
+runTimeout: 8h
+
+steps:
+  - id: implement
+    kind: ralph
+    harness: claude
+    model: claude-opus-5
+    effort: high
+    promptFile: prompts/implement.md
+    timeout: 30m            # per iteration
+    maxIterations: 20
+    maxAttempts: 6          # visits from test and review count
+    on:
+      done: test
+      blocked: $failure
+    # no onFailure: the loader fills in $failure
+
+  - id: test
+    kind: command
+    run: |
+      if npm test > "$LOOPFILE_SCRATCH/test.log" 2>&1; then outcome=passed; else outcome=failed; fi
+      loopfile data put test.log "$LOOPFILE_SCRATCH/test.log"
+      loopfile result "$outcome"
+    timeout: 15m
+    outputs: [log]          # put on every clean exit, so test.log is never stale
+    on:
+      passed: review
+      failed: implement
+    onFailure: test         # crash or timeout: retry, counts toward maxAttempts
+
+  - id: review
+    kind: agent
+    harness: claude
+    effort: medium
+    prompt: |
+      The task:
+      {{ input.task }}
+
+      Review the change in the workspace against the task.
+      If it is good, run `loopfile result approved`.
+      If not, write what must change with `loopfile data put review.feedback -`,
+      then run `loopfile result changes_requested`.
+    outputs:
+      feedback: [changes_requested]
+    on:
+      approved: $success
+      changes_requested: implement
+    onFailure: review

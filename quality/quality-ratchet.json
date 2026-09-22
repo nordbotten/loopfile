@@ -1,0 +1,13 @@
+{
+  "coverage": {
+    "CORE": { "statements": 90, "branches": 85, "functions": 90, "lines": 90 },
+    "BOUNDARY": { "statements": 70, "branches": 60, "functions": 70, "lines": 70 }
+  },
+  "crap": { "max": 10 },
+  "mutation": { "min": 75 },
+  "implementation": {
+    "set": "2026-09-18",
+    "why": "Standards chosen, not measurements copied. CORE carries a higher branch floor than the rest because routing and transition bugs hide in branches, and routing is the product. BOUNDARY is lower because vendor and transport failure paths should not be forced into CORE just to reach a number. EXEMPT is not measured.",
+    "measured": "At the time they were set, CORE and BOUNDARY both read 100/100/100/100 and the whole-repository mutation score was 77. The margin is deliberate: a bar is a floor to hold, not a number to sit on."
+  }
+}

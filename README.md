@@ -1,0 +1,85 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/loopfile-logo-dark.svg">
+    <img alt="Loopfile" src="docs/assets/loopfile-logo.svg" width="400">
+  </picture>
+</p>
+
+# Loopfile
+
+Loopfile is a small, deterministic runtime for agentic software-engineering
+workflows. A loop is a `manifest.yaml` of steps: agent steps run a coding agent,
+command steps run shell checks, and each result routes the run to the next step.
+Every run works in its own Git branch.
+
+Status: early. The format is versioned (`formatVersion: 1`), but expect changes
+before 1.0.
+
+## Install
+
+Needs Node.js 24 or later and Git.
+
+```sh
+npm install -g loopfile
+```
+
+Agent steps need a harness CLI, for example `claude`, installed and logged in.
+
+## Example
+
+```yaml
+# manifest.yaml
+formatVersion: 1
+steps:
+  - id: write
+    kind: agent
+    harness: claude
+    prompt: |
+      Create a file named hello.txt in the workspace root. It holds one line: hello
+      Commit the file. Then run: loopfile result done
+    on:
+      done: check
+  - id: check
+    kind: command
+    run: |
+      grep -qx hello hello.txt
+      git ls-files --error-unmatch hello.txt > /dev/null
+```
+
+Run it from inside a Git repository:
+
+```sh
+loopfile path/to/loop-directory
+loopfile status
+git show loopfile/<runid>:hello.txt
+```
+
+Run `loopfile --help` for all commands.
+
+## Platforms
+
+Loopfile runs on Linux and macOS. On Windows, run it inside
+[WSL](https://learn.microsoft.com/windows/wsl/). Native Windows is not supported.
+
+## Documentation
+
+The docs ship with the package:
+
+```sh
+loopfile docs            # list the topics
+loopfile docs manifest   # print one topic
+```
+
+- `format` ([The Loopfile format](docs/loopfile-format.md)): source directory,
+  `manifest.yaml`, thin and packed `.loop`, and upgrade.
+- `manifest` ([The v1 manifest](docs/manifest-v1.md)): the fields of the
+  manifest and the workflow model.
+- `runtime` ([How a run works](docs/runtime.md)): steps, routing, attempts,
+  limits, the execution context, step commands, handoffs, inputs and the
+  workspace.
+- `skill`: an agent skill for writing loops. Install it with
+  `loopfile docs skill > ~/.claude/skills/loopfile/SKILL.md`.
+
+## License
+
+MIT

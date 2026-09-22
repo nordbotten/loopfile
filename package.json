@@ -1,0 +1,55 @@
+{
+  "name": "loopfile",
+  "version": "0.1.0",
+  "description": "A deterministic runtime for agentic software-engineering workflows",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "loopfile": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "!dist/**/*.test.js",
+    "!dist/**/*.map",
+    "docs/*.md",
+    "docs/assets",
+    "examples",
+    "skills"
+  ],
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "build": "rm -rf dist && tsc",
+    "typecheck": "tsc --noEmit",
+    "lint": "biome check .",
+    "format": "biome check --write .",
+    "test": "node --test 'src/**/*.test.ts' 'quality/**/*.test.mjs'",
+    "quality:zones": "node quality/quality-zones.mjs",
+    "quality:suppressions": "node quality/quality-suppressions.mjs",
+    "quality:imports": "node quality/quality-imports.mjs",
+    "quality:coverage": "node quality/quality-coverage.mjs",
+    "quality:mutation": "stryker run quality/stryker.config.mjs",
+    "quality:ratchet": "node quality/quality-ratchet-check.mjs",
+    "quality": "node quality/quality-runner.mjs",
+    "gate": "node quality/quality-runner.mjs --gate",
+    "gate:quiet": "node quality/quality-runner.mjs --gate --quiet"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.14",
+    "@stryker-mutator/core": "^10.0.0",
+    "@stryker-mutator/tap-runner": "^10.0.0",
+    "@types/node": "^24.10.1",
+    "c8": "^12.0.0",
+    "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "handlebars": "^4.7.9",
+    "tar": "^7.5.22",
+    "yaml": "^2.9.1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nordbotten/loopfile.git"
+  }
+}

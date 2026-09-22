@@ -1,0 +1,25 @@
+# The smallest loop: an agent writes a file, then a command checks it.
+#
+# Needs the `claude` CLI installed and logged in.
+# Run it from inside a Git repository.
+#
+# Run:
+#   loopfile examples/minimal
+#
+# See the result:
+#   git show loopfile/<runid>:hello.txt
+formatVersion: 1
+steps:
+  - id: write
+    kind: agent
+    harness: claude
+    prompt: |
+      Create a file named hello.txt in the workspace root. It holds one line: hello
+      Commit the file. Then run: loopfile result done
+    on:
+      done: check
+  - id: check
+    kind: command
+    run: |
+      grep -qx hello hello.txt
+      git ls-files --error-unmatch hello.txt > /dev/null

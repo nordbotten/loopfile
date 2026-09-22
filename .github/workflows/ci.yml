@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Two self-hosted runners serve the whole repository, so a superseded run gives
+# its runner up rather than making the next one wait.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Its own job because it runs test files once per mutant. Everything else in
+  # this workflow is meant to answer in seconds. It is first, so the longest job
+  # gets one of the 2 self-hosted runners first.
+  mutation:
+    # Temporary: skipped on a push to main to save runner time.
+    if: github.event_name == 'pull_request'
+    runs-on: [self-hosted, Linux, X64]
+    steps:
+      # Mutates only the files changed since main, so it needs main's history.
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - run: npm ci
+      - run: npm run quality:mutation
+
+  check:
+    runs-on: [self-hosted, Linux, X64]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - run: npm ci
+      - run: npm run build
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm test
+
+  # The ratchet compares this branch's bars with the ones on the base, so this
+  # job needs history that the default shallow checkout does not fetch.
+  gate:
+    # Temporary: skipped on a push to main to save runner time.
+    if: github.event_name == 'pull_request'
+    runs-on: [self-hosted, Linux, X64]
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - run: npm ci
+      - run: npm run quality:ratchet
+      - run: npm run gate
