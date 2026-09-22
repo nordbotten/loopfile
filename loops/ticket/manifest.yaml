@@ -24,8 +24,8 @@ steps:
   - id: implement
     kind: agent
     harness: pi
-    model: openai-codex/gpt-5.6-terra
-    effort: high
+    model: openai-codex/gpt-5.6-luna
+    effort: xhigh
     promptFile: prompts/implement.md
     timeout: 60m
     on:
