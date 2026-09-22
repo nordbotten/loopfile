@@ -103,6 +103,8 @@ export interface LaunchRequest {
   readonly sourceText?: string;
   readonly repository: string;
   readonly inputs: LaunchInputs;
+  /** Overrides the basename of the source in status and prompt facts. */
+  readonly loopfileName?: string;
   /** Set by an in-process loop owner, never by a CLI flag. */
   readonly loopId?: string;
   /** One-based position in the loop. */
@@ -133,19 +135,21 @@ function launchRequest(value: unknown): LaunchRequest | undefined {
     kind: value.kind,
     repository: value.repository,
     inputs: value.inputs,
+    loopfileName: value.loopfileName,
     ...optionalLoopFields(value.loopId, value.loopIndex),
   };
 }
 
 function isLaunchRequest(value: unknown): value is LaunchRequest {
   if (!isRecord(value)) return false;
-  const { source, sourceText, kind, repository, inputs, loopId, loopIndex } = value;
+  const { source, sourceText, kind, repository, inputs, loopfileName, loopId, loopIndex } = value;
   return (
     typeof source === "string" &&
     typeof repository === "string" &&
     isKind(kind) &&
     isInputs(inputs) &&
     validSourceText(sourceText, kind) &&
+    validLoopfileName(loopfileName) &&
     validLoopId(loopId) &&
     validLoopIndex(loopIndex)
   );
@@ -176,6 +180,10 @@ function isKind(value: unknown): value is LaunchRequest["kind"] {
 function isInputs(value: unknown): value is LaunchInputs {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
   return Object.values(value).every((text) => typeof text === "string");
+}
+
+function validLoopfileName(value: unknown): value is string | undefined {
+  return value === undefined || typeof value === "string";
 }
 
 function validLoopId(value: unknown): value is string | undefined {

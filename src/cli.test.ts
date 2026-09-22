@@ -125,6 +125,8 @@ test("every operator command has its own help", async () => {
     assert.equal(result.errors, "", argv.join(" "));
     if (argv[0] === "./source") {
       assert.match(result.output, /--detach/);
+      assert.match(result.output, /github:owner\/repo/);
+      assert.match(result.output, /--trust/);
       assert.match(result.output, /live monitor/);
       assert.match(result.output, /With no terminal/);
       assert.match(result.output, /Exit codes are/);

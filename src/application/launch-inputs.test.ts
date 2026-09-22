@@ -83,6 +83,7 @@ test("a launch request survives the environment variable", () => {
     sourceText: "formatVersion: 1",
     repository: "/r",
     inputs: { a: "1" },
+    loopfileName: "loops",
     loopId: "loop-20260922-105306-qfn3",
     loopIndex: 3,
   };
@@ -103,6 +104,7 @@ test("a launch request that is not one decodes to nothing", () => {
     JSON.stringify({ ...good, inputs: null }),
     JSON.stringify({ ...good, inputs: [] }),
     JSON.stringify({ ...good, inputs: { a: 1 } }),
+    JSON.stringify({ ...good, loopfileName: 1 }),
     JSON.stringify({ ...good, loopId: 1 }),
     JSON.stringify({ ...good, loopIndex: 0 }),
     JSON.stringify({ ...good, loopIndex: 1.5 }),
