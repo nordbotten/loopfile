@@ -80,7 +80,7 @@ _Avoid_: Artifact passing
 The name that data is put under. It belongs to the step that puts it. An input belongs to the run.
 
 **Input**:
-Text the user gives at launch with `--input <name>=<value>`, for example `--input issue=42`. It is kept under the data key `input.<name>`, and every step can read it. The step ID `input` is reserved. A manifest declares every input it takes, with a one-line description for each. All of them are required, and an input that is not declared is a launch error.
+Text the user gives at launch with `--input <name>=<value>`, for example `--input issue=42`. It is kept under the data key `input.<name>`, and every step can read it. The step ID `input` is reserved. A manifest declares every input it takes, with a one-line description for each. An input with a default is optional, and a run that does not give it uses the default. An input with no default is required. An input that is not declared is a launch error.
 _Avoid_: Task, parameter, argument
 
 **Output**:
