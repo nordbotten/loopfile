@@ -23,7 +23,7 @@ A `.loop` file that is the manifest itself.
 A `.loop` tar archive with `manifest.yaml` at its root plus the Loopfile's assets.
 
 **Remote Loopfile**:
-A Loopfile named by its Git host, repository, optional path and optional ref, and fetched at launch. It is not the target repository.
+A Loopfile named by its Git host, repository, optional path and optional ref, and fetched at launch. It is not the target repository. `unpack` turns it into a local Loopfile that keeps no link to its source.
 _Avoid_: Remote repo, URL source
 
 **Trust list**:
