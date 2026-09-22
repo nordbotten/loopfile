@@ -38,61 +38,18 @@ export function nextLoopAction(
   status: LoopStatus,
   lastChild: LastChild,
   source?: LoopSource,
-  nextResultOrRetry?: NextSourceResult | number,
-  workflowOrHistory?: Pick<Workflow, "inputs" | "inputDefaults"> | readonly LoopEvent[],
+  nextResult?: NextSourceResult,
+  workflow?: Pick<Workflow, "inputs" | "inputDefaults">,
   retry = 0,
   history: readonly LoopEvent[] = [],
 ): LoopAction {
-  const args = normalizeActionArgs(nextResultOrRetry, workflowOrHistory, retry, history);
-
   if (lastChild.state === "running") return { kind: "wait" };
-  const retryAction = retryFailedChild(lastChild, args.retry, args.history);
+  const retryAction = retryFailedChild(lastChild, retry, history);
   if (retryAction !== undefined) return retryAction;
   const childEnd = childEndAction(lastChild);
   if (childEnd !== undefined) return childEnd;
-  if (source?.kind === "next") {
-    return nextCommandAction(status, args.nextResult, args.workflow);
-  }
+  if (source?.kind === "next") return nextCommandAction(status, nextResult, workflow);
   return source?.kind === "list" ? nextListAction(status, source) : nextTimesAction(status);
-}
-
-interface NormalizedActionArgs {
-  readonly nextResult: NextSourceResult | undefined;
-  readonly workflow: Pick<Workflow, "inputs" | "inputDefaults"> | undefined;
-  readonly retry: number;
-  readonly history: readonly LoopEvent[];
-}
-
-function normalizeActionArgs(
-  nextResultOrRetry: NextSourceResult | number | undefined,
-  workflowOrHistory: Pick<Workflow, "inputs" | "inputDefaults"> | readonly LoopEvent[] | undefined,
-  retry: number,
-  history: readonly LoopEvent[],
-): NormalizedActionArgs {
-  const eventHistory = isEventHistory(workflowOrHistory) ? workflowOrHistory : history;
-  if (typeof nextResultOrRetry === "number") {
-    return {
-      nextResult: undefined,
-      workflow: undefined,
-      retry: nextResultOrRetry,
-      history: eventHistory,
-    };
-  }
-  if (isEventHistory(workflowOrHistory)) {
-    return { nextResult: nextResultOrRetry, workflow: undefined, retry, history: eventHistory };
-  }
-  return {
-    nextResult: nextResultOrRetry,
-    workflow: workflowOrHistory,
-    retry,
-    history: eventHistory,
-  };
-}
-
-function isEventHistory(
-  value: Pick<Workflow, "inputs" | "inputDefaults"> | readonly LoopEvent[] | undefined,
-): value is readonly LoopEvent[] {
-  return Array.isArray(value);
 }
 
 function retryFailedChild(
