@@ -73,13 +73,12 @@ function git(
 ): Promise<GitResult> {
   return new Promise<GitResult>((resolve, reject) => {
     const child = spawn("git", [...args], {
-      ...(cwd === undefined ? {} : { cwd }),
+      cwd,
       env,
       stdio: ["inherit", "pipe", "pipe"],
     });
     let stdout = "";
     let stderr = "";
-    let settled = false;
     child.stdout?.setEncoding("utf8");
     child.stderr?.setEncoding("utf8");
     child.stdout?.on("data", (chunk: string) => {
@@ -89,13 +88,9 @@ function git(
       stderr += chunk;
     });
     child.once("error", (error) => {
-      if (settled) return;
-      settled = true;
       reject(new RemoteFetchError(error.message, stderr.trim() || error.message));
     });
     child.once("close", (code) => {
-      if (settled) return;
-      settled = true;
       if (code === 0) {
         resolve({ stdout });
       } else {
