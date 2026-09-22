@@ -367,9 +367,10 @@ async function walk(
     if (step === undefined) throw new WorkflowRunError(`no step ${target}`);
     const visited = await visit(options, owner, workflow, step, tracked, workspace, loopfileName);
     if (visited.kind === "interrupted") {
-      await tracked.log.append({ type: "attempt.interrupted", attemptId: visited.attemptId });
-      if (visited.by === "cancel") return await cancelRun(tracked);
-      return await end(tracked, RUN_TIMEOUT_END);
+      const ended = await interruptedStep(step, visited, tracked);
+      if (ended !== undefined) return ended;
+      target = step.id;
+      continue;
     }
 
     const moved = await move(workflow, step, visited, tracked);
@@ -409,6 +410,18 @@ async function move(
 
 /** The next target, or the run's end. */
 type Moved = { readonly to: string } | { readonly event: RunEndedFields };
+
+async function interruptedStep(
+  step: Step,
+  visited: Extract<Visited, { kind: "interrupted" }>,
+  tracked: Tracked,
+): Promise<{ readonly result: ExecutedRun["result"] } | undefined> {
+  await tracked.log.append({ type: "attempt.interrupted", attemptId: visited.attemptId });
+  if (visited.by === "cancel") return await cancelRun(tracked);
+  if (visited.by === "run_timeout") return await end(tracked, RUN_TIMEOUT_END);
+  const attempts = checkAttemptLimit(step, replay(tracked.history));
+  return attempts.allowed ? undefined : await end(tracked, attempts.event);
+}
 
 const RUN_TIMEOUT_END: RunEndedFields = {
   type: "run.ended",
@@ -516,13 +529,18 @@ async function visit(
   const startedAt = new Date().toISOString();
   const attempt = await createAttemptDirectory(owner.paths.attempts, attemptId);
   let current: AttemptIdentity | undefined;
-  const guard = attemptGuard(workflow, tracked.history, options.executor, owner.cancelled);
-
   const served = await owner.serveAttempt({
     socketPath: attempt.socket,
     current: () => current,
     handle: dispatch(tracked, owner, step),
   });
+  const guard = attemptGuard(
+    workflow,
+    tracked.history,
+    options.executor,
+    owner.cancelled,
+    served.interruptSignal,
+  );
   try {
     const secret = randomBytes(16).toString("hex");
     current = { attemptId, secret };
@@ -546,6 +564,8 @@ async function visit(
         attempt,
         startedAt,
         loopfileName,
+        interruptSignal: served.interruptSignal,
+        stopSignal: AbortSignal.any([owner.cancelled, served.interruptSignal]),
         setCurrent: (identity) => {
           current = identity;
         },
@@ -560,7 +580,7 @@ async function visit(
       },
     );
     const by = guard.stoppedBy();
-    if (by === "cancel") await guard.drained();
+    if (by === "cancel" || by === "interrupt") await guard.drained();
     if (by !== undefined) return { kind: "interrupted", attemptId, by };
     await tracked.log.append({ type: "attempt.ended", attemptId, ...ended });
     return { kind: "ended", attemptId, end: ended };
@@ -576,6 +596,8 @@ interface StepStart {
   readonly attempt: AttemptPaths;
   readonly startedAt: string;
   readonly loopfileName: string;
+  readonly interruptSignal: AbortSignal;
+  readonly stopSignal: AbortSignal;
   setCurrent(identity: AttemptIdentity | undefined): void;
   /** Records `attempt.started`. 0 is a process that never started, since no group has it. */
   onProcess(processGroupId: number): Promise<unknown>;
@@ -706,6 +728,7 @@ async function runRalph(run: RalphRun, step: RalphStep): Promise<AttemptEndField
       workflow: run.workflow,
       history: () => tracked.history,
       onActivity: (activity) => run.activity(latest)(activity),
+      stopSignal: start.stopSignal,
       newSecret: () => {
         latest = randomBytes(16).toString("hex");
         return latest;
@@ -777,8 +800,8 @@ function tracking(log: EventLog, history: RunEvent[], status: StatusWriter): Tra
 /** The end of an attempt that a step's own `timeout` cut short. */
 const TIMEOUT_END: AttemptEndFields = { result: "failure", reason: "timeout" };
 
-/** What cut an attempt short: the run timeout, or a cancel (#63). */
-type StopReason = "run_timeout" | "cancel";
+/** What cut an attempt short: the run timeout, a cancel, or an interrupt. */
+type StopReason = "run_timeout" | "cancel" | "interrupt";
 
 type Running = Extract<StartResult, { kind: "running" }>;
 
@@ -807,6 +830,7 @@ function attemptGuard(
   history: readonly RunEvent[],
   executor: Executor,
   cancelled: AbortSignal,
+  interrupted: AbortSignal,
 ): AttemptGuard {
   let stoppedBy: StopReason | undefined;
   const running: Running[] = [];
@@ -816,14 +840,18 @@ function attemptGuard(
   };
   const timer = runTimeoutTimer(workflow, history, () => stop("run_timeout"));
   const onCancel = () => stop("cancel");
+  const onInterrupt = () => stop("interrupt");
   cancelled.addEventListener("abort", onCancel, { once: true });
+  interrupted.addEventListener("abort", onInterrupt, { once: true });
   if (cancelled.aborted) onCancel();
+  if (interrupted.aborted) onInterrupt();
   return {
     stoppedBy: () => stoppedBy,
     drained: () => groupsGone(running.map((started) => started.processGroupId)),
     clear: () => {
       clearTimeout(timer);
       cancelled.removeEventListener("abort", onCancel);
+      interrupted.removeEventListener("abort", onInterrupt);
     },
     executor: {
       async start(request): Promise<StartResult> {
@@ -842,6 +870,7 @@ function attemptGuard(
 const STOPPED: Readonly<Record<StopReason, string>> = {
   run_timeout: "the run timeout has passed",
   cancel: "the run was cancelled",
+  interrupt: "the attempt was interrupted",
 };
 
 /** A timer for the run owner time that is left, or none when the run has no `runTimeout`. */

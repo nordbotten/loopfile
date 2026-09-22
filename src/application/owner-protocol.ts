@@ -22,6 +22,9 @@ export const PING = "ping";
 /** Asks the run owner to stop the run (#63, ADR 0008). */
 export const CANCEL = "cancel";
 
+/** Asks the run owner to stop the current attempt and start it again (#53). */
+export const INTERRUPT = "interrupt";
+
 /** The reply to a ping: the run ID is what makes a stale socket tell itself apart. */
 export interface Pong {
   readonly type: "pong";
@@ -46,6 +49,12 @@ export interface Cancelling {
   readonly runId: string;
 }
 
+/** The run owner took an interrupt and is stopping the current attempt (#53). */
+export interface Interrupting {
+  readonly type: "interrupting";
+  readonly runId: string;
+}
+
 /** A request the control socket does not know. */
 export interface ControlError {
   readonly type: "error";
@@ -53,7 +62,7 @@ export interface ControlError {
 }
 
 /** Everything the control socket sends. */
-export type ControlMessage = Pong | Ready | Cancelling | ControlError;
+export type ControlMessage = Pong | Ready | Cancelling | Interrupting | ControlError;
 
 /** Why the attempt socket refused a call. */
 export type RefusalCode = "stale_attempt" | "bad_request";
@@ -131,6 +140,18 @@ export function confirmsCancel(line: string, runId: string): boolean {
   return message?.type === "cancelling" && message.runId === runId;
 }
 
+/** Whether `line` confirms that this run took an interrupt. */
+export function confirmsInterrupt(line: string, runId: string): boolean {
+  const message = decodeMessage(line);
+  return message?.type === "interrupting" && message.runId === runId;
+}
+
+/** Whether `line` says there is no attempt for an interrupt to stop. */
+export function refusesInterrupt(line: string): boolean {
+  const message = decodeMessage(line);
+  return message?.type === "error" && message.message === "no attempt is running";
+}
+
 /**
  * What the control socket answers.
  *
@@ -139,11 +160,16 @@ export function confirmsCancel(line: string, runId: string): boolean {
  * owner. Anything else is named back to the caller rather than ignored, so a
  * client never waits on a reply that is not coming.
  */
-export function controlReply(line: string, runId: string): ControlMessage {
+export function controlReply(line: string, runId: string, canInterrupt = true): ControlMessage {
   const request = decodeMessage(line);
   if (request === undefined) return { type: "error", message: "request is not a JSON object" };
   if (request.type === PING) return { type: "pong", runId };
   if (request.type === CANCEL) return { type: "cancelling", runId };
+  if (request.type === INTERRUPT) {
+    return canInterrupt
+      ? { type: "interrupting", runId }
+      : { type: "error", message: "no attempt is running" };
+  }
   return { type: "error", message: `unknown request ${JSON.stringify(request.type)}` };
 }
 

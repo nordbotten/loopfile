@@ -12,6 +12,7 @@ import {
   type RunOwner,
   RunOwnerBusyError,
   requestCancel,
+  requestInterrupt,
   startRunOwner,
 } from "./run-owner.ts";
 
@@ -333,6 +334,23 @@ test("cancel on the control socket is confirmed and aborts cancelled", async (t)
   assert.equal(await requestCancel(owner.paths.socket, owner.runId), true);
   assert.equal(owner.cancelled.aborted, true);
   assert.equal(await pingOwner(owner.paths.socket), owner.runId, "the socket stays until close");
+});
+
+test("interrupt is refused between attempts and aborts the current attempt", async (t) => {
+  const owner = await started();
+  t.after(() => owner.close());
+  assert.equal(await requestInterrupt(owner.paths.socket, owner.runId), false);
+
+  const attempt = await owner.serveAttempt({
+    socketPath: join(owner.paths.root, "interrupt-sock"),
+    current: () => IDENTITY,
+    handle: () => ({ ok: true }),
+  });
+  assert.equal(attempt.interruptSignal.aborted, false);
+  assert.equal(await requestInterrupt(owner.paths.socket, owner.runId), true);
+  assert.equal(attempt.interruptSignal.aborted, true);
+  assert.equal(await requestInterrupt(owner.paths.socket, owner.runId), false);
+  await attempt.close();
 });
 
 test("a signal from outside aborts cancelled too, even one that fired first", async (t) => {

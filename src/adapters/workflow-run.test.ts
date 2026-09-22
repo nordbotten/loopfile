@@ -15,7 +15,7 @@ import { type EventLog, openEventLog } from "./event-log.ts";
 import { type FakeScript, fakeHarnessAdapters } from "./fake-harness.test.ts";
 import { groupAlive, localExecutor } from "./local-executor.ts";
 import { pathExists, runPaths } from "./run-directory.ts";
-import { requestCancel } from "./run-owner.ts";
+import { requestCancel, requestInterrupt } from "./run-owner.ts";
 import { appendInternalError, executeRun, WorkflowRunError } from "./workflow-run.ts";
 
 const run = promisify(execFile);
@@ -1378,6 +1378,162 @@ async function until<T>(read: () => Promise<T | undefined>): Promise<T> {
   }
   throw new Error("timed out");
 }
+
+test("an interrupt stops a command attempt and starts the same step again", async () => {
+  const { repo, source, home, runId } = await setup(`formatVersion: 1
+steps:
+  - id: work
+    kind: command
+    maxAttempts: 3
+    run: sleep 30
+`);
+  const paths = runPaths(home, runId);
+  const running = executeRun({
+    home,
+    runId,
+    source,
+    repository: repo,
+    executor: localExecutor(process.env, 200),
+  });
+  await until(async () => {
+    const events = parseEventLog(await readFile(paths.events, "utf8").catch(() => ""));
+    return events.some((event) => event.type === "attempt.started") ? true : undefined;
+  });
+  assert.equal(await requestInterrupt(paths.socket, runId), true);
+  await until(async () => {
+    const events = parseEventLog(await readFile(paths.events, "utf8"));
+    return events.filter((event) => event.type === "attempt.started").length === 2
+      ? true
+      : undefined;
+  });
+  const status = JSON.parse(await readFile(paths.status, "utf8"));
+  assert.equal(status.current.attempt, 2);
+  assert.equal(status.current.stepId, "work");
+  assert.equal(await requestCancel(paths.socket, runId), true);
+  assert.deepEqual(await running, { result: "cancelled" });
+  const events = parseEventLog(await readFile(paths.events, "utf8"));
+  assert.deepEqual(
+    events.slice(2).map((event) => event.type),
+    [
+      "attempt.started",
+      "attempt.interrupted",
+      "attempt.started",
+      "attempt.interrupted",
+      "run.cancelled",
+    ],
+  );
+});
+
+test("an interrupt stops an agent attempt and starts the same step again", async () => {
+  const { repo, source, home, runId } = await setup(`formatVersion: 1
+steps:
+  - id: work
+    kind: agent
+    harness: claude
+    maxAttempts: 2
+    prompt: Work.
+    on:
+      done: $success
+`);
+  const paths = runPaths(home, runId);
+  const running = executeRun({
+    home,
+    runId,
+    source,
+    repository: repo,
+    executor: localExecutor(process.env, 200),
+    adapters: fakeHarnessAdapters({
+      work: [[{ do: "sleep", ms: 30_000 }], [{ do: "sleep", ms: 30_000 }]],
+    }),
+  });
+  await until(async () => {
+    const events = parseEventLog(await readFile(paths.events, "utf8").catch(() => ""));
+    return events.some((event) => event.type === "attempt.started") ? true : undefined;
+  });
+  assert.equal(await requestInterrupt(paths.socket, runId), true);
+  await until(async () => {
+    const events = parseEventLog(await readFile(paths.events, "utf8"));
+    return events.filter((event) => event.type === "attempt.started").length === 2
+      ? true
+      : undefined;
+  });
+  assert.equal(await requestCancel(paths.socket, runId), true);
+  assert.deepEqual(await running, { result: "cancelled" });
+});
+
+test("an interrupted attempt uses maxAttempts and ends with attempt_limit", async () => {
+  const { repo, source, home, runId } = await setup(`formatVersion: 1
+steps:
+  - id: work
+    kind: command
+    maxAttempts: 1
+    run: sleep 30
+`);
+  const paths = runPaths(home, runId);
+  const running = executeRun({
+    home,
+    runId,
+    source,
+    repository: repo,
+    executor: localExecutor(process.env, 200),
+  });
+  await until(async () => {
+    const events = parseEventLog(await readFile(paths.events, "utf8").catch(() => ""));
+    return events.some((event) => event.type === "attempt.started") ? true : undefined;
+  });
+  assert.equal(await requestInterrupt(paths.socket, runId), true);
+  assert.deepEqual(await running, { result: "failure" });
+  const events = parseEventLog(await readFile(paths.events, "utf8"));
+  assert.deepEqual(
+    events.slice(2).map((event) => event.type),
+    ["attempt.started", "attempt.interrupted", "run.ended"],
+  );
+  const end = events.at(-1);
+  assert.equal(end?.type === "run.ended" && end.reason, "attempt_limit");
+});
+
+test("an interrupt stops a Ralph attempt, not just its current iteration", async () => {
+  const { repo, source, home, runId } = await setup(`formatVersion: 1
+steps:
+  - id: loop
+    kind: ralph
+    harness: claude
+    maxAttempts: 2
+    maxIterations: 3
+    prompt: Loop.
+    on:
+      done: $success
+`);
+  const paths = runPaths(home, runId);
+  const running = executeRun({
+    home,
+    runId,
+    source,
+    repository: repo,
+    executor: localExecutor(process.env, 200),
+    adapters: fakeHarnessAdapters({
+      loop: [[{ do: "sleep", ms: 30_000 }], [{ do: "result", outcome: "done" }]],
+    }),
+  });
+  await until(async () => {
+    const events = parseEventLog(await readFile(paths.events, "utf8").catch(() => ""));
+    return events.some((event) => event.type === "iteration.started") ? true : undefined;
+  });
+  assert.equal(await requestInterrupt(paths.socket, runId), true);
+  await until(async () => {
+    const events = parseEventLog(await readFile(paths.events, "utf8"));
+    return events.filter((event) => event.type === "attempt.started").length === 2
+      ? true
+      : undefined;
+  });
+  const events = parseEventLog(await readFile(paths.events, "utf8"));
+  assert.equal(
+    events.filter((event) => event.type === "iteration.started").length,
+    2,
+    "the replacement attempt starts its first iteration, but the interrupted attempt starts no second iteration",
+  );
+  assert.deepEqual(await running, { result: "success" });
+});
 
 test("a cancel on the control socket stops the attempt, kills what ignores SIGTERM, and ends as cancelled", async () => {
   const { repo, source, home, runId } = await setup(`formatVersion: 1
