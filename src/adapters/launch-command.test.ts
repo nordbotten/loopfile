@@ -12,6 +12,7 @@ import { type LaunchIo, launchCommand } from "./launch-command.ts";
 import { listCommand } from "./list-command.ts";
 import type { MonitorIo } from "./monitor.ts";
 import { writeArchive } from "./pack-command.ts";
+import { resultCommand } from "./result-command.ts";
 import { runPaths } from "./run-directory.ts";
 import { statusCommand } from "./status-command.ts";
 import { tailCommand } from "./tail-command.ts";
@@ -484,6 +485,76 @@ test("the run owner has its own session, so closing the terminal does not reach 
   await waitForEnd(home, runId);
 });
 
+test("an in-process launch records its loop link in the event, status and result", async () => {
+  const { repo, source, home, env } = await setup();
+  const capture = () => {
+    let text = "";
+    return {
+      write: (chunk: string) => {
+        text += chunk;
+      },
+      text: () => text,
+    };
+  };
+  const s = session();
+  assert.equal(
+    await launchCommand([source, "-d", "--input", "issue=42"], cli, s.io, env, {
+      repository: repo,
+      loopId: "loop-20260922-105306-qfn3",
+      loopIndex: 3,
+    }),
+    0,
+    s.err(),
+  );
+  const runId = s.out().trim();
+  const events = await waitForEnd(home, runId);
+  const created = events[0];
+  assert.deepEqual(
+    created?.type === "run.created"
+      ? { loopId: created.loopId, loopIndex: created.loopIndex }
+      : undefined,
+    { loopId: "loop-20260922-105306-qfn3", loopIndex: 3 },
+  );
+
+  const paths = runPaths(home, runId);
+  const statusFile = JSON.parse(await readFile(paths.status, "utf8")) as {
+    loopId: string;
+    loopIndex: number;
+  };
+  assert.deepEqual(
+    { loopId: statusFile.loopId, loopIndex: statusFile.loopIndex },
+    { loopId: "loop-20260922-105306-qfn3", loopIndex: 3 },
+  );
+
+  const status = capture();
+  assert.equal(await statusCommand(["status", runId], status.write, capture().write, env), 0);
+  assert.match(status.text(), /^loop: loop-20260922-105306-qfn3 \(run 3\)$/m);
+  const statusJson = capture();
+  assert.equal(
+    await statusCommand(["status", runId, "--json"], statusJson.write, capture().write, env),
+    0,
+  );
+  const statusBody = JSON.parse(statusJson.text()) as { loopId: string; loopIndex: number };
+  assert.deepEqual(
+    { loopId: statusBody.loopId, loopIndex: statusBody.loopIndex },
+    { loopId: "loop-20260922-105306-qfn3", loopIndex: 3 },
+  );
+
+  const result = capture();
+  assert.equal(await resultCommand(["result", runId], result.write, result.write, env), 0);
+  assert.match(result.text(), /^loop: loop-20260922-105306-qfn3 \(run 3\)$/m);
+  const resultJson = capture();
+  assert.equal(
+    await resultCommand(["result", runId, "--json"], resultJson.write, resultJson.write, env),
+    0,
+  );
+  const resultBody = JSON.parse(resultJson.text()) as { loopId: string; loopIndex: number };
+  assert.deepEqual(
+    { loopId: resultBody.loopId, loopIndex: resultBody.loopIndex },
+    { loopId: "loop-20260922-105306-qfn3", loopIndex: 3 },
+  );
+});
+
 test("the printed run ID is found by status, tail and list", async () => {
   const { repo, source, home, env } = await setup();
   const { runId } = await detached(source, home, env, repo);
@@ -501,6 +572,38 @@ test("the printed run ID is found by status, tail and list", async () => {
   const statusErr = capture();
   assert.equal(await statusCommand(["status", runId], status.write, statusErr.write, env), 0);
   assert.match(status.text(), new RegExp(runId));
+  assert.doesNotMatch(status.text(), /^loop:/m);
+
+  const statusJson = capture();
+  assert.equal(
+    await statusCommand(["status", runId, "--json"], statusJson.write, statusErr.write, env),
+    0,
+  );
+  const plainStatus = JSON.parse(statusJson.text()) as {
+    loopId: string | null;
+    loopIndex: number | null;
+  };
+  assert.deepEqual(
+    { loopId: plainStatus.loopId, loopIndex: plainStatus.loopIndex },
+    { loopId: null, loopIndex: null },
+  );
+  const result = capture();
+  const resultErr = capture();
+  assert.equal(await resultCommand(["result", runId], result.write, resultErr.write, env), 0);
+  assert.doesNotMatch(result.text(), /^loop:/m);
+  const resultJson = capture();
+  assert.equal(
+    await resultCommand(["result", runId, "--json"], resultJson.write, resultErr.write, env),
+    0,
+  );
+  const plainResult = JSON.parse(resultJson.text()) as {
+    loopId: string | null;
+    loopIndex: number | null;
+  };
+  assert.deepEqual(
+    { loopId: plainResult.loopId, loopIndex: plainResult.loopIndex },
+    { loopId: null, loopIndex: null },
+  );
 
   const tail = capture();
   const tailErr = capture();

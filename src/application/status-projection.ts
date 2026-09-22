@@ -87,6 +87,7 @@ export function projectStatus(
     updatedAt: context.updatedAt,
     runId: state.runId,
     loopfileName: context.loopfileName,
+    ...loopFields(events[0]),
     state: lifecycle.state,
     endReason: lifecycle.endReason,
     startedAt: state.createdAt,
@@ -100,6 +101,13 @@ export function projectStatus(
     maxTransitions: context.workflow.maxTransitions ?? null,
     metrics: harnessData.metrics,
   };
+}
+
+function loopFields(
+  event: RunEvent | undefined,
+): Pick<StatusProjection, "loopId" | "loopIndex"> {
+  if (event?.type !== "run.created") return { loopId: null, loopIndex: null };
+  return { loopId: event.loopId ?? null, loopIndex: event.loopIndex ?? null };
 }
 
 /** One attempt with a start and no end yet, found by one pass over the events. */

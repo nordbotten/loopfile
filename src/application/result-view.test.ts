@@ -42,11 +42,29 @@ test("operator result arguments accept text and JSON forms", () => {
   assert.match(failureMessage(["result", "run-1", "extra", "--json"]), /unknown argument: extra/);
 });
 
-test("a result has no outcome before a step reports one", () => {
+test("a plain result has null loop fields and no loop line", () => {
   const result = view();
   assert.equal(result.state, "running");
   assert.equal(result.endReason, null);
   assert.equal(result.lastOutcome, null);
+  assert.equal(result.loopId, null);
+  assert.equal(result.loopIndex, null);
+  assert.doesNotMatch(renderResultView(result), /^loop:/m);
+});
+
+test("a result in a loop carries and prints its link", () => {
+  const result = buildResultView(
+    [{ ...created, loopId: "loop-1", loopIndex: 2 } as RunEvent],
+    "review-loop",
+  );
+
+  assert.equal(result.loopId, "loop-1");
+  assert.equal(result.loopIndex, 2);
+  assert.deepEqual(renderResultView(result).split("\n").slice(0, 3), [
+    "run          run-1 · review-loop",
+    "loop: loop-1 (run 2)",
+    "state        running",
+  ]);
 });
 
 test("a result carries the declared values", () => {

@@ -110,6 +110,9 @@ export interface ExecuteRunOptions {
    * which records its name, size and digest but not its value (#35).
    */
   readonly inputs?: LaunchInputs;
+  /** The loop that started the run, when this is a loop child. */
+  readonly loopId?: string;
+  readonly loopIndex?: number;
   /** The target repository the workspace is made from. */
   readonly repository: string;
   readonly executor: Executor;
@@ -294,6 +297,8 @@ async function prepare(
       baseCommit: workspace.baseCommit,
       branch: workspace.branch,
       inputs,
+      ...(options.loopId === undefined ? {} : { loopId: options.loopId }),
+      ...(options.loopIndex === undefined ? {} : { loopIndex: options.loopIndex }),
     },
   };
 }

@@ -16,6 +16,8 @@ function status(overrides: Partial<StatusProjection> = {}): StatusProjection {
     updatedAt: NOW,
     runId: RUN,
     loopfileName: "fix-bugs",
+    loopId: null,
+    loopIndex: null,
     state: "running",
     endReason: null,
     startedAt: START,

@@ -103,6 +103,10 @@ export interface LaunchRequest {
   readonly sourceText?: string;
   readonly repository: string;
   readonly inputs: LaunchInputs;
+  /** Set by an in-process loop owner, never by a CLI flag. */
+  readonly loopId?: string;
+  /** One-based position in the loop. */
+  readonly loopIndex?: number;
 }
 
 /** The environment variable that hands a `LaunchRequest` to `loopfile __owner`, so no run file holds it. */
@@ -122,12 +126,39 @@ export function decodeLaunch(text: string): LaunchRequest | undefined {
 }
 
 function launchRequest(value: unknown): LaunchRequest | undefined {
-  if (!isRecord(value)) return undefined;
-  const { source, sourceText, kind, repository, inputs } = value;
-  if (typeof source !== "string" || typeof repository !== "string") return undefined;
-  if (!isKind(kind) || !isInputs(inputs)) return undefined;
-  if (!validSourceText(sourceText, kind)) return undefined;
-  return { source, sourceText, kind, repository, inputs };
+  if (!isLaunchRequest(value)) return undefined;
+  return {
+    source: value.source,
+    sourceText: value.sourceText,
+    kind: value.kind,
+    repository: value.repository,
+    inputs: value.inputs,
+    ...optionalLoopFields(value.loopId, value.loopIndex),
+  };
+}
+
+function isLaunchRequest(value: unknown): value is LaunchRequest {
+  if (!isRecord(value)) return false;
+  const { source, sourceText, kind, repository, inputs, loopId, loopIndex } = value;
+  return (
+    typeof source === "string" &&
+    typeof repository === "string" &&
+    isKind(kind) &&
+    isInputs(inputs) &&
+    validSourceText(sourceText, kind) &&
+    validLoopId(loopId) &&
+    validLoopIndex(loopIndex)
+  );
+}
+
+export function optionalLoopFields(
+  loopId: string | undefined,
+  loopIndex: number | undefined,
+): Pick<LaunchRequest, "loopId" | "loopIndex"> {
+  return {
+    ...(loopId === undefined ? {} : { loopId }),
+    ...(loopIndex === undefined ? {} : { loopIndex }),
+  };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -145,4 +176,14 @@ function isKind(value: unknown): value is LaunchRequest["kind"] {
 function isInputs(value: unknown): value is LaunchInputs {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
   return Object.values(value).every((text) => typeof text === "string");
+}
+
+function validLoopId(value: unknown): value is string | undefined {
+  return value === undefined || typeof value === "string";
+}
+
+function validLoopIndex(value: unknown): value is number | undefined {
+  return (
+    value === undefined || (typeof value === "number" && Number.isInteger(value) && value >= 1)
+  );
 }

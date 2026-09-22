@@ -21,6 +21,8 @@ function status(overrides: Partial<StatusProjection> = {}): StatusProjection {
     updatedAt: "2026-09-17T16:04:00.000Z",
     runId: "20260917-160300-aaaa",
     loopfileName: "review-loop",
+    loopId: null,
+    loopIndex: null,
     state: "running",
     endReason: null,
     startedAt: "2026-09-17T16:03:00.000Z",
@@ -150,6 +152,22 @@ test("an active run shows state, identity, step, visited steps, transitions and 
     /^metrics +input tokens unknown · output tokens unknown · total tokens unknown · cost unknown · tool calls unknown · permission denials unknown$/m,
   );
   assert.doesNotMatch(text, /^outcome/m);
+});
+
+test("a run in a loop prints its link after the run line", () => {
+  const text = renderStatusView(
+    buildStatusView(status({ loopId: "loop-1", loopIndex: 2 }), "running", []),
+  );
+
+  assert.deepEqual(text.split("\n").slice(0, 3), [
+    "run         20260917-160300-aaaa · review-loop",
+    "loop: loop-1 (run 2)",
+    "state       running",
+  ]);
+});
+
+test("a plain run has no loop line", () => {
+  assert.doesNotMatch(renderStatusView(buildStatusView(status(), "running", [])), /^loop:/m);
 });
 
 test("an ended run shows its outcome and elapsed time, and a reported 0 is not unknown", () => {

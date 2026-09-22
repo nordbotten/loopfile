@@ -131,11 +131,11 @@ function transitionText(transition: RecentTransition): string {
 /** The human view of one run. Plain text: no ANSI, so a pipe stays clean. */
 export function renderStatusView(view: RunStatusView): string {
   const ended = view.endedAt !== null;
-  const lines = [
-    line("run", `${view.runId} · ${view.loopfileName}`),
-    line("state", view.state),
-    line("started", view.startedAt),
-  ];
+  const lines = [line("run", `${view.runId} · ${view.loopfileName}`)];
+  if (view.loopId !== null && view.loopIndex !== null) {
+    lines.push(`loop: ${view.loopId} (run ${view.loopIndex})`);
+  }
+  lines.push(line("state", view.state), line("started", view.startedAt));
   if (view.current !== null) lines.push(line("step", currentText(view.current)));
   if (ended) {
     lines.push(line("outcome", `${view.endReason ?? "unknown"} at ${view.endedAt}`));

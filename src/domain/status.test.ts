@@ -19,6 +19,8 @@ export const runningExample: StatusProjection = {
   updatedAt: "2026-09-18T10:04:00.000Z",
   runId: "2026-09-18-0001",
   loopfileName: "implement",
+  loopId: null,
+  loopIndex: null,
   state: "running",
   endReason: null,
   startedAt: "2026-09-18T10:00:00.000Z",
