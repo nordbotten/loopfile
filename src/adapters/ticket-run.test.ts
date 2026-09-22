@@ -249,6 +249,7 @@ test("the ticket Loopfile ships again when the merge is behind main", async () =
   const runId = "20260921-120000-behind";
   const merges = join(dir, "merges");
   await mkdir(bin, { recursive: true });
+  await loopfileCommand(bin);
   await gitRepo(repo, join(dir, "origin.git"));
   await executable(join(bin, "npm"), "exit 0\n");
   await executable(
@@ -293,6 +294,7 @@ test("the ticket Loopfile sends a conflict with main to fix", async () => {
   const home = join(dir, "home");
   const runId = "20260921-120000-conflict";
   await mkdir(bin, { recursive: true });
+  await loopfileCommand(bin);
   await gitRepo(repo, join(dir, "origin.git"));
   // setup changes README on the run's branch and, as another run would, on main.
   // gate commits the fix agent's resolved file, which the fake agent cannot do.
