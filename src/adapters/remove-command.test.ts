@@ -107,8 +107,19 @@ test("does not remove a dirty workspace", async () => {
   assert.equal(result.code, 1);
   assert.match(result.err, /^error: /);
   assert.match(result.err, /\ncode: workspace_dirty\n/);
+  assert.match(result.err, new RegExp(`loopfile remove ${run.runId} --force`));
   assert.equal((await stat(run.paths.root)).isDirectory(), true);
   assert.equal((await stat(run.paths.workspace)).isDirectory(), true);
+});
+
+test("removes a dirty workspace with --force and keeps the run branch", async () => {
+  const run = await setup();
+  await writeFile(join(run.paths.workspace, "uncommitted.txt"), "lose\n");
+  const result = await remove(run.env, run.runId, "--force");
+  assert.equal(result.code, 0, result.err);
+  assert.match(result.err, new RegExp(`removed: ${run.runId}`));
+  await assert.rejects(stat(run.paths.root));
+  assert.match(await runGit(run.repo, "branch", "--list", `loopfile/${run.runId}`), /loopfile/);
 });
 
 test("prunes a missing workspace before removing the run folder", async () => {

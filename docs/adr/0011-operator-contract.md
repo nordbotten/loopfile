@@ -17,7 +17,7 @@ An agent with no terminal and no person must be able to learn Loopfile, write a 
 - **Agent skill (#199):** a thin `skills/loopfile/SKILL.md` ships in the npm package. It says when to use Loopfile and the order of the operator commands, and sends the agent to `docs manifest` for the format. It holds no format facts. `loopfile docs skill` prints it. A test checks that every command and flag it names exists.
 - **Result (#195):** `loopfile result <runid>` reads what a run produced from `events.jsonl` and the run folder, with no run owner: the end reason, the last outcome, the run branch, the repository path and base commit, and the declared inputs and outputs. Values are inline up to 64 KiB, then a path. `result --json` is a versioned format (ADR 0006).
 - **Failure and recovery (#196):** a Loopfile bug ends the run with `internal_error` instead of reading as a crash, and only that end reason can be resumed (ADR 0003). `logs <runid> --owner` prints `owner.log`. `cancel` is idempotent. Nobody force-ends a crashed run. An agent routes on the `tail` exit code, then on `endReason` or `code`, and needs no person on any branch.
-- **Removal (#197):** `remove <runid>` and `prune` delete runs only when asked. They never delete the run branch or uncommitted work (ADR 0003).
+- **Removal (#197):** `remove <runid>` and `prune` delete runs only when asked. They never delete the run branch. Only `remove --force` deletes uncommitted work (ADR 0003).
 - **A run started from a step (#198):** allowed and not managed. It is a normal top-level run with no link to the outer run. `cancel`, `remove` and `prune` do not cascade. A step reaches the operator `result` with `env -u LOOPFILE_ENDPOINT`.
 
 ## The agent's path
