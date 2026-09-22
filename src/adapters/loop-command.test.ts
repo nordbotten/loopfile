@@ -222,6 +222,120 @@ test("an empty or unreadable list is a bad argument before a loop starts", async
   }
 });
 
+test("loop --next consumes command input sets until stdout is empty", async () => {
+  const setupResult = await setup(`formatVersion: 1
+inputs:
+  n: The number
+steps:
+  - id: work
+    kind: command
+    run: 'test -n "$(node ${cli} data get input.n)"'
+`);
+  const script = join(setupResult.repo, "next.sh");
+  await writeFile(
+    script,
+    `#!/bin/sh
+count=$(cat .next-count 2>/dev/null || echo 0)
+printf '%s\\n' "$((count + 1))" > .next-count
+printf '%s|%s\\n' "$PWD" "$LOOPFILE_LOOP_ID" > .next-seen
+if [ "$count" -ge 2 ]; then
+  printf '  \\n'
+else
+  printf '{"n":"%s"}\\n' "$((count + 1))"
+fi
+printf 'next stderr\\n' >&2
+`,
+  );
+  try {
+    const captured = io();
+    const code = await loopCommand(
+      ["loop", setupResult.source, "--next", "sh next.sh", "-d"],
+      cli,
+      captured.value,
+      setupResult.env,
+      { repository: setupResult.repo },
+    );
+    assert.equal(code, 0, captured.errors());
+    const loopId = captured.output().trim();
+    const events = await waitForEnd(setupResult.home, loopId);
+    const started = events.filter(
+      (event): event is Extract<LoopEvent, { type: "loop.run_started" }> =>
+        event.type === "loop.run_started",
+    );
+    assert.deepEqual(
+      started.map((event) => event.inputSet),
+      [{ n: "1" }, { n: "2" }],
+    );
+    assert.equal(loopStatus(events).state, "completed");
+    assert.equal(loopStatus(events).endReason, "source_empty");
+    assert.equal((await readFile(join(setupResult.repo, ".next-count"), "utf8")).trim(), "3");
+    assert.equal(
+      (await readFile(join(setupResult.repo, ".next-seen"), "utf8")).trim(),
+      `${setupResult.repo}|${loopId}`,
+    );
+    assert.match(
+      await readFile(loopPaths(setupResult.home, loopId).ownerLog, "utf8"),
+      /next stderr/,
+    );
+    assert.deepEqual(events[0]?.type === "loop.created" ? events[0].source : undefined, {
+      kind: "next",
+      command: "sh next.sh",
+    });
+  } finally {
+    await rm(setupResult.root, { recursive: true, force: true });
+  }
+});
+
+test("a failing --next command ends the loop without starting a run", async () => {
+  const setupResult = await setup();
+  try {
+    const captured = io();
+    const code = await loopCommand(
+      ["loop", setupResult.source, "--next", "exit 3", "-d"],
+      cli,
+      captured.value,
+      setupResult.env,
+      { repository: setupResult.repo },
+    );
+    assert.equal(code, 0, captured.errors());
+    const events = await waitForEnd(setupResult.home, captured.output().trim());
+    assert.equal(events.filter((event) => event.type === "loop.run_started").length, 0);
+    assert.equal(loopStatus(events).state, "failed");
+    assert.equal(loopStatus(events).endReason, "source_failed");
+    assert.equal(loopStatus(events).detail, "--next exited 3");
+  } finally {
+    await rm(setupResult.root, { recursive: true, force: true });
+  }
+});
+
+test("a non-string --next value fails before starting a run", async () => {
+  const setupResult = await setup(`formatVersion: 1
+inputs:
+  n: The number
+steps:
+  - id: work
+    kind: command
+    run: 'true'
+`);
+  try {
+    const captured = io();
+    const code = await loopCommand(
+      ["loop", setupResult.source, "--next", "printf '%s' '{\"n\":1}'", "-d"],
+      cli,
+      captured.value,
+      setupResult.env,
+      { repository: setupResult.repo },
+    );
+    assert.equal(code, 0, captured.errors());
+    const events = await waitForEnd(setupResult.home, captured.output().trim());
+    assert.equal(events.filter((event) => event.type === "loop.run_started").length, 0);
+    assert.equal(loopStatus(events).endReason, "source_failed");
+    assert.equal(loopStatus(events).detail, 'input "n" is not a string');
+  } finally {
+    await rm(setupResult.root, { recursive: true, force: true });
+  }
+});
+
 test("loop --times starts a detached owner and two command runs", async () => {
   const setupResult = await setup();
   try {

@@ -1,12 +1,20 @@
-/** Runs a loop in-process, starting one detached child run at a time (#59, #64). */
+/** Runs a loop in-process, starting one detached child run at a time (#59, #63, #64). */
 
+import { spawn } from "node:child_process";
 import { readFile, rename, writeFile } from "node:fs/promises";
+import { parseInputSet } from "../application/launch-inputs.ts";
 import { loopStatus } from "../application/loop-status.ts";
-import { type LastChild, nextLoopAction } from "../application/next-loop-action.ts";
+import {
+  type LastChild,
+  type NextSourceResult,
+  nextLoopAction,
+} from "../application/next-loop-action.ts";
 import { parseEventLog } from "../application/replay.ts";
 import { parseStatusProjection } from "../application/status.ts";
-import type { LoopEvent } from "../domain/events.ts";
+import type { LoopEvent, LoopSource } from "../domain/events.ts";
+import type { Workflow } from "../domain/model.ts";
 import type { LoopStatus } from "../domain/status.ts";
+import { loadDirectory } from "./directory-loader.ts";
 import { type EventLog, type NewEvent, openEventLog } from "./event-log.ts";
 import { type StartRunOptions, type StartRunResult, startRun } from "./launch-command.ts";
 import { loopPaths, newRunId, runPaths } from "./run-directory.ts";
@@ -44,7 +52,19 @@ export async function runLoop(
 
   const log = await openEventLog<LoopEvent>(paths.events);
   try {
-    return await driveLoop(home, loopId, created, deps, log, history, paths.loopfile, paths.status);
+    const workflow =
+      created.source.kind === "next" ? await loadNextWorkflow(paths.loopfile) : undefined;
+    return await driveLoop(
+      home,
+      loopId,
+      created,
+      workflow,
+      deps,
+      log,
+      history,
+      paths.loopfile,
+      paths.status,
+    );
   } catch (error) {
     if (history.at(-1)?.type !== "loop.ended") {
       await appendLoopEvent(log, history, paths.status, {
@@ -64,6 +84,7 @@ async function driveLoop(
   home: string,
   loopId: string,
   created: Extract<LoopEvent, { readonly type: "loop.created" }>,
+  workflow: Workflow | undefined,
   deps: RunLoopDeps,
   log: EventLog<LoopEvent>,
   history: LoopEvent[],
@@ -72,8 +93,19 @@ async function driveLoop(
 ): Promise<LoopStatus> {
   for (;;) {
     const status = loopStatus(history);
+    await waitForPause(status.pausedUntil);
     const child = await lastChild(home, status);
-    const action = nextLoopAction(status, child, created.source, created.retry, history);
+    const action = await nextAction(
+      status,
+      child,
+      created.source,
+      created.repositoryPath,
+      deps.env,
+      loopId,
+      workflow,
+      created.retry,
+      history,
+    );
 
     if (action.kind === "wait") {
       await waitForChild(home, status.currentRunId ?? status.runIds.at(-1) ?? "", deps.pollMs);
@@ -145,6 +177,86 @@ async function writeLoopStatus(statusPath: string, events: readonly LoopEvent[])
   const temporary = `${statusPath}.tmp`;
   await writeFile(temporary, `${JSON.stringify(loopStatus(events))}\n`);
   await rename(temporary, statusPath);
+}
+
+async function nextAction(
+  status: LoopStatus,
+  child: LastChild,
+  source: LoopSource,
+  repositoryPath: string,
+  ownerEnv: Record<string, string | undefined>,
+  loopId: string,
+  workflow: Workflow | undefined,
+  retry: number,
+  history: readonly LoopEvent[],
+): Promise<ReturnType<typeof nextLoopAction>> {
+  const nextResult = await nextResultFor(source, child, repositoryPath, ownerEnv, loopId);
+  return nextLoopAction(status, child, source, nextResult, workflow, retry, history);
+}
+
+async function nextResultFor(
+  source: LoopSource,
+  child: LastChild,
+  repositoryPath: string,
+  ownerEnv: Record<string, string | undefined>,
+  loopId: string,
+): Promise<NextSourceResult | undefined> {
+  if (source.kind !== "next") return undefined;
+  if (child.state !== "none" && child.state !== "completed") return undefined;
+  return await runNextCommand(source.command, repositoryPath, ownerEnv, loopId);
+}
+
+async function loadNextWorkflow(path: string): Promise<Workflow> {
+  const loaded = await loadDirectory(path);
+  if (loaded.status !== "loaded") throw new Error("the materialized Loopfile cannot be loaded");
+  return loaded.workflow;
+}
+
+function runNextCommand(
+  command: string,
+  repositoryPath: string,
+  ownerEnv: Record<string, string | undefined>,
+  loopId: string,
+): Promise<NextSourceResult> {
+  return new Promise((resolve) => {
+    const child = spawn("sh", ["-c", command], {
+      cwd: repositoryPath,
+      env: { ...ownerEnv, LOOPFILE_LOOP_ID: loopId },
+      stdio: ["ignore", "pipe", "inherit"],
+    });
+    let output = "";
+    let settled = false;
+    const finish = (result: NextSourceResult): void => {
+      if (settled) return;
+      settled = true;
+      resolve(result);
+    };
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", (chunk: string) => {
+      output += chunk;
+    });
+    child.once("error", (error) => {
+      finish({ kind: "output", result: { ok: false, messages: [error.message] } });
+    });
+    child.once("close", (code) => {
+      if (code !== 0) {
+        finish({
+          kind: "output",
+          result: { ok: false, messages: [`--next exited ${String(code)}`] },
+        });
+      } else if (output.trim() === "") {
+        finish({ kind: "empty" });
+      } else {
+        finish({ kind: "output", result: parseInputSet(output.trim()) });
+      }
+    });
+  });
+}
+
+async function waitForPause(until: string | null): Promise<void> {
+  if (until === null) return;
+  const delay = Date.parse(until) - Date.now();
+  if (delay > 0) await new Promise((resolve) => setTimeout(resolve, delay));
 }
 
 async function lastChild(home: string, status: LoopStatus): Promise<LastChild> {
