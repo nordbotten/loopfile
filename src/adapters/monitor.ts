@@ -139,6 +139,8 @@ export async function attachMonitor(
     emitKeypressEvents(input);
     input.setRawMode?.(true);
     input.on("keypress", onKeypress);
+    // A prompt before the monitor (the `status` picker) leaves the input paused.
+    input.resume();
     void tick();
   });
 }

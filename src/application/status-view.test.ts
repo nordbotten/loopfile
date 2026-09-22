@@ -45,14 +45,31 @@ const transition: RecentTransition = {
   outcome: "approved",
 };
 
-test("parseStatusArgs accepts bare, a run ID, and a run ID with --json", () => {
-  assert.deepEqual(parseStatusArgs(["status"]), { ok: true, runId: undefined, json: false });
-  assert.deepEqual(parseStatusArgs(["status", "r1"]), { ok: true, runId: "r1", json: false });
+test("parseStatusArgs accepts bare, a run ID, --json with a run ID, and --monitor with or without one", () => {
+  const plain = { ok: true, json: false, monitor: false };
+  assert.deepEqual(parseStatusArgs(["status"]), { ...plain, runId: undefined });
+  assert.deepEqual(parseStatusArgs(["status", "r1"]), { ...plain, runId: "r1" });
   assert.deepEqual(parseStatusArgs(["status", "--json", "r1"]), {
-    ok: true,
+    ...plain,
     runId: "r1",
     json: true,
   });
+  assert.deepEqual(parseStatusArgs(["status", "--monitor"]), {
+    ...plain,
+    runId: undefined,
+    monitor: true,
+  });
+  assert.deepEqual(parseStatusArgs(["status", "r1", "--monitor"]), {
+    ...plain,
+    runId: "r1",
+    monitor: true,
+  });
+});
+
+test("parseStatusArgs rejects --monitor with --json", () => {
+  const result = parseStatusArgs(["status", "r1", "--monitor", "--json"]);
+  assert.equal(result.ok, false);
+  if (!result.ok) assert.match(result.message, /--monitor or --json, not both/);
 });
 
 test("parseStatusArgs rejects --json without a run ID", () => {
