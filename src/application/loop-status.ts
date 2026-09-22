@@ -24,6 +24,7 @@ export function loopStatus(events: readonly LoopEvent[]): LoopStatus {
     loopfileName: created.loopfileName,
     state: "running",
     source: statusSource(created.source),
+    fixedInputs: created.fixedInputs,
     place: created.source.kind === "next" ? null : 0,
     runs: 0,
     retries: 0,
