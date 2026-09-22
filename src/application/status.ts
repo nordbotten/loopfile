@@ -50,7 +50,10 @@ export function parseStatusProjection(value: unknown): StatusProjection {
   requireNullOr(record, "lastTransition", checkLastTransition);
   requireNumber(record, "transitions");
   requireNullOr(record, "maxTransitions", (v) => requireNumberValue(v, "maxTransitions"));
-  checkMetrics(record.metrics);
+  const metrics = checkMetrics(record.metrics);
+  if (!("permissionDenials" in metrics)) {
+    return { ...record, metrics: { ...metrics, permissionDenials: null } } as StatusProjection;
+  }
   return value as StatusProjection;
 }
 
@@ -148,16 +151,15 @@ function checkLastTransition(value: unknown): void {
   requireNullOr(transition, "outcome", (v) => requireStringValue(v, "lastTransition.outcome"));
 }
 
-function checkMetrics(value: unknown): void {
+function checkMetrics(value: unknown): Record<string, unknown> {
   const metrics = asRecord(value, "status.json metrics");
-  for (const field of [
-    "inputTokens",
-    "outputTokens",
-    "totalTokens",
-    "costUsd",
-    "toolCalls",
-    "permissionDenials",
-  ]) {
+  for (const field of ["inputTokens", "outputTokens", "totalTokens", "costUsd", "toolCalls"]) {
     requireNullOr(metrics, field, (v) => requireNumberValue(v, `metrics.${field}`));
   }
+  if ("permissionDenials" in metrics) {
+    requireNullOr(metrics, "permissionDenials", (v) =>
+      requireNumberValue(v, "metrics.permissionDenials"),
+    );
+  }
+  return metrics;
 }
