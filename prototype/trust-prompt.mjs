@@ -16,6 +16,9 @@ const m = parse(manifestText);
 const dim = (s) => `\x1b[2m${s}\x1b[0m`;
 const bold = (s) => `\x1b[1m${s}\x1b[0m`;
 const yellow = (s) => `\x1b[33m${s}\x1b[0m`;
+// Bold bright red on a fixed black background, so it looks the same on light and dark themes.
+// With NO_COLOR set, the text alone is printed.
+const danger = (s) => (process.env.NO_COLOR ? s.trim() : `\x1b[1;91;40m${s}\x1b[0m`);
 
 function select(options) {
   // The default (Deny) is shown selected. Arrow keys move in the real thing.
@@ -40,6 +43,9 @@ function variantA() {
 // B: a summary of what the Loopfile can do, from the manifest. No paging.
 function variantB() {
   const lines = [
+    danger(" DANGER  This Loopfile can run any shell command and any agent in your workspace, as you. "),
+    danger(" Trust it only if you trust the people who can push to it.                              "),
+    "",
     `${yellow("?")} Trust this Remote Loopfile?`,
     "",
     `  Source   ${src}`,
