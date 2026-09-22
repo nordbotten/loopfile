@@ -183,3 +183,30 @@ test("check reports every undeclared input on its own error line", async () => {
       "help: Give each with --input <name>=<value>.\n",
   );
 });
+
+test("check accepts an omitted default and names optional inputs in input failures", async () => {
+  const directory = await source(`formatVersion: 1
+inputs:
+  issue: The issue number
+  merge:
+    description: Whether to merge
+    default: "no"
+steps:
+  - id: work
+    kind: command
+    run: 'true'
+`);
+  const valid = capture();
+  assert.equal(
+    await checkCommand(["check", directory, "--input", "issue=42"], valid.out, valid.err),
+    0,
+  );
+  assert.equal(valid.output, "Loopfile is valid.\n");
+
+  const invalid = capture();
+  assert.equal(
+    await checkCommand(["check", directory, "--input", "other=1"], invalid.out, invalid.err),
+    2,
+  );
+  assert.match(invalid.errors, /Optional inputs: merge \(default: no\)/);
+});

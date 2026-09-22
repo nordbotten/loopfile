@@ -350,10 +350,11 @@ it read, and a `$run` read records its names.
 
 ## Inputs
 
-A manifest declares each input with one line of description. The user gives a
-value at launch with `--input <name>=<value>`. A value is kept under the data key
-`input.<name>`, and every step can read it. The step ID `input` is reserved, so
-no step can put under `input.*`.
+A manifest declares each input with a description. The short form declares a
+required input; the long form can give it a text default. The user gives a value
+at launch with `--input <name>=<value>`, and a missing optional input uses its
+default. A value is kept under the data key `input.<name>`, and every step can
+read it. The step ID `input` is reserved, so no step can put under `input.*`.
 
 ```yaml source
 formatVersion: 1
@@ -372,10 +373,12 @@ steps:
 loopfile ./fix.loop --input issue=42
 ```
 
-- Every declared input is required.
+- A short-form input, or a long-form input without `default`, is required. A
+  long-form input with a text `default` is optional.
 - A placeholder for an input that the manifest does not declare is a load error.
-- An `--input` that is not declared is a launch error. A declared input with no
-  `--input` is a launch error that lists each input with its description.
+- An `--input` that is not declared is a launch error. A required input with no
+  `--input` or default is a launch error that lists its description; the help
+  names optional inputs and their defaults.
 
 ## Workspace lifecycle
 

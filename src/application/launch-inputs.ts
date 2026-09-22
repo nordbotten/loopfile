@@ -16,6 +16,14 @@ export type InputsCheck =
 
 export const INPUT_HELP = "Give each with --input <name>=<value>.";
 
+/** Adds the defaults a failed launch can omit. */
+export function inputHelp(defaults: Readonly<Record<string, string>> = {}): string {
+  const optional = Object.entries(defaults)
+    .map(([name, value]) => `${name} (default: ${value})`)
+    .join(", ");
+  return optional === "" ? INPUT_HELP : `${INPUT_HELP} Optional inputs: ${optional}`;
+}
+
 /** Turns each `--input` value, `name=value`, into a map. The value is everything after the first `=`. */
 export function parseInputFlags(flags: readonly string[]): InputsCheck {
   const inputs = new Map<string, string>();
@@ -32,27 +40,55 @@ export function parseInputFlags(flags: readonly string[]): InputsCheck {
   return { ok: true, inputs: Object.fromEntries(inputs) };
 }
 
-/** Every declared input is required and nothing else is accepted (`docs/manifest-v1.md#inputs`). */
+/** Resolves declared inputs and rejects names the manifest does not take. */
 export function checkAgainstDeclared(
   given: LaunchInputs,
   declared: Readonly<Record<string, string>>,
+  defaults: Readonly<Record<string, string>> = {},
 ): InputsCheck {
   const undeclared = Object.keys(given).filter((name) => !(name in declared));
-  if (undeclared.length > 0) {
-    const known = Object.keys(declared);
-    const declaration =
-      known.length === 0
-        ? "The Loopfile takes no inputs."
-        : `Declared inputs: ${known.join(", ")}.`;
-    return refuse(
-      undeclared.map((name) => `--input ${name} is not declared by the Loopfile. ${declaration}`),
-    );
+  if (undeclared.length > 0) return refuse(undeclaredMessages(undeclared, declared));
+  const missing = missingInputNames(given, declared, defaults);
+  if (missing.length > 0) return refuse(missingMessages(missing, declared));
+  return { ok: true, inputs: resolvedInputs(given, declared, defaults) };
+}
+
+function undeclaredMessages(
+  names: readonly string[],
+  declared: Readonly<Record<string, string>>,
+): readonly string[] {
+  const known = Object.keys(declared);
+  const declaration =
+    known.length === 0 ? "The Loopfile takes no inputs." : `Declared inputs: ${known.join(", ")}.`;
+  return names.map((name) => `--input ${name} is not declared by the Loopfile. ${declaration}`);
+}
+
+function missingInputNames(
+  given: LaunchInputs,
+  declared: Readonly<Record<string, string>>,
+  defaults: Readonly<Record<string, string>>,
+): readonly string[] {
+  return Object.keys(declared).filter((name) => !(name in given) && !(name in defaults));
+}
+
+function missingMessages(
+  names: readonly string[],
+  declared: Readonly<Record<string, string>>,
+): readonly string[] {
+  return names.map((name) => `missing --input ${name}: ${declared[name]}`);
+}
+
+function resolvedInputs(
+  given: LaunchInputs,
+  declared: Readonly<Record<string, string>>,
+  defaults: Readonly<Record<string, string>>,
+): LaunchInputs {
+  if (Object.keys(defaults).length === 0) return given;
+  const inputs: Record<string, string> = {};
+  for (const name of Object.keys(declared)) {
+    inputs[name] = name in given ? (given[name] ?? "") : (defaults[name] ?? "");
   }
-  const missing = Object.keys(declared).filter((name) => !(name in given));
-  if (missing.length > 0) {
-    return refuse(missing.map((name) => `missing --input ${name}: ${declared[name]}`));
-  }
-  return { ok: true, inputs: given };
+  return inputs;
 }
 
 function refuse(message: string | readonly string[]): InputsCheck {

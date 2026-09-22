@@ -1,7 +1,7 @@
 /** `loopfile check <source> [--json]`: validate without starting a run. */
 
 import { parseArgs } from "node:util";
-import { checkAgainstDeclared, INPUT_HELP, parseInputFlags } from "../application/launch-inputs.ts";
+import { checkAgainstDeclared, inputHelp, parseInputFlags } from "../application/launch-inputs.ts";
 import type { LoadError, LoadResult } from "../application/load-workflow.ts";
 import { renderOperatorFailureLines } from "../application/operator-error.ts";
 import { loadInput, loadThinText } from "./directory-loader.ts";
@@ -46,8 +46,13 @@ export async function checkCommand(
 
   if (!reportManifest(source.result, args.json, out)) return 1;
 
-  const inputs = checkInputs(args.inputs, source.result.workflow.inputs);
-  if (!inputs.ok) return fail(err, inputs.messages, 2, INPUT_HELP);
+  const inputs = checkInputs(
+    args.inputs,
+    source.result.workflow.inputs,
+    source.result.workflow.inputDefaults,
+  );
+  if (!inputs.ok)
+    return fail(err, inputs.messages, 2, inputHelp(source.result.workflow.inputDefaults));
 
   out(args.json ? "[]\n" : "Loopfile is valid.\n");
   return 0;
@@ -143,9 +148,10 @@ function reportManifest(
 function checkInputs(
   flags: readonly string[],
   declared: Readonly<Record<string, string>>,
+  defaults: Readonly<Record<string, string>> | undefined,
 ): ReturnType<typeof checkAgainstDeclared> {
   const given = parseInputFlags(flags);
-  return given.ok ? checkAgainstDeclared(given.inputs, declared) : given;
+  return given.ok ? checkAgainstDeclared(given.inputs, declared, defaults) : given;
 }
 
 function renderErrors(errors: readonly LoadError[]): string {

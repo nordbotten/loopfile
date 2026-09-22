@@ -56,6 +56,26 @@ test("given inputs must match the declared ones exactly", () => {
   assert.deepEqual(checkAgainstDeclared({}, {}), { ok: true, inputs: {} });
 });
 
+test("defaults fill omitted inputs and given values win", () => {
+  const declared = { issue: "The issue number", merge: "Whether to merge" };
+  const defaults = { merge: "no" };
+  assert.deepEqual(checkAgainstDeclared({ issue: "42" }, declared, defaults), {
+    ok: true,
+    inputs: { issue: "42", merge: "no" },
+  });
+  assert.deepEqual(checkAgainstDeclared({ issue: "42", merge: "yes" }, declared, defaults), {
+    ok: true,
+    inputs: { issue: "42", merge: "yes" },
+  });
+  assert.deepEqual(
+    checkAgainstDeclared({}, { issue: "The issue number", merge: "Whether to merge" }, defaults),
+    {
+      ok: false,
+      messages: ["missing --input issue: The issue number"],
+    },
+  );
+});
+
 test("a launch request survives the environment variable", () => {
   const request: LaunchRequest = {
     source: "-",
