@@ -15,7 +15,7 @@
  * owner's append path (#28).
  */
 
-import type { InputName, Outcome, OutputName, StepId, Target } from "./model.ts";
+import type { InputName, LoopId, Outcome, OutputName, StepId, Target } from "./model.ts";
 import type { StatusMetrics } from "./status.ts";
 
 /** The event format version this tool writes (ADR 0006). */
@@ -257,7 +257,7 @@ export interface RunCancelled extends EventBase {
   readonly metrics?: StatusMetrics;
 }
 
-/** Every event that may appear in `events.jsonl`. */
+/** Every event that may appear in a run's `events.jsonl`. */
 export type RunEvent =
   | RunCreated
   | OwnerStarted
@@ -274,8 +274,113 @@ export type RunEvent =
   | RunEnded
   | RunCancelled;
 
+/** A string-valued input set supplied to one loop child run. */
+export type InputSet = Readonly<Record<string, string>>;
+
+/** The input source from which a loop gets its child runs. */
+export type LoopSource =
+  | { readonly kind: "times"; readonly count: number }
+  | { readonly kind: "list"; readonly sets: readonly InputSet[] }
+  | { readonly kind: "next"; readonly command: string };
+
+/** The loop event format this tool writes (ADR 0006). */
+export const LOOP_EVENT_FORMAT_VERSION = 1;
+
+export interface LoopCreated extends EventBase {
+  readonly type: "loop.created";
+  readonly loopId: LoopId;
+  readonly eventFormatVersion: typeof LOOP_EVENT_FORMAT_VERSION;
+  readonly repositoryPath: string;
+  readonly loopfileName: string;
+  readonly source: LoopSource;
+  readonly fixedInputs: InputSet;
+  readonly retry: number;
+  readonly maxRuns: number | null;
+  readonly pauseMs: number | null;
+  readonly program: { readonly version: string; readonly digest: string };
+}
+
+export interface LoopRunStarted extends EventBase {
+  readonly type: "loop.run_started";
+  readonly runId: string;
+  readonly index: number;
+  readonly inputSet: InputSet;
+  readonly sourceIndex: number | null;
+  readonly retryOf: string | null;
+}
+
+export interface LoopPaused extends EventBase {
+  readonly type: "loop.paused";
+  readonly until: Timestamp;
+}
+
+export interface LoopCancelRequested extends EventBase {
+  readonly type: "loop.cancel_requested";
+  readonly mode: "now" | "after_run";
+}
+
+export type LoopEndReason =
+  | "source_empty"
+  | "max_runs"
+  | "run_failed"
+  | "source_failed"
+  | "cancelled"
+  | "program_changed"
+  | "internal_error";
+
+interface LoopEndedBase extends EventBase {
+  readonly type: "loop.ended";
+  readonly detail?: string;
+}
+
+type SuccessfulLoopEnd = LoopEndedBase & {
+  readonly result: "success";
+  readonly reason: "source_empty" | "max_runs";
+};
+
+type FailedLoopEnd = LoopEndedBase & {
+  readonly result: "failure";
+  readonly reason: "run_failed" | "source_failed" | "program_changed";
+};
+
+type CancelledLoopEnd = LoopEndedBase & {
+  readonly result: "failure";
+  readonly reason: "cancelled";
+  readonly cancelMode: "now" | "after_run";
+};
+
+type InternalErrorLoopEnd = LoopEndedBase & {
+  readonly result: "failure";
+  readonly reason: "internal_error";
+  readonly childSeq: number | null;
+};
+
+export type LoopEnded = SuccessfulLoopEnd | FailedLoopEnd | CancelledLoopEnd | InternalErrorLoopEnd;
+
+/** Every event that may appear in a loop's `events.jsonl`. */
+export type LoopEvent =
+  | LoopCreated
+  | OwnerStarted
+  | LoopRunStarted
+  | LoopPaused
+  | LoopCancelRequested
+  | LoopEnded;
+
+/** Every event that may appear in either kind of event log. */
+export type EventRecord = RunEvent | LoopEvent;
+
+/** Event names accepted in a loop log. */
+export const LOOP_EVENT_TYPES: ReadonlySet<string> = new Set<LoopEvent["type"]>([
+  "loop.created",
+  "owner.started",
+  "loop.run_started",
+  "loop.paused",
+  "loop.cancel_requested",
+  "loop.ended",
+]);
+
 /** Every event type name, so a line that is not an event can be told apart. */
-export const EVENT_TYPES: ReadonlySet<string> = new Set<RunEvent["type"]>([
+export const EVENT_TYPES: ReadonlySet<string> = new Set<EventRecord["type"]>([
   "run.created",
   "owner.started",
   "attempt.started",
@@ -290,4 +395,9 @@ export const EVENT_TYPES: ReadonlySet<string> = new Set<RunEvent["type"]>([
   "prompt.filled",
   "run.ended",
   "run.cancelled",
+  "loop.created",
+  "loop.run_started",
+  "loop.paused",
+  "loop.cancel_requested",
+  "loop.ended",
 ]);

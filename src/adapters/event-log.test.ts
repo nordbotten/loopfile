@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { parseEventLog, replay } from "../application/replay.ts";
 import { transitionEvent } from "../application/routing.ts";
+import type { LoopEvent } from "../domain/events.ts";
 import type { CommandStep, Workflow } from "../domain/model.ts";
 import { FORMAT_VERSION } from "../domain/model.ts";
 import { openEventLog } from "./event-log.ts";
@@ -51,6 +52,34 @@ test("each event is one line of its own", async () => {
   const lines = (await readFile(path, "utf8")).split("\n");
   assert.equal(lines.at(-1), "", "the file ends with a newline");
   assert.equal(lines.length, 3);
+});
+
+test("the same append path writes and reads a loop event log", async () => {
+  const path = newLogPath();
+  const log = await openEventLog<LoopEvent>(path);
+  const created = await log.append({
+    type: "loop.created",
+    loopId: "loop-20260917-160344-k3f9",
+    eventFormatVersion: 1,
+    repositoryPath: "/home/ada/repo",
+    loopfileName: "review",
+    source: { kind: "times", count: 2 },
+    fixedInputs: { issue: "42" },
+    retry: 1,
+    maxRuns: 4,
+    pauseMs: null,
+    program: { version: "0.1.0", digest: "sha256:program" },
+  });
+  const ended = await log.append({
+    type: "loop.ended",
+    result: "success",
+    reason: "max_runs",
+  });
+  await log.close();
+
+  assert.equal(created.seq, 1);
+  assert.equal(ended.seq, 2);
+  assert.deepEqual(parseEventLog<LoopEvent>(await readFile(path, "utf8")), [created, ended]);
 });
 
 test("a resumed run continues the numbering instead of restarting it", async () => {

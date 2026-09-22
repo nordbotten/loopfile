@@ -4,6 +4,7 @@ import { STATUS_FORMAT_VERSION, type StatusProjection } from "../domain/status.t
 import {
   buildRunList,
   deriveRunListEntry,
+  isLoopId,
   isRunId,
   NO_RUNS_MESSAGE,
   renderRunList,
@@ -46,6 +47,13 @@ const ESC = String.fromCharCode(27);
 function hasAnsi(text: string): boolean {
   return text.includes(ESC);
 }
+
+test("isLoopId accepts the shape newLoopId makes and rejects anything else", () => {
+  assert.equal(isLoopId("loop-20260917-160344-k3f7"), true);
+  assert.equal(isLoopId("20260917-160344-k3f7"), false);
+  assert.equal(isLoopId("loop-20260917-160344-K3F7"), false);
+  assert.equal(isLoopId("loop-20260917-160344-k3f"), false);
+});
 
 test("isRunId accepts the shape newRunId makes and rejects anything else", () => {
   assert.equal(isRunId(RUN_ID), true);
