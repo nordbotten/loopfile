@@ -328,34 +328,17 @@ export type LoopEndReason =
   | "program_changed"
   | "internal_error";
 
-interface LoopEndedBase extends EventBase {
+export interface LoopEnded extends EventBase {
   readonly type: "loop.ended";
+  readonly result: "success" | "failure";
+  readonly reason: LoopEndReason;
+  /** Present only when `reason` is `cancelled`. */
+  readonly cancelMode?: "now" | "after_run";
+  /** Optional one-line operator detail. */
   readonly detail?: string;
+  /** Present only when `reason` is `internal_error`. */
+  readonly childSeq?: number | null;
 }
-
-type SuccessfulLoopEnd = LoopEndedBase & {
-  readonly result: "success";
-  readonly reason: "source_empty" | "max_runs";
-};
-
-type FailedLoopEnd = LoopEndedBase & {
-  readonly result: "failure";
-  readonly reason: "run_failed" | "source_failed" | "program_changed";
-};
-
-type CancelledLoopEnd = LoopEndedBase & {
-  readonly result: "failure";
-  readonly reason: "cancelled";
-  readonly cancelMode: "now" | "after_run";
-};
-
-type InternalErrorLoopEnd = LoopEndedBase & {
-  readonly result: "failure";
-  readonly reason: "internal_error";
-  readonly childSeq: number | null;
-};
-
-export type LoopEnded = SuccessfulLoopEnd | FailedLoopEnd | CancelledLoopEnd | InternalErrorLoopEnd;
 
 /** Every event that may appear in a loop's `events.jsonl`. */
 export type LoopEvent =

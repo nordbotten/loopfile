@@ -86,7 +86,7 @@ function loopEnded(
 ): void {
   status.state = stateFor(event.reason);
   status.endReason = event.reason;
-  status.cancelMode = event.reason === "cancelled" ? event.cancelMode : null;
+  status.cancelMode = event.reason === "cancelled" ? (event.cancelMode ?? null) : null;
   status.detail = event.detail ?? null;
   status.currentRunId = null;
   status.pausedUntil = null;

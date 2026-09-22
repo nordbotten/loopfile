@@ -184,6 +184,15 @@ for (const [reason, state] of endStates) {
     assert.equal(status.currentRunId, null);
     assert.equal(status.pausedUntil, null);
     assert.equal(status.cancelMode, reason === "cancelled" ? "now" : null);
+    if (reason === "cancelled") {
+      assert.equal(
+        loopStatus([
+          createdList,
+          { seq: 2, at: "2026-09-22T10:01:00.000Z", type: "loop.ended", result: "failure", reason },
+        ]).cancelMode,
+        null,
+      );
+    }
   });
 }
 
