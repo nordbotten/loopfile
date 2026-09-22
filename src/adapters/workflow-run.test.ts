@@ -724,13 +724,13 @@ test("changes_requested with no feedback put fails the attempt with missing_outp
   assert.equal(reviewEnd?.type === "attempt.ended" && reviewEnd.result, "failure");
 });
 
-const SLEEPY_AGENT = (extra: string, top = "") => `formatVersion: 1
+const SLEEPY_AGENT = (extra: string, top = "", timeout = "1s") => `formatVersion: 1
 ${top}steps:
   - id: work
     kind: agent
     harness: claude
     prompt: Work.
-    timeout: 1s
+    timeout: ${timeout}
 ${extra}    on:
       done: $success
     onFailure: $failure
@@ -938,7 +938,7 @@ test("status.json shows the final state and activity.log holds the activity, not
     }),
   };
   const adapters = { claude: adapter, pi: adapter } as unknown as HarnessAdapters;
-  const { ended, paths } = await execute(SLEEPY_AGENT(""), adapters);
+  const { ended, paths } = await execute(SLEEPY_AGENT("", "", "5s"), adapters);
   assert.equal(ended.result, "success");
   const status = JSON.parse(await readFile(paths.status, "utf8"));
   assert.equal(status.state, "completed");
@@ -1598,9 +1598,9 @@ steps:
   assert.equal(await requestInterrupt(paths.socket, runId), true);
   await until(async () => {
     const events = parseEventLog(await readFile(paths.events, "utf8"));
-    return events.filter((event) => event.type === "attempt.started").length === 2
-      ? true
-      : undefined;
+    if (events.filter((event) => event.type === "attempt.started").length !== 2) return undefined;
+    const status = JSON.parse(await readFile(paths.status, "utf8").catch(() => "null"));
+    return status?.current?.attempt === 2 ? true : undefined;
   });
   const status = JSON.parse(await readFile(paths.status, "utf8"));
   assert.equal(status.current.attempt, 2);
