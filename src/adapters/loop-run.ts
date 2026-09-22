@@ -66,18 +66,30 @@ export async function runLoop(
       paths.status,
     );
   } catch (error) {
-    if (history.at(-1)?.type !== "loop.ended") {
-      await appendLoopEvent(log, history, paths.status, {
-        type: "loop.ended",
-        result: "failure",
-        reason: "internal_error",
-        detail: String(error),
-      }).catch(() => undefined);
-    }
+    await appendInternalError(log, history, paths.status, error);
     throw error;
   } finally {
     await log.close();
   }
+}
+
+async function startChildRun(deps: RunLoopDeps, options: StartRunOptions): Promise<StartRunResult> {
+  return await (deps.startRun ?? startRun)(options);
+}
+
+async function appendInternalError(
+  log: EventLog<LoopEvent>,
+  history: LoopEvent[],
+  statusPath: string,
+  error: unknown,
+): Promise<void> {
+  if (history.at(-1)?.type === "loop.ended") return;
+  await appendLoopEvent(log, history, statusPath, {
+    type: "loop.ended",
+    result: "failure",
+    reason: "internal_error",
+    detail: String(error),
+  }).catch(() => undefined);
 }
 
 async function driveLoop(
@@ -122,7 +134,7 @@ async function driveLoop(
       retryOf: null,
     });
 
-    const started = await (deps.startRun ?? startRun)({
+    const started = await startChildRun(deps, {
       source: loopfilePath,
       sourceKind: "directory",
       repository: created.repositoryPath,

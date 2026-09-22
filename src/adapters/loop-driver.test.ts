@@ -128,3 +128,25 @@ test("stops after the first failed child", async () => {
   assert.match(ended.detail ?? "", /^run .+ failed$/);
   assert.deepEqual(ended, loopStatus(events));
 });
+
+test("a child start failure ends the loop as an internal error", async () => {
+  const setupResult = await setup("true");
+  const ended = await runLoop(setupResult.home, setupResult.loopId, {
+    cli,
+    env: setupResult.env,
+    startRun: async () => ({
+      ok: false,
+      failure: {
+        messages: ["child did not start"],
+        code: "operation_failed",
+        help: "try again",
+        exitCode: 1,
+      },
+    }),
+  });
+  const events = await loopEvents(setupResult.home, setupResult.loopId);
+  assert.equal(ended.state, "failed");
+  assert.equal(ended.endReason, "internal_error");
+  assert.equal(ended.detail, "child did not start");
+  assert.deepEqual(ended, loopStatus(events));
+});

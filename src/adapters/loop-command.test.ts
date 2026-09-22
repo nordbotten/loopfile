@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -51,7 +51,7 @@ async function setup(
   };
 }
 
-function io() {
+function io(onError: (text: string) => void = () => undefined) {
   let output = "";
   let errors = "";
   return {
@@ -61,6 +61,7 @@ function io() {
       },
       err: (text: string) => {
         errors += text;
+        onError(text);
       },
       upgrade: {
         out: () => undefined,
@@ -86,6 +87,23 @@ async function waitForEnd(home: string, loopId: string): Promise<readonly LoopEv
   throw new Error("the loop did not end");
 }
 
+async function killLoopOwner(home: string, loopId: string): Promise<void> {
+  for (let tries = 0; tries < 100; tries += 1) {
+    const events = parseEventLog<LoopEvent>(
+      await readFile(loopPaths(home, loopId).events, "utf8").catch(() => ""),
+    );
+    const owner = events.find(
+      (event): event is Extract<LoopEvent, { type: "owner.started" }> =>
+        event.type === "owner.started",
+    );
+    if (owner !== undefined) {
+      process.kill(owner.pid, "SIGKILL");
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  throw new Error("the loop owner did not start");
+}
 test("loop --list starts one run per JSON line with its own input set", async () => {
   const setupResult = await setup(`formatVersion: 1
 inputs:
@@ -380,6 +398,105 @@ test("loop --times starts a detached owner and two command runs", async () => {
   }
 });
 
+test("an attached loop reports a failed child as an operator failure", async () => {
+  const setupResult = await setup(
+    "formatVersion: 1\nsteps:\n  - id: work\n    kind: command\n    run: exit 1\n",
+  );
+  try {
+    const captured = io();
+    const code = await loopCommand(
+      ["loop", setupResult.source, "--times", "2"],
+      cli,
+      captured.value,
+      setupResult.env,
+      { repository: setupResult.repo, pollMs: 10, ownerPingTimeoutMs: 30_000 },
+    );
+    assert.equal(code, 1);
+    const loopId = captured.output().trim();
+    const lines = captured.errors().trim().split("\n");
+    assert.equal(lines[0], `started: ${loopId}`);
+    assert.match(lines[1] ?? "", /^run: 1 \S+ started$/);
+    assert.match(lines[2] ?? "", /^run: 1 \S+ failed$/);
+    assert.match(lines[3] ?? "", /^error: loop loop-\S+ failed: run_failed \(run \S+ failed\)$/);
+    assert.equal(lines[4], "code: operation_failed");
+    assert.equal(lines[5], `help: See each run with: loopfile result ${loopId}`);
+  } finally {
+    await rm(setupResult.root, { recursive: true, force: true });
+  }
+});
+
+test("SIGINT detaches from an attached loop without stopping its owner", async () => {
+  const setupResult = await setup(
+    "formatVersion: 1\nsteps:\n  - id: work\n    kind: command\n    run: sleep 1\n",
+  );
+  let loopId: string | undefined;
+  let child: ReturnType<typeof spawn> | undefined;
+  try {
+    child = spawn(process.execPath, [cli, "loop", setupResult.source, "--times", "2"], {
+      cwd: setupResult.repo,
+      env: setupResult.env,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let errors = "";
+    const stderr = child.stderr;
+    assert.ok(stderr);
+    stderr.setEncoding("utf8");
+    const started = new Promise<string>((resolve, reject) => {
+      stderr.on("data", (text: string) => {
+        errors += text;
+        const line = errors.match(/^started: ([^\n]+)$/m);
+        if (line?.[1] !== undefined) resolve(line[1]);
+      });
+      child?.once("error", reject);
+    });
+    const exited = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(
+      (resolve) => {
+        child?.once("close", (code, signal) => resolve({ code, signal }));
+      },
+    );
+    loopId = await started;
+    assert.equal(child.kill("SIGINT"), true);
+    const result = await exited;
+    assert.deepEqual(result, { code: 0, signal: null });
+    assert.equal(await pingOwner(loopPaths(setupResult.home, loopId).socket, 200), loopId);
+    await waitForEnd(setupResult.home, loopId);
+  } finally {
+    child?.kill("SIGKILL");
+    if (loopId !== undefined) await waitForEnd(setupResult.home, loopId).catch(() => undefined);
+    await rm(setupResult.root, { recursive: true, force: true });
+  }
+});
+
+test("an attached loop reports a gone loop owner without ending the loop", async () => {
+  const setupResult = await setup(
+    "formatVersion: 1\nsteps:\n  - id: work\n    kind: command\n    run: sleep 0.2\n",
+  );
+  let kill: Promise<void> | undefined;
+  try {
+    const captured = io((text) => {
+      if (text.startsWith("started: ")) {
+        const loopId = text.slice("started: ".length).trim();
+        kill = killLoopOwner(setupResult.home, loopId);
+      }
+    });
+    const code = await loopCommand(
+      ["loop", setupResult.source, "--times", "2"],
+      cli,
+      captured.value,
+      setupResult.env,
+      { repository: setupResult.repo, pollMs: 10, ownerPingTimeoutMs: 50 },
+    );
+    assert.equal(code, 2);
+    await kill;
+    assert.match(captured.errors(), /code: owner_gone/);
+    assert.match(captured.errors(), /help: Resume the crashed loop with: loopfile resume loop-/);
+  } finally {
+    await kill?.catch(() => undefined);
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    await rm(setupResult.root, { recursive: true, force: true });
+  }
+});
+
 test("loop input errors happen before a loop folder exists", async () => {
   const setupResult = await setup(
     "formatVersion: 1\nsteps:\n  - id: work\n    kind: command\n    run: 'true'\n",
@@ -412,7 +529,7 @@ test("loop input errors happen before a loop folder exists", async () => {
   }
 });
 
-test("attached loops are refused with the documented help", async () => {
+test("an attached loop reports each run and its successful end", async () => {
   const setupResult = await setup();
   try {
     const captured = io();
@@ -421,16 +538,18 @@ test("attached loops are refused with the documented help", async () => {
       cli,
       captured.value,
       setupResult.env,
-      { repository: setupResult.repo },
+      { repository: setupResult.repo, pollMs: 10, ownerPingTimeoutMs: 50 },
     );
-    assert.equal(code, 2);
-    assert.equal(
-      captured.errors(),
-      "error: attached loops are not built yet\n" +
-        "code: bad_argument\n" +
-        "help: attached loops are not built yet: add -d\n",
-    );
-    await assert.rejects(stat(join(setupResult.home, "loops")));
+    assert.equal(code, 0, captured.errors());
+    const loopId = captured.output().trim();
+    const lines = captured.errors().trim().split("\n");
+    assert.equal(lines[0], `started: ${loopId}`);
+    assert.match(lines[1] ?? "", /^run: 1 \S+ started$/);
+    assert.match(lines[2] ?? "", /^run: 1 \S+ completed$/);
+    assert.match(lines[3] ?? "", /^run: 2 \S+ started$/);
+    assert.match(lines[4] ?? "", /^run: 2 \S+ completed$/);
+    assert.equal(lines[5], `ended: ${loopId} completed source_empty`);
+    assert.equal(lines.length, 6);
   } finally {
     await rm(setupResult.root, { recursive: true, force: true });
   }
