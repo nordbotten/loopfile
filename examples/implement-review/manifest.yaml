@@ -12,6 +12,9 @@ steps:
     model: claude-opus-5
     effort: high
     promptFile: prompts/implement.md
+    args:
+      - --settings
+      - '{"permissions":{"allow":["Bash(npm test *)","Bash(git add *)","Bash(git commit *)"]}}'
     timeout: 30m            # per iteration
     maxIterations: 20
     maxAttempts: 6          # visits from test and review count
@@ -37,6 +40,9 @@ steps:
     kind: agent
     harness: claude
     effort: medium
+    args:
+      - --settings
+      - '{"permissions":{"allow":["Bash(git diff *)","Bash(git log *)","Bash(git show *)"]}}'
     prompt: |
       The task:
       {{ input.task }}

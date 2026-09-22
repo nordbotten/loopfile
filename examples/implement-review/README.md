@@ -47,6 +47,9 @@ loopfile implement-review.loop --input task="$(cat task.md)"
   (`outputs: [log]`). `failed` routes to `implement`, which reads it.
 - **Review handoffs:** `review` must put `review.feedback` on
   `changes_requested` (map `outputs`). `implement` reads it.
+- **Step allowlists:** the manifest grants `implement` its test and commit
+  commands and `review` its history commands. This makes the example work on a
+  clean machine without relying on user settings.
 - **Bounded cycles:** `maxIterations`, `maxAttempts`, `timeout`,
   `maxTransitions` and `runTimeout` are all set. `maxAttempts` stops the loop
   first: `test` and `review` may run 5 times each, and `implement` 6 times.
