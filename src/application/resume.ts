@@ -142,7 +142,7 @@ function nextAfter(next: ResumeNext, event: RunEvent, stepOf: Map<string, StepId
     case "attempt.started":
       return { kind: "step", stepId: event.stepId };
     case "attempt.ended": {
-      const { seq: _seq, at: _at, type: _type, attemptId, ...end } = event;
+      const { seq: _seq, at: _at, type: _type, attemptId, metrics: _metrics, ...end } = event;
       return { kind: "route", stepId: stepOf.get(attemptId) ?? "", attemptId, end };
     }
     case "transition":

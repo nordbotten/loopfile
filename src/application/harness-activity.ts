@@ -10,10 +10,9 @@
  */
 
 import type { Timestamp } from "../domain/events.ts";
-import type { StatusMetrics } from "../domain/status.ts";
 import { type ActivitySecrets, filterActivityText } from "./activity.ts";
 import type { HarnessActivity } from "./harness.ts";
-import type { HarnessData } from "./status-projection.ts";
+import { addMetrics, type HarnessData } from "./status-projection.ts";
 
 export interface HarnessActivityResult {
   readonly data: HarnessData;
@@ -48,22 +47,4 @@ export function applyHarnessActivity(
         logText: null,
       };
   }
-}
-
-function addMetrics(soFar: StatusMetrics, report: StatusMetrics): StatusMetrics {
-  return {
-    inputTokens: addMetric(soFar.inputTokens, report.inputTokens),
-    outputTokens: addMetric(soFar.outputTokens, report.outputTokens),
-    totalTokens: addMetric(soFar.totalTokens, report.totalTokens),
-    costUsd: addMetric(soFar.costUsd, report.costUsd),
-    toolCalls: addMetric(soFar.toolCalls, report.toolCalls),
-    // Denials describe the current attempt; keep the existing attempt-local behavior.
-    permissionDenials: report.permissionDenials,
-  };
-}
-
-function addMetric(soFar: number | null, report: number | null): number | null {
-  if (soFar === null) return report;
-  if (report === null) return soFar;
-  return soFar + report;
 }

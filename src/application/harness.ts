@@ -49,7 +49,7 @@ export type HarnessActivity =
       readonly denied?: boolean;
     }
   | { readonly kind: "progress"; readonly text: string }
-  /** Totals for one call. The activity reducer adds this report to the run sum. `null` means unknown. */
+  /** Totals for one call. The activity reducer adds this report to the current attempt sum. `null` means unknown. */
   | { readonly kind: "metrics"; readonly metrics: StatusMetrics };
 
 export interface HarnessAdapter {

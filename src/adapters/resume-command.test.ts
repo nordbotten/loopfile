@@ -370,6 +370,36 @@ async function crashedRun(extra: readonly Record<string, unknown>[] = [], digest
   return { env, runId, paths };
 }
 
+test("resuming after an ended attempt keeps its metrics in status.json", async () => {
+  const metrics = {
+    inputTokens: 1,
+    outputTokens: 2,
+    totalTokens: 3,
+    costUsd: 4,
+    toolCalls: 5,
+    permissionDenials: null,
+  };
+  const { env, runId, paths } = await crashedRun([
+    {
+      type: "attempt.started",
+      attemptId: "001-only",
+      stepId: "only",
+      processGroupId: 0,
+    },
+    {
+      type: "attempt.ended",
+      attemptId: "001-only",
+      result: "success",
+      reason: "clean_exit",
+      metrics,
+    },
+  ]);
+
+  const result = await resume([runId], env);
+  assert.equal(result.code, 0, result.err);
+  assert.deepEqual(JSON.parse(await readFile(paths.status, "utf8")).metrics, metrics);
+});
+
 test("without -d the monitor attaches to the resumed run until it ends", async () => {
   const { env, runId, paths } = await crashedRun();
   const s = session(true);

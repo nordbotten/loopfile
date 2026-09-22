@@ -24,9 +24,9 @@ export interface HarnessActivityRouterOptions {
   readonly status: StatusWriter;
   /** The run's events so far. */
   events(): readonly RunEvent[];
-  /** The latest data is needed by the run's terminal event. */
+  /** The latest data is needed by the attempt.ended event. */
   readonly onData?: (data: HarnessData) => void;
-  /** Existing run totals, carried into the next harness call. */
+  /** Current attempt data, carried into the next Ralph iteration. */
   readonly initialData?: HarnessData;
   /** Overridable for tests only. */
   readonly now?: () => Date;

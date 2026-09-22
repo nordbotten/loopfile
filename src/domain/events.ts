@@ -140,13 +140,15 @@ export interface AttemptEnded extends EventBase {
   readonly outcome?: Outcome;
   /** The key that was not put, for `missing_output`. */
   readonly output?: OutputName;
+  /** This attempt's final harness metrics. Missing on logs written before this field existed. */
+  readonly metrics?: StatusMetrics;
 }
 
 /**
  * An attempt that never ended: written on resume for an attempt that has a
- * start and no end, and by cancel (ADR 0008). It carries no reason, because an
- * interrupted attempt counts toward the step's `maxAttempts` whatever
- * interrupted it.
+ * start and no end, and by cancel (ADR 0008). It carries no reason or metrics:
+ * the numbers of an interrupted attempt are lost. An interrupted attempt
+ * counts toward the step's `maxAttempts` whatever interrupted it.
  */
 export interface AttemptInterrupted extends EventBase {
   readonly type: "attempt.interrupted";
