@@ -103,6 +103,29 @@ test("a straight-line workflow runs every step in the workspace and ends in succ
     events.map((event) => event.seq),
     [1, 2, 3, 4, 5, 6, 7, 8, 9],
   );
+  assert.deepEqual(
+    events
+      .filter((event) => event.type === "attempt.ended")
+      .map((event) => event.type === "attempt.ended" && event.metrics),
+    [
+      {
+        inputTokens: null,
+        outputTokens: null,
+        totalTokens: null,
+        costUsd: null,
+        toolCalls: null,
+        permissionDenials: null,
+      },
+      {
+        inputTokens: null,
+        outputTokens: null,
+        totalTokens: null,
+        costUsd: null,
+        toolCalls: null,
+        permissionDenials: null,
+      },
+    ],
+  );
   const transitions = events.filter((event) => event.type === "transition");
   assert.deepEqual(
     transitions.map((event) => [event.from, event.to, event.cause]),
@@ -453,7 +476,7 @@ test("a failing tests step with no onFailure ends the run in failure", async () 
 });
 
 test("status metrics sum reports from two agent-step calls", async () => {
-  const { ended, paths } = await execute(
+  const { ended, events, paths } = await execute(
     `formatVersion: 1
 steps:
   - id: work
@@ -504,6 +527,29 @@ steps:
     }),
   );
   assert.equal(ended.result, "success");
+  assert.deepEqual(
+    events
+      .filter((event) => event.type === "attempt.ended")
+      .map((event) => event.type === "attempt.ended" && event.metrics),
+    [
+      {
+        inputTokens: 1,
+        outputTokens: 2,
+        totalTokens: 3,
+        costUsd: 1,
+        toolCalls: 4,
+        permissionDenials: null,
+      },
+      {
+        inputTokens: 10,
+        outputTokens: 20,
+        totalTokens: 30,
+        costUsd: 2,
+        toolCalls: 40,
+        permissionDenials: null,
+      },
+    ],
+  );
   assert.deepEqual(JSON.parse(await readFile(paths.status, "utf8")).metrics, {
     inputTokens: 11,
     outputTokens: 22,
@@ -515,7 +561,7 @@ steps:
 });
 
 test("status metrics sum all three Ralph iterations", async () => {
-  const { ended, paths } = await execute(
+  const { ended, events, paths } = await execute(
     `formatVersion: 1
 steps:
   - id: loop
@@ -581,6 +627,15 @@ steps:
     }),
   );
   assert.equal(ended.result, "success");
+  const attempt = events.find((event) => event.type === "attempt.ended");
+  assert.deepEqual(attempt?.type === "attempt.ended" && attempt.metrics, {
+    inputTokens: 111,
+    outputTokens: 222,
+    totalTokens: 333,
+    costUsd: 7,
+    toolCalls: 444,
+    permissionDenials: null,
+  });
   assert.deepEqual(JSON.parse(await readFile(paths.status, "utf8")).metrics, {
     inputTokens: 111,
     outputTokens: 222,
@@ -735,6 +790,8 @@ steps:
   );
   const end = runEnd(events);
   assert.equal(end?.type === "run.ended" && end.reason, "run_timeout");
+  const interrupted = events.find((event) => event.type === "attempt.interrupted");
+  assert.equal(interrupted?.type === "attempt.interrupted" && "metrics" in interrupted, false);
   const pid = Number((await readFile(marker, "utf8")).trim());
   assert.throws(() => process.kill(pid, 0), { code: "ESRCH" });
 });

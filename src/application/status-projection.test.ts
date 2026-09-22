@@ -390,7 +390,13 @@ test("lastActivityAt falls back to the last event's time when the harness has re
 });
 
 test("lastActivityAt, lastProgress and metrics come from the harness data when it has some", () => {
-  const log = events(created);
+  const log = events(created, {
+    type: "attempt.started",
+    at: at(1),
+    attemptId: "001-plan",
+    stepId: "plan",
+    processGroupId: 1,
+  });
   const harnessData: HarnessData = {
     lastActivityAt: at(4),
     lastProgress: "edit src/x.ts",
@@ -408,6 +414,74 @@ test("lastActivityAt, lastProgress and metrics come from the harness data when i
   assert.equal(status.lastActivityAt, at(4));
   assert.equal(status.lastProgress, "edit src/x.ts");
   assert.deepEqual(status.metrics, harnessData.metrics);
+});
+
+test("metrics sum ended attempts and the live current attempt", () => {
+  const log = events(
+    created,
+    {
+      type: "attempt.started",
+      at: at(1),
+      attemptId: "001-plan",
+      stepId: "plan",
+      processGroupId: 1,
+    },
+    {
+      type: "attempt.ended",
+      at: at(2),
+      attemptId: "001-plan",
+      result: "success",
+      reason: "outcome",
+      metrics: {
+        inputTokens: 1,
+        outputTokens: 2,
+        totalTokens: 3,
+        costUsd: 4,
+        toolCalls: 5,
+        permissionDenials: 6,
+      },
+    },
+    {
+      type: "attempt.started",
+      at: at(3),
+      attemptId: "002-plan",
+      stepId: "plan",
+      processGroupId: 2,
+    },
+  );
+  const status = projectStatus(log, context(), {
+    lastActivityAt: at(4),
+    lastProgress: null,
+    metrics: {
+      inputTokens: 10,
+      outputTokens: 20,
+      totalTokens: 30,
+      costUsd: 40,
+      toolCalls: 50,
+      permissionDenials: 60,
+    },
+  });
+
+  assert.deepEqual(status.metrics, {
+    inputTokens: 11,
+    outputTokens: 22,
+    totalTokens: 33,
+    costUsd: 44,
+    toolCalls: 55,
+    permissionDenials: 60,
+  });
+});
+
+test("an old attempt.ended without metrics contributes unknown values", () => {
+  const log = events(created, {
+    type: "attempt.ended",
+    at: at(1),
+    attemptId: "001-plan",
+    result: "success",
+    reason: "clean_exit",
+  });
+
+  assert.deepEqual(projectStatus(log, context()).metrics, UNKNOWN_METRICS);
 });
 
 test("seq is the last event's own seq, whatever the event type", () => {
