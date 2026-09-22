@@ -223,6 +223,7 @@ test("an ended run with no end reason says unknown", () => {
 test("renderPicker numbers each run and leaves the header unnumbered", () => {
   const entry = (runId: string, state: RunListEntry["state"]): RunListEntry => ({
     runId,
+    loopId: null,
     loopfileName: "x",
     state,
     currentStep: null,
