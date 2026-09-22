@@ -73,6 +73,11 @@ pick() {
 # nothing when no issue is ready or on a dry run.
 start() {
   local issue title task
+  # Loops that start at the same time would pick the same issue, so only one
+  # picks and assigns at a time. The lock is shared by every pin.
+  mkdir -p "$HOME/.loopfile/ticket"
+  exec 9> "$HOME/.loopfile/ticket/pick.lock"
+  flock 9
   if ! issue=$(pick); then
     echo "no ready issue" >&2
     return 0
@@ -86,6 +91,7 @@ start() {
   git -C "$root" pull --ff-only >&2
 
   gh issue edit "$issue" --add-assignee @me > /dev/null
+  exec 9>&-  # before the run starts, so its owner does not hold the lock
   task="#$issue $title
 
 $(gh issue view "$issue" --json body -q .body)"
