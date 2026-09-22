@@ -69,7 +69,7 @@ steps:
     effort: medium
     args:
       - --settings
-      - '{"permissions":{"allow":["Bash(git diff *)","Bash(git log *)","Bash(git show *)","Bash(git status *)"]}}'
+      - '{"permissions":{"allow":["Bash(git diff *)","Bash(git log *)","Bash(git show *)","Bash(git status *)","Bash(gh issue view *)","Bash(gh pr view *)"]}}'
     promptFile: prompts/review.md
     timeout: 20m
     outputs:
