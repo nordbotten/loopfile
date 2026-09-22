@@ -1,15 +1,20 @@
 /**
- * `loopfile list [--json]`: one row per run under `LOOPFILE_HOME`, newest and
- * most active first (#52).
+ * `loopfile list [--json]`: loops and runs under `LOOPFILE_HOME`, newest and
+ * most active first (#52, #70).
  *
- * A read-only view built entirely from `discoverRuns` (`run-discovery.ts`):
- * this module only parses its own arguments, picks the human or `--json`
- * rendering, and decides whether ANSI is safe to print. It never touches a
- * run file itself.
+ * A read-only view built entirely from the discovery adapters: this module only
+ * parses its own arguments, picks the human or `--json` rendering, and decides
+ * whether ANSI is safe to print. It never touches a state file itself.
  */
 
 import { type OperatorFailure, renderOperatorFailure } from "../application/operator-error.ts";
-import { buildRunList, NO_RUNS_MESSAGE, renderRunList } from "../application/run-list.ts";
+import {
+  buildRunList,
+  NO_RUNS_MESSAGE,
+  renderLoopList,
+  renderRunList,
+} from "../application/run-list.ts";
+import { discoverLoops } from "./loop-discovery.ts";
 import { discoverRuns, eventLogFailure } from "./run-discovery.ts";
 
 type Out = (text: string) => void;
@@ -18,9 +23,9 @@ type Err = (text: string) => void;
 const USAGE = "Usage: loopfile list [--json]";
 const HELP = `${USAGE}
 
-List every run, newest and most active first. Use --json for one structured
-answer on stdout. List describes runs and returns 0 for a readable result; a
-Loopfile read failure returns 2.
+List loops and runs, newest and most active first. Use --json for one
+structured answer on stdout. List returns 0 for a readable result; a Loopfile
+read failure returns 2.
 `;
 
 /** Runs `list`. Returns the process exit code. */
@@ -45,22 +50,27 @@ export async function listCommand(
   }
 
   let entries: Awaited<ReturnType<typeof discoverRuns>>;
+  let loops: Awaited<ReturnType<typeof discoverLoops>>;
   try {
-    entries = await discoverRuns(env as NodeJS.ProcessEnv);
+    [entries, loops] = await Promise.all([
+      discoverRuns(env as NodeJS.ProcessEnv),
+      discoverLoops(env as NodeJS.ProcessEnv),
+    ]);
   } catch (error) {
     return fail(err, failureFrom(error));
   }
 
   if (args.json) {
-    out(`${JSON.stringify(buildRunList(entries))}\n`);
+    out(`${JSON.stringify(buildRunList(entries, loops))}\n`);
     return 0;
   }
 
-  if (entries.length === 0) {
+  if (entries.length === 0 && loops.length === 0) {
     out(NO_RUNS_MESSAGE);
     return 0;
   }
 
+  if (loops.length > 0) out(`${renderLoopList(loops, isTTY)}\n`);
   out(renderRunList(entries, isTTY));
   return 0;
 }

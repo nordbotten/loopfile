@@ -179,7 +179,7 @@ steps:
 
   const listed = await resume([], env);
   assert.equal(listed.code, 0);
-  assert.match(listed.out, new RegExp(`${runId}\\s+crashed\\s+second`));
+  assert.match(listed.out, new RegExp(`${runId}\\s+-\\s+crashed\\s+second`));
   assert.match(listed.out, /Resume one with: loopfile resume <runid>/);
 
   const logBefore = await readFile(paths.events, "utf8");

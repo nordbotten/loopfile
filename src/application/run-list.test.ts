@@ -1,13 +1,21 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { STATUS_FORMAT_VERSION, type StatusProjection } from "../domain/status.ts";
+import {
+  LOOP_STATUS_FORMAT_VERSION,
+  type LoopStatus,
+  STATUS_FORMAT_VERSION,
+  type StatusProjection,
+} from "../domain/status.ts";
 import {
   buildRunList,
+  deriveLoopListEntry,
   deriveRunListEntry,
   isLoopId,
   isRunId,
   NO_RUNS_MESSAGE,
+  renderLoopList,
   renderRunList,
+  sortLoopListEntries,
   sortRunListEntries,
   startedAtFromRunId,
 } from "./run-list.ts";
@@ -37,6 +45,38 @@ function status(overrides: Partial<StatusProjection> = {}): StatusProjection {
     transitions: 0,
     maxTransitions: null,
     metrics: UNKNOWN_METRICS,
+    ...overrides,
+  };
+}
+
+const LOOP_ID = "loop-20260917-160344-k3f7";
+
+function loopStatus(overrides: Partial<LoopStatus> = {}): LoopStatus {
+  return {
+    formatVersion: LOOP_STATUS_FORMAT_VERSION,
+    seq: 1,
+    loopId: LOOP_ID,
+    loopfileName: "review-loop",
+    state: "running",
+    source: { kind: "times", count: 2 },
+    fixedInputs: {},
+    retry: 0,
+    maxRuns: null,
+    place: 0,
+    runs: 0,
+    retries: 0,
+    lastInputSet: null,
+    lastSourceIndex: null,
+    lastRetryCount: 0,
+    runIds: [],
+    currentRunId: null,
+    pausedUntil: null,
+    cancelRequested: null,
+    endReason: null,
+    cancelMode: null,
+    detail: null,
+    startedAt: "2026-09-17T16:03:44.000Z",
+    endedAt: null,
     ...overrides,
   };
 }
@@ -83,6 +123,7 @@ test("a run with no readable status.json is unreadable, with the run ID's own st
   });
   assert.deepEqual(entry, {
     runId: RUN_ID,
+    loopId: null,
     loopfileName: null,
     state: "unreadable",
     currentStep: null,
@@ -226,6 +267,81 @@ test("currentStep is null before any step has been visited", () => {
   assert.equal(entry.currentStep, null);
 });
 
+test("a running loop with a dead owner is crashed, and a live one stays running", () => {
+  const crashed = deriveLoopListEntry({ status: loopStatus(), alive: false, now: NOW });
+  const running = deriveLoopListEntry({ status: loopStatus(), alive: true, now: NOW });
+  assert.equal(crashed.state, "crashed");
+  assert.equal(running.state, "running");
+  assert.equal(crashed.elapsedMs, Date.parse(NOW) - Date.parse(loopStatus().startedAt));
+});
+
+test("a finished loop keeps its state and source in its list row", () => {
+  const entry = deriveLoopListEntry({
+    status: loopStatus({
+      state: "completed",
+      source: { kind: "list", count: 2 },
+      runs: 2,
+      endedAt: "2026-09-17T16:09:00.000Z",
+    }),
+    alive: false,
+    now: NOW,
+  });
+  assert.deepEqual(entry, {
+    loopId: LOOP_ID,
+    loopfileName: "review-loop",
+    state: "completed",
+    source: { kind: "list", count: 2 },
+    runs: 2,
+    startedAt: "2026-09-17T16:03:44.000Z",
+    elapsedMs: 5 * 60 * 1000 + 16 * 1000,
+  });
+});
+
+test("loop rows sort active-first and newest-first", () => {
+  const older = deriveLoopListEntry({
+    status: loopStatus({ startedAt: "2026-09-17T09:00:00.000Z" }),
+    alive: true,
+    now: NOW,
+  });
+  const newerEnded = deriveLoopListEntry({
+    status: loopStatus({
+      loopId: "loop-20260917-150000-bbbb",
+      state: "failed",
+      startedAt: "2026-09-17T15:00:00.000Z",
+      endedAt: "2026-09-17T15:05:00.000Z",
+    }),
+    alive: false,
+    now: NOW,
+  });
+  assert.deepEqual(sortLoopListEntries([newerEnded, older]), [older, newerEnded]);
+});
+
+test("renderLoopList formats every source and its columns", () => {
+  const rows = [
+    deriveLoopListEntry({
+      status: loopStatus({ source: { kind: "times", count: 2 } }),
+      alive: true,
+      now: NOW,
+    }),
+    deriveLoopListEntry({
+      status: loopStatus({ source: { kind: "list", count: 2 } }),
+      alive: true,
+      now: NOW,
+    }),
+    deriveLoopListEntry({
+      status: loopStatus({ source: { kind: "next", command: "next" } }),
+      alive: true,
+      now: NOW,
+    }),
+  ];
+  const text = renderLoopList(rows, false);
+  assert.match(text, /LOOP ID.*STATE.*SOURCE.*RUNS.*STARTED.*ELAPSED.*LOOPFILE/);
+  assert.match(text, /times 2/);
+  assert.match(text, /list 2/);
+  assert.match(text, /next/);
+  assert.equal(hasAnsi(text), false);
+});
+
 test("sortRunListEntries puts every active run ahead of every ended one", () => {
   const running = deriveRunListEntry({
     runId: "20260917-100000-aaaa",
@@ -301,7 +417,7 @@ test("sortRunListEntries puts a run with no known start time last in its group",
   assert.deepEqual(sortRunListEntries([unknownStart, known]), [known, unknownStart]);
 });
 
-test("buildRunList carries the list format version and the given rows", () => {
+test("buildRunList carries the list format version and both row sets", () => {
   const entry = deriveRunListEntry({
     runId: RUN_ID,
     status: status(),
@@ -310,8 +426,10 @@ test("buildRunList carries the list format version and the given rows", () => {
     alive: true,
     now: NOW,
   });
-  const list = buildRunList([entry]);
+  const loop = deriveLoopListEntry({ status: loopStatus(), alive: true, now: NOW });
+  const list = buildRunList([entry], [loop]);
   assert.equal(list.formatVersion, 1);
+  assert.deepEqual(list.loops, [loop]);
   assert.deepEqual(list.runs, [entry]);
 });
 

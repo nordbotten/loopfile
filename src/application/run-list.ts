@@ -1,7 +1,6 @@
 /**
- * `list`: turning one run's status projection (or the lack of one) into a
- * `RunListEntry`, sorting a run's row against the rest, and rendering both
- * the human and `--json` output (#52).
+ * `list`: turning status projections into loop and run list rows, sorting
+ * them, and rendering both the human and `--json` output (#52, #70).
  *
  * Everything here is pure: a status projection, a liveness answer and a clock
  * go in, a row or rendered text comes out. It touches no file and no socket,
@@ -13,11 +12,18 @@
 import type { RunId } from "../domain/model.ts";
 import {
   LIST_FORMAT_VERSION,
+  type LoopListEntry,
+  type LoopListState,
   type RunList,
   type RunListEntry,
   type RunListState,
 } from "../domain/run-list.ts";
-import type { RunLifecycle, StatusProjection } from "../domain/status.ts";
+import type {
+  LoopLifecycle,
+  LoopStatus,
+  RunLifecycle,
+  StatusProjection,
+} from "../domain/status.ts";
 
 /** A run folder name this tool made: a UTC stamp to the second, then a random tail (`run-directory.ts`). */
 const RUN_ID_PATTERN = /^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})-[a-z2-7]{4}$/;
@@ -80,6 +86,7 @@ export function deriveRunListEntry(input: DeriveRunListEntryInput): RunListEntry
 
   return {
     runId,
+    loopId: status.loopId,
     loopfileName: status.loopfileName,
     state: derivedState(status.state, input.ownerHost, input.thisHost, input.alive),
     currentStep: currentOrLastStep(status),
@@ -92,12 +99,40 @@ function unreadableEntry(runId: RunId, now: string): RunListEntry {
   const startedAt = startedAtFromRunId(runId) ?? null;
   return {
     runId,
+    loopId: null,
     loopfileName: null,
     state: "unreadable",
     currentStep: null,
     startedAt,
     elapsedMs: elapsedMs(startedAt, null, now),
   };
+}
+
+/** What `deriveLoopListEntry` needs beyond a loop's status projection. */
+export interface DeriveLoopListEntryInput {
+  readonly status: LoopStatus;
+  /** Whether `owner.sock` answered with this loop's ID. */
+  readonly alive: boolean;
+  /** The command's own clock, used for `elapsedMs` while a loop is running. */
+  readonly now: string;
+}
+
+/** One loop's status summary, with a dead owner derived as `crashed`. */
+export function deriveLoopListEntry(input: DeriveLoopListEntryInput): LoopListEntry {
+  const { status, now } = input;
+  return {
+    loopId: status.loopId,
+    loopfileName: status.loopfileName,
+    state: loopState(status.state, input.alive),
+    source: status.source,
+    runs: status.runs,
+    startedAt: status.startedAt,
+    elapsedMs: elapsedMs(status.startedAt, status.endedAt, now),
+  };
+}
+
+function loopState(state: LoopLifecycle, alive: boolean): LoopListState {
+  return state === "running" && !alive ? "crashed" : state;
 }
 
 /**
@@ -127,6 +162,8 @@ function endedAtOf(status: StatusProjection): string | null {
 }
 
 /** `endedAt` when the run has one, otherwise `now`: how long a still-open run has run so far. */
+function elapsedMs(startedAt: string, endedAt: string | null, now: string): number;
+function elapsedMs(startedAt: string | null, endedAt: string | null, now: string): number | null;
 function elapsedMs(startedAt: string | null, endedAt: string | null, now: string): number | null {
   if (startedAt === null) return null;
   return Date.parse(endedAt ?? now) - Date.parse(startedAt);
@@ -167,9 +204,26 @@ function startedAtMillis(startedAt: string | null): number {
   return startedAt === null ? Number.NEGATIVE_INFINITY : Date.parse(startedAt);
 }
 
-/** `list --json`'s whole output, `entries` already sorted (`sortRunListEntries`). */
-export function buildRunList(entries: readonly RunListEntry[]): RunList {
-  return { formatVersion: LIST_FORMAT_VERSION, runs: entries };
+const ACTIVE_LOOP_STATES: ReadonlySet<LoopListState> = new Set<LoopListState>([
+  "running",
+  "crashed",
+]);
+
+/** `entries` sorted active-first and newest-first, like runs. */
+export function sortLoopListEntries(entries: readonly LoopListEntry[]): readonly LoopListEntry[] {
+  return [...entries].sort((a, b) => {
+    const group = Number(ACTIVE_LOOP_STATES.has(b.state)) - Number(ACTIVE_LOOP_STATES.has(a.state));
+    if (group !== 0) return group;
+    return Date.parse(b.startedAt) - Date.parse(a.startedAt);
+  });
+}
+
+/** `list --json`'s whole output, with rows already sorted. */
+export function buildRunList(
+  entries: readonly RunListEntry[],
+  loops: readonly LoopListEntry[] = [],
+): RunList {
+  return { formatVersion: LIST_FORMAT_VERSION, loops, runs: entries };
 }
 
 /** What `list` prints when no run folder exists at all. */
@@ -183,6 +237,7 @@ interface Column {
 
 const COLUMNS: readonly Column[] = [
   { header: "RUN ID", cell: (entry) => entry.runId },
+  { header: "LOOP", cell: (entry) => entry.loopId ?? "-" },
   { header: "STATE", cell: (entry) => entry.state },
   { header: "STEP", cell: (entry) => entry.currentStep ?? "-" },
   { header: "STARTED", cell: (entry) => entry.startedAt ?? "unknown" },
@@ -220,6 +275,46 @@ export function renderRunList(entries: readonly RunListEntry[], ansi: boolean): 
     lines.push(entry.state === "running" && ansi ? `${BOLD}${row}${RESET}` : row);
   }
   return `${lines.join("\n")}\n`;
+}
+
+interface LoopColumn {
+  readonly header: string;
+  cell(entry: LoopListEntry): string;
+}
+
+const LOOP_COLUMNS: readonly LoopColumn[] = [
+  { header: "LOOP ID", cell: (entry) => entry.loopId },
+  { header: "STATE", cell: (entry) => entry.state },
+  { header: "SOURCE", cell: (entry) => sourceText(entry.source) },
+  { header: "RUNS", cell: (entry) => String(entry.runs) },
+  { header: "STARTED", cell: (entry) => entry.startedAt },
+  { header: "ELAPSED", cell: (entry) => formatElapsed(entry.elapsedMs) },
+  { header: "LOOPFILE", cell: (entry) => entry.loopfileName },
+];
+
+/** The loops table, `entries` already sorted (`sortLoopListEntries`). */
+export function renderLoopList(entries: readonly LoopListEntry[], ansi: boolean): string {
+  const widths = LOOP_COLUMNS.map((column) =>
+    Math.max(column.header.length, ...entries.map((entry) => column.cell(entry).length)),
+  );
+  const lines = [
+    renderRow(
+      LOOP_COLUMNS.map((column) => column.header),
+      widths,
+    ),
+  ];
+  for (const entry of entries) {
+    const row = renderRow(
+      LOOP_COLUMNS.map((column) => column.cell(entry)),
+      widths,
+    );
+    lines.push(entry.state === "running" && ansi ? `${BOLD}${row}${RESET}` : row);
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+function sourceText(source: LoopListEntry["source"]): string {
+  return source.kind === "next" ? "next" : `${source.kind} ${source.count}`;
 }
 
 function renderRow(cells: readonly string[], widths: readonly number[]): string {
