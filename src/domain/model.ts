@@ -39,6 +39,9 @@ export type HarnessName = "claude" | "pi";
 /** A run's ID, made at launch, such as `2026-09-18-0001`. */
 export type RunId = string;
 
+/** A loop's ID, made when the loop starts, such as `loop-20260922-105306-qfn3`. */
+export type LoopId = string;
+
 /** An attempt's ID within its run, such as `007-fix`. */
 export type AttemptId = string;
 

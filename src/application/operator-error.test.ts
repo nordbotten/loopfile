@@ -10,6 +10,7 @@ import {
 test("operator failures render an AXI block and exit 2", () => {
   const codes: readonly OperatorErrorCode[] = [
     "no_such_run",
+    "no_such_loop",
     "log_unreadable",
     "log_corrupt",
     "bad_argument",

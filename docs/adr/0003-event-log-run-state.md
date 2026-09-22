@@ -2,6 +2,10 @@
 
 The source of truth for a run is `events.jsonl`: an append-only file with one JSON event on each line. Current run state is built by replaying the events. We picked this over a `state.json` that is changed in place plus attempt records that never change, because a crash between those two writes leaves them out of step, and because the activity log, the status projection and resume all need one ordered feed of facts. Runs have hundreds of events, so replay is cheap.
 
+## Loops
+
+A loop has its own append-only `events.jsonl` under `loops/<loopid>/`, separate from every child run. The loop owner is its one writer; readers derive loop status by folding that log, and the same append path writes each event with `fsync`.
+
 ## Decisions
 
 - **Location:** `~/.loopfile/runs/<runid>/` on Linux and macOS. `LOOPFILE_HOME` overrides `~/.loopfile`.

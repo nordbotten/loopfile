@@ -1,6 +1,7 @@
 /** The closed failure vocabulary available to an operator. */
 export type OperatorErrorCode =
   | "no_such_run"
+  | "no_such_loop"
   | "log_unreadable"
   | "log_corrupt"
   | "bad_argument"
