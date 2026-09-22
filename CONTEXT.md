@@ -122,6 +122,10 @@ _Avoid_: Row, item, parameters
 One execution of a step within a run. A step visited again gets a new attempt, and earlier attempts are kept.
 _Avoid_: Round
 
+**Interrupt**:
+Stop the current attempt of a running run from outside it, with `loopfile interrupt`. The attempt counts toward the step's `maxAttempts`, and the same step gets a new attempt, as after a crash and resume. The run's routes are not used.
+_Avoid_: Retry, restart, kill
+
 **Materialized Loopfile**:
 The fixed copy of a Loopfile that one run owns, made at launch from any input type. It holds only what the Loopfile shipped. A prompt written inline in the manifest becomes a file in a run-owned folder next to it, not inside it. In a loop, the loop makes one Materialized Loopfile when it starts, and each run's Materialized Loopfile is a copy of it.
 _Avoid_: Snapshot, copy, extracted package
