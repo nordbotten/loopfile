@@ -80,6 +80,7 @@ test("loopStatus folds every status field from a list loop", () => {
     loopfileName: "review",
     state: "failed",
     source: { kind: "list", count: 2 },
+    fixedInputs: { project: "loopfile" },
     place: 2,
     runs: 2,
     retries: 1,
