@@ -1,23 +1,26 @@
 #!/usr/bin/env bash
-# Pick one ready issue and start loops/ticket on it with a pinned loopfile.
+# Pick one ready issue of the current repo and start its ticket loop with a
+# pinned loopfile and a pinned, packed loop. Run it from the repo, on main.
 #
-#   scripts/run-ticket.sh pin        build and copy loopfile to $LOOPFILE_PIN
-#   scripts/run-ticket.sh [--merge] [--no-ci]
-#                                    pick the lowest ready issue and start a run;
-#                                    --no-ci ships without waiting for CI
-#   scripts/run-ticket.sh --loop [--merge] [--no-ci]
-#                                    follow each run with tail, then start the
-#                                    next; stop when a run does not complete or
-#                                    no issue is ready
-#   scripts/run-ticket.sh --dry-run  only print the issue it would pick
+#   run-ticket.sh pin        build loopfile from the repo and pack loops/ticket
+#                            into $LOOPFILE_PIN
+#   run-ticket.sh [--merge] [--no-ci]
+#                            pick the lowest ready issue and start a run;
+#                            --no-ci ships without waiting for CI
+#   run-ticket.sh --loop [--merge] [--no-ci]
+#                            follow each run with tail, then start the next;
+#                            stop when a run does not complete or no issue is
+#                            ready
+#   run-ticket.sh --dry-run  only print the issue it would pick
 #
-# The pinned copy is on PATH only for the run, so the run owner, the steps and
-# the agents all use it. A merged change cannot break the next run.
+# The pinned loopfile is on PATH only for the run, so the run owner, the steps
+# and the agents all use it. Merged changes to loopfile or to loops/ticket do
+# not reach a run until the next pin.
 set -euo pipefail
 shopt -s inherit_errexit  # keep set -e inside $(start)
 
-root=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
-pin=${LOOPFILE_PIN:-$HOME/.loopfile/pinned}
+root=$(git rev-parse --show-toplevel)
+pin=${LOOPFILE_PIN:-$HOME/.loopfile/ticket/pin}
 
 if [ "${1:-}" = pin ]; then
   (cd "$root" && npm run build)
@@ -27,6 +30,7 @@ if [ "${1:-}" = pin ]; then
   (cd "$pin" && npm install --omit=dev --no-package-lock --ignore-scripts --no-audit --no-fund)
   chmod +x "$pin/dist/cli.js"
   ln -s ../dist/cli.js "$pin/bin/loopfile"
+  "$pin/bin/loopfile" pack "$root/loops/ticket" -o "$pin/ticket.loop" > /dev/null
   echo "pinned: $pin ($(git -C "$root" rev-parse --short HEAD))"
   exit 0
 fi
@@ -63,7 +67,7 @@ pick() {
   return 1
 }
 
-[ "$dry_run" = yes ] || [ -x "$pin/bin/loopfile" ] || { echo "no pinned loopfile, run: $0 pin" >&2; exit 2; }
+[ "$dry_run" = yes ] || [ -f "$pin/ticket.loop" ] || { echo "nothing pinned, run: $0 pin" >&2; exit 2; }
 
 # Picks one issue and starts a run on it. Prints the run ID on stdout, or
 # nothing when no issue is ready or on a dry run.
@@ -85,7 +89,7 @@ start() {
   task="#$issue $title
 
 $(gh issue view "$issue" --json body -q .body)"
-  (cd "$root" && PATH="$pin/bin:$PATH" loopfile "$root/loops/ticket" -d \
+  (cd "$root" && PATH="$pin/bin:$PATH" loopfile "$pin/ticket.loop" -d \
     --input task="$task" --input issue="$issue" --input merge="$merge" --input ci="$ci")
 }
 

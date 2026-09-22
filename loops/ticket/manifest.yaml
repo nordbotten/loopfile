@@ -24,8 +24,8 @@ steps:
   - id: implement
     kind: agent
     harness: pi
-    model: openai-codex/gpt-5.6-terra
-    effort: high
+    model: openai-codex/gpt-5.6-luna
+    effort: xhigh
     promptFile: prompts/implement.md
     timeout: 60m
     on:
@@ -69,7 +69,7 @@ steps:
     effort: medium
     args:
       - --settings
-      - '{"permissions":{"allow":["Bash(git diff *)","Bash(git log *)","Bash(git show *)","Bash(git status *)"]}}'
+      - '{"permissions":{"allow":["Bash(git diff *)","Bash(git log *)","Bash(git show *)","Bash(git status *)","Bash(gh issue view *)","Bash(gh pr view *)"]}}'
     promptFile: prompts/review.md
     timeout: 20m
     outputs:
