@@ -55,9 +55,29 @@ test("metrics go to the data, never to the log; 0 stays 0 and unknown stays null
   assert.equal(result.data.lastActivityAt, AT);
 });
 
-test("a later metrics report replaces an earlier one and keeps progress", () => {
-  const first = applyHarnessActivity(NO_HARNESS_DATA, { kind: "progress", text: "working" }, AT);
-  const second = applyHarnessActivity(first.data, { kind: "metrics", metrics: METRICS }, AT);
-  assert.equal(second.data.lastProgress, "working");
-  assert.deepEqual(second.data.metrics, METRICS);
+test("metrics reports add to the totals, with null meaning unknown", () => {
+  const fields = ["inputTokens", "outputTokens", "totalTokens", "costUsd", "toolCalls"] as const;
+  const cases = [
+    [null, null, null],
+    [null, 3, 3],
+    [4, null, 4],
+    [4, 3, 7],
+  ] as const;
+
+  for (const [soFar, report, expected] of cases) {
+    for (const field of fields) {
+      const result = applyHarnessActivity(
+        {
+          ...NO_HARNESS_DATA,
+          metrics: { ...NO_HARNESS_DATA.metrics, [field]: soFar },
+        },
+        {
+          kind: "metrics",
+          metrics: { ...NO_HARNESS_DATA.metrics, [field]: report },
+        },
+        AT,
+      );
+      assert.equal(result.data.metrics[field], expected, field);
+    }
+  }
 });
