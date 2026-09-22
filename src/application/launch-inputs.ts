@@ -68,14 +68,25 @@ export function parseInputFlags(flags: readonly string[]): InputsCheck {
   return { ok: true, inputs: Object.fromEntries(inputs) };
 }
 
+/** Rejects values whose names the manifest does not take, without requiring every input. */
+export function checkDeclaredInputs(
+  given: LaunchInputs,
+  declared: Readonly<Record<string, string>>,
+): InputsCheck {
+  const undeclared = Object.keys(given).filter((name) => !Object.hasOwn(declared, name));
+  return undeclared.length === 0
+    ? { ok: true, inputs: given }
+    : refuse(undeclaredMessages(undeclared, declared));
+}
+
 /** Resolves declared inputs and rejects names the manifest does not take. */
 export function checkAgainstDeclared(
   given: LaunchInputs,
   declared: Readonly<Record<string, string>>,
   defaults: Readonly<Record<string, string>> = {},
 ): InputsCheck {
-  const undeclared = Object.keys(given).filter((name) => !Object.hasOwn(declared, name));
-  if (undeclared.length > 0) return refuse(undeclaredMessages(undeclared, declared));
+  const names = checkDeclaredInputs(given, declared);
+  if (!names.ok) return names;
   const missing = missingInputNames(given, declared, defaults);
   if (missing.length > 0) return refuse(missingMessages(missing, declared));
   return { ok: true, inputs: resolvedInputs(given, declared, defaults) };
