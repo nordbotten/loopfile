@@ -10,7 +10,12 @@
  */
 
 import type { RunEndReason } from "../domain/events.ts";
-import type { RunLifecycle, StatusEndReason, StatusProjection } from "../domain/status.ts";
+import type {
+  RunLifecycle,
+  StatusEndReason,
+  StatusMetrics,
+  StatusProjection,
+} from "../domain/status.ts";
 import type { RunResult } from "./replay.ts";
 import { lifecycleOf } from "./status-projection.ts";
 
@@ -21,6 +26,8 @@ export interface RunEnd {
   readonly endReason: StatusEndReason | null;
   /** The step the run ended at, when one is known. */
   readonly stepId: string | null;
+  /** Denied harness tool calls reported for the ending attempt, when known. */
+  readonly permissionDenials?: number;
 }
 
 /** The exit code for a run that ended: 0 when it completed, 1 when it failed or was cancelled. */
@@ -37,8 +44,13 @@ export function endedLine(end: Pick<RunEnd, "runId" | "state">): string {
 export function endedHelp(end: RunEnd): string {
   if (end.state === "completed") return "";
   const step = end.stepId === null ? "" : ` at step "${end.stepId}"`;
+  const hint =
+    end.state === "failed" && end.permissionDenials !== undefined && end.permissionDenials > 0
+      ? `  ${end.permissionDenials} tool calls were denied. Allow them in the step: args: [--settings, '{"permissions":{"allow":["Bash(npm *)"]}}'].\n`
+      : "";
   return (
     `run ${end.runId} ${end.state}: ${end.endReason ?? "unknown"}${step}\n` +
+    hint +
     `  see: loopfile logs ${end.runId}\n` +
     `       loopfile status ${end.runId} --json\n`
   );
@@ -55,6 +67,9 @@ export function runEndFromStatus(status: StatusProjection): RunEnd {
     state: status.state,
     endReason: status.endReason,
     stepId: status.lastTransition === null ? null : status.lastTransition.from,
+    ...(status.metrics.permissionDenials === null
+      ? {}
+      : { permissionDenials: status.metrics.permissionDenials }),
   };
 }
 
@@ -78,15 +93,21 @@ export function runEndFromEvent(runId: string, event: EndEvent): RunEnd {
     state,
     endReason,
     stepId: (event.type === "run.ended" ? event.stepId : undefined) ?? null,
+    ...(event.metrics?.permissionDenials === undefined || event.metrics.permissionDenials === null
+      ? {}
+      : { permissionDenials: event.metrics.permissionDenials }),
   };
 }
 
 /** A `run.ended` or `run.cancelled` event, down to the fields the end is read from. */
 export type EndEvent =
-  | { readonly type: "run.cancelled" }
+  | { readonly type: "run.cancelled"; readonly metrics?: DenialMetrics }
   | {
       readonly type: "run.ended";
       readonly result: "success" | "failure";
       readonly reason: RunEndReason;
       readonly stepId?: string;
+      readonly metrics?: DenialMetrics;
     };
+
+type DenialMetrics = Pick<StatusMetrics, "permissionDenials">;
