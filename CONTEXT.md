@@ -8,7 +8,7 @@ Loopfile is a small, deterministic runtime for agentic software-engineering work
 
 **Loopfile**:
 A packaged workflow: a manifest plus the prompts, schemas, context and other assets it uses.
-_Avoid_: Loop, package, pipeline
+_Avoid_: Loop (as a noun), package, pipeline
 
 **Manifest**:
 The `manifest.yaml` document that declares a Loopfile's workflow.
@@ -105,6 +105,10 @@ Every value put under one data key, oldest first. A step always reads the newest
 **Run**:
 One execution of a Loopfile against a target repository, from launch to final outcome.
 _Avoid_: Job (kept for a possible future scheduler)
+
+**Loop** (verb):
+Run a Loopfile many times, one run after another, with `loopfile loop`. Each run it starts is an ordinary run with its own run ID. The whole repeat has an ID of its own that holds the runs it started and its place in the input source.
+_Avoid_: Batch, burn
 
 **Attempt**:
 One execution of a step within a run. A step visited again gets a new attempt, and earlier attempts are kept.
