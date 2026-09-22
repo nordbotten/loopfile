@@ -123,7 +123,7 @@ One execution of a step within a run. A step visited again gets a new attempt, a
 _Avoid_: Round
 
 **Materialized Loopfile**:
-The fixed copy of a Loopfile that one run owns, made at launch from any input type. It holds only what the Loopfile shipped. A prompt written inline in the manifest becomes a file in a run-owned folder next to it, not inside it.
+The fixed copy of a Loopfile that one run owns, made at launch from any input type. It holds only what the Loopfile shipped. A prompt written inline in the manifest becomes a file in a run-owned folder next to it, not inside it. In a loop, the loop makes one Materialized Loopfile when it starts, and each run's Materialized Loopfile is a copy of it.
 _Avoid_: Snapshot, copy, extracted package
 
 **Event log**:
