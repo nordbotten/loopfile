@@ -121,7 +121,13 @@ steps:
       fi
       if [ "$ci_green" = yes ]; then
         if [ "$(loopfile data get input.merge)" = yes ]; then
-          gh pr merge --squash
+          if ! gh pr merge --squash; then
+            # main wants an up-to-date branch, and another run merged first.
+            # Ship again: merge main, push and wait for CI once more.
+            [ "$(gh pr view --json mergeStateStatus -q .mergeStateStatus)" = BEHIND ] || exit 1
+            loopfile result behind
+            exit 0
+          fi
           git push origin --delete "$branch"
           loopfile result merged
         else
@@ -142,3 +148,4 @@ steps:
       ready: $success
       ci_failed: fix
       conflict: fix
+      behind: ship

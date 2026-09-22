@@ -240,6 +240,51 @@ esac
   assert.equal(ended.result, "success");
 });
 
+/** main wants an up-to-date branch, so a merge refused as behind ships again. */
+test("the ticket Loopfile ships again when the merge is behind main", async () => {
+  const dir = join(root, "behind");
+  const repo = join(dir, "repo");
+  const bin = join(dir, "bin");
+  const home = join(dir, "home");
+  const runId = "20260921-120000-behind";
+  const merges = join(dir, "merges");
+  await mkdir(bin, { recursive: true });
+  await gitRepo(repo, join(dir, "origin.git"));
+  await executable(join(bin, "npm"), "exit 0\n");
+  await executable(
+    join(bin, "gh"),
+    `case "$1 $2" in
+  "pr view") [ "$4" = mergeStateStatus ] && printf 'BEHIND\\n' || exit 1 ;;
+  "issue view") printf 'Ticket title\\n' ;;
+  "pr merge") printf x >> ${JSON.stringify(merges)}; [ "$(cat ${JSON.stringify(merges)})" = xx ] ;;
+esac
+`,
+  );
+  const script: FakeScript = {
+    implement: [[{ do: "result", outcome: "done" }]],
+    review: [
+      [
+        { do: "dataPut", key: "review.notes", content: "notes" },
+        { do: "result", outcome: "approved" },
+      ],
+    ],
+  };
+  await mkdir(runPaths(home, runId).root, { recursive: true });
+
+  const ended = await executeRun({
+    home,
+    runId,
+    source: TICKET,
+    inputs: { task: TASK, issue: "273", merge: "yes", ci: "no" },
+    repository: repo,
+    executor: localExecutor({ ...process.env, ...gitEnv, PATH: `${bin}:${process.env.PATH}` }),
+    adapters: fakeHarnessAdapters(script),
+  });
+
+  assert.equal(ended.result, "success");
+  assert.equal(await readFile(merges, "utf8"), "xx");
+});
+
 /** A PR that main moved past goes to fix with the conflict, then ships. */
 test("the ticket Loopfile sends a conflict with main to fix", async () => {
   const dir = join(root, "conflict");
