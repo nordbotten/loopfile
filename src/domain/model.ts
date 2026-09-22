@@ -130,11 +130,15 @@ export type Step = AgentStep | RalphStep | CommandStep;
 export interface Workflow {
   readonly formatVersion: typeof FORMAT_VERSION;
   /**
-   * Input name to its one-line description. Every declared input is required at
-   * launch and is read under the data key `input.<name>`. Empty when the
-   * workflow takes none.
+   * Input name to its one-line description. Every input is read under the data
+   * key `input.<name>`. Empty when the workflow takes none.
    */
   readonly inputs: Readonly<Record<InputName, string>>;
+  /**
+   * Text defaults for optional inputs. Left out when no input has a default, so
+   * manifests without defaults keep their original model shape.
+   */
+  readonly inputDefaults?: Readonly<Record<InputName, string>>;
   /** Transitions allowed in a run. Left out means no limit. */
   readonly maxTransitions?: number;
   /** Run owner time allowed for a run. Left out means no limit. */

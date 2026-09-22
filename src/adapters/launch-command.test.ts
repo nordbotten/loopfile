@@ -254,6 +254,32 @@ steps:
   await assert.rejects(stat(join(home, "runs")));
 });
 
+test("a launch input failure names optional inputs and their defaults", async () => {
+  const { repo, source, home, env } = await setup(`formatVersion: 1
+inputs:
+  issue: the issue number
+  merge:
+    description: whether to merge
+    default: "no"
+  ci:
+    description: whether CI is required
+    default: "yes"
+steps:
+  - id: work
+    kind: command
+    run: 'true'
+`);
+  const s = session();
+  assert.equal(await launchCommand([source], cli, s.io, env, { repository: repo }), 2);
+  assert.equal(
+    s.err(),
+    "error: missing --input issue: the issue number\n" +
+      "code: bad_argument\n" +
+      "help: Give each with --input <name>=<value>. Optional inputs: merge (default: no), ci (default: yes)\n",
+  );
+  await assert.rejects(stat(join(home, "runs")));
+});
+
 test("a launch reports each undeclared input on its own error line", async () => {
   const { repo, source, home, env } = await setup();
   const s = session();
@@ -271,6 +297,48 @@ test("a launch reports each undeclared input on its own error line", async () =>
       "help: Give each with --input <name>=<value>.\n",
   );
   await assert.rejects(stat(join(home, "runs")));
+});
+
+test("a launch stores an omitted default as an input, and a given value wins", async () => {
+  const manifest = `formatVersion: 1
+inputs:
+  issue: The issue number
+  merge:
+    description: Whether to merge
+    default: "no"
+steps:
+  - id: work
+    kind: command
+    run: 'test -n "$(node ${cli} data get input.merge)"'
+`;
+  for (const [extra, expected, size] of [
+    [[], "no", 2],
+    [["--input", "merge=yes"], "yes", 3],
+  ] as const) {
+    const { repo, source, home, env } = await setup(manifest);
+    const s = session();
+    assert.equal(
+      await launchCommand([source, "-d", "--input", "issue=42", ...extra], cli, s.io, env, {
+        repository: repo,
+      }),
+      0,
+      s.err(),
+    );
+    const runId = s.out().trim();
+    const events = await waitForEnd(home, runId);
+    assert.equal(resultOf(events), "success");
+    const paths = runPaths(home, runId);
+    assert.equal(await readFile(join(paths.inputs, "merge"), "utf8"), expected);
+    const created = events[0];
+    assert.deepEqual(
+      created?.type === "run.created" &&
+        created.inputs.map(({ name, size: bytes }) => [name, bytes]),
+      [
+        ["issue", 2],
+        ["merge", size],
+      ],
+    );
+  }
 });
 
 test("no source, two sources and a missing path are refused", async () => {

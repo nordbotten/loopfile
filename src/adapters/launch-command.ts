@@ -16,8 +16,8 @@ import { parseArgs } from "node:util";
 import {
   checkAgainstDeclared,
   encodeLaunch,
-  INPUT_HELP,
   type InputsCheck,
+  inputHelp,
   LAUNCH_ENV,
   type LaunchRequest,
   parseInputFlags,
@@ -108,7 +108,9 @@ export async function launchCommand(
   if (!source.ok) return source.exitCode;
 
   const inputs = resolveInputs(args.inputs, source.workflow);
-  if (!inputs.ok) return refuse(io, inputs.messages, 2, "bad_argument", INPUT_HELP);
+  if (!inputs.ok) {
+    return refuse(io, inputs.messages, 2, "bad_argument", inputHelp(source.workflow.inputDefaults));
+  }
 
   const request: LaunchRequest = {
     source: args.source,
@@ -179,7 +181,9 @@ function isMissingPath(error: unknown): boolean {
 
 function resolveInputs(flags: readonly string[], workflow: Workflow): InputsCheck {
   const given = parseInputFlags(flags);
-  return given.ok ? checkAgainstDeclared(given.inputs, workflow.inputs) : given;
+  return given.ok
+    ? checkAgainstDeclared(given.inputs, workflow.inputs, workflow.inputDefaults)
+    : given;
 }
 
 interface LaunchArgs {

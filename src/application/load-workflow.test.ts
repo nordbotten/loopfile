@@ -7,6 +7,7 @@ import {
   type LoopfileRoot,
   loadWorkflow,
 } from "./load-workflow.ts";
+import { modelDigest } from "./workflow-run.ts";
 
 const files: Record<string, string> = { "prompts/implement.md": "Do {{ input.task }}" };
 const root: LoopfileRoot = { readText: (path) => files[path] };
@@ -157,6 +158,24 @@ test("a minimal manifest gets the defaults and leaves optional fields out", () =
       },
     ],
   });
+});
+
+test("a manifest without defaults keeps the legacy model digest", () => {
+  const result = loadWorkflow(
+    {
+      formatVersion: 1,
+      inputs: { issue: "issue" },
+      steps: [{ id: "a", kind: "command", run: "true" }],
+    },
+    { root: null },
+  );
+  assert.equal(result.status, "loaded");
+  if (result.status === "loaded") {
+    assert.equal(
+      modelDigest(result.workflow),
+      "18f6fd15eb5077f5f2aa82e948b3819a3e339d485e27130e4aa44c8d0d235231",
+    );
+  }
 });
 
 test("an agent step gets maxAttempts 5, and a ralph step maxIterations 10", () => {
@@ -534,6 +553,58 @@ test("inputs: names follow the id rule and descriptions are strings", () => {
   assert.match(has({ ...valid(), inputs: { task: 3 } }, "inputs.task"), /must be a string/);
   const errors = errorsOf({ ...valid(), inputs: { Task: "x", task: "y" } });
   assert.ok(errors.some((e) => e.path === "inputs.Task" && /input name `Task`/.test(e.message)));
+});
+
+test("short and long required input forms build the same model", () => {
+  const short = loadWorkflow({ ...valid(), inputs: { task: "what to build" } }, options);
+  const long = loadWorkflow(
+    { ...valid(), inputs: { task: { description: "what to build" } } },
+    options,
+  );
+  assert.equal(short.status, "loaded");
+  assert.equal(long.status, "loaded");
+  if (short.status === "loaded" && long.status === "loaded")
+    assert.deepEqual(long.workflow, short.workflow);
+});
+
+test("a long input form stores text defaults, including an empty default", () => {
+  const result = loadWorkflow(
+    {
+      ...valid(),
+      inputs: {
+        task: { description: "what to build", default: "later" },
+        empty: { description: "may be empty", default: "" },
+      },
+    },
+    options,
+  );
+  assert.equal(result.status, "loaded");
+  if (result.status !== "loaded") return;
+  assert.deepEqual(result.workflow.inputs, { task: "what to build", empty: "may be empty" });
+  assert.deepEqual(result.workflow.inputDefaults, { task: "later", empty: "" });
+});
+
+test("a long input form requires description and rejects unknown or non-text fields", () => {
+  assert.match(
+    has({ ...valid(), inputs: { task: { default: "later" } } }, "inputs.task.description"),
+    /description.*required/,
+  );
+  assert.match(
+    only(
+      { ...valid(), inputs: { task: { description: "what to build", extra: true } } },
+      "inputs.task.extra",
+    ),
+    /unknown field `extra`/,
+  );
+  for (const value of [5, true, null, [], {}]) {
+    assert.match(
+      only(
+        { ...valid(), inputs: { task: { description: "what to build", default: value } } },
+        "inputs.task.default",
+      ),
+      /text.*quote/,
+    );
+  }
 });
 
 test("a Handlebars prompt error names its prompt file and prompt line", () => {

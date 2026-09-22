@@ -20,7 +20,7 @@ loader also rejects a duration of zero, which the shape alone allows.
 | --- | --- | --- | --- |
 | `formatVersion` | yes | — | The integer `1`. A missing field fails to load. A higher value asks the user to upgrade Loopfile. A lower one goes to the upgrade prompt, not to a validation error. |
 | `steps` | yes | — | An ordered list of at least one step. The first step is the entry step, and the list order is the fall-through path. |
-| `inputs` | no | `{}` | A map from input name to a one-line description. See [Inputs](#inputs). |
+| `inputs` | no | `{}` | A map from input name to a description or input definition. See [Inputs](#inputs). |
 | `maxTransitions` | no | none | An integer of 1 or more. With no value a run has no transition limit. |
 | `runTimeout` | no | none | A duration. It counts only run owner time, so the gap between a crash and a resume does not count. |
 
@@ -48,29 +48,41 @@ steps:
 
 ## Inputs
 
-A manifest declares every input it takes, with one line saying what it is (#103).
+A manifest declares every input it takes, with a description of what it is (#103).
+It can use the short form for required inputs and the long form when an input has
+more to say:
 
 ```yaml
 inputs:
-  task: what to build, usually a whole issue body
   issue: the issue number to comment on
+  merge:
+    description: yes to merge the PR when CI is green, no to stop at a green PR
+    default: "no"
 ```
 
 An input name follows the name rule and is read under the data key `input.<name>`,
 which every step can read. The step ID `input` is reserved.
 
-- Every declared input is required. v1 has no default and no optional input, so a
-  run never starts with a value nobody chose.
+- The short form `name: <description>` is required-input shorthand. The long
+  form is a map with required `description` and optional `default`; both forms
+  can appear in one manifest. Any other field in the map is a load error.
+- A `default` must be text, so quote numbers, booleans and other YAML types.
+  An empty string (`default: ""`) is valid. An input with a default is optional;
+  one without a default is required.
+- When launch leaves out an optional input, its default is stored as its value.
+  Steps, prompts, `loopfile data get input.<name>` and `loopfile result` see no
+  difference between a default and a value given with `--input`.
+- A default is a value that someone wrote down, not an absent value. There is no
+  "optional with no value" input, so a step always gets a value.
 - A placeholder for an input the manifest does not declare is a load error that
   names the declared inputs.
 - A declared input that no prompt uses is fine. A step can read it with
   `loopfile data get input.<name>`.
-- An `--input` that is not declared is a launch error, and a declared input with
-  no `--input` is a launch error. Each problem input gets its own `error:` line,
-  and a missing input's line shows its description. That message is the only
-  place v1 shows the descriptions.
-- A description is one string, not an object. An object form can arrive later for
-  the one input that needs more, with no format version bump.
+- An `--input` that is not declared is a launch error, and a required input with
+  no `--input` or default is a launch error. Each problem input gets its own
+  `error:` line, and a missing input's line shows its description. The `help:`
+  line names optional inputs and their defaults. That message is the only place
+  v1 shows the descriptions.
 
 ## Every step
 

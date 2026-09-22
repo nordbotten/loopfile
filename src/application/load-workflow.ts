@@ -86,6 +86,11 @@ const UNIT_MS: Readonly<Record<string, number>> = { s: 1000, m: 60_000, h: HOUR_
 type Raw = Readonly<Record<string, unknown>>;
 type Report = (path: string, message: string) => void;
 
+interface InputDeclarations {
+  readonly descriptions: Record<string, string>;
+  readonly defaults: Record<string, string>;
+}
+
 /** A prompt's text and the YAML path it came from. */
 interface PromptText {
   /** The manifest field that names this prompt. */
@@ -158,9 +163,29 @@ function buildWorkflow(
   // A step that did not build has no outputs and no targets, so checks that
   // read them would report errors that are not real.
   if (built.length !== steps.length || ctx.stepIds.size !== built.length) return undefined;
-  checkPlaceholders(ctx.prompts, built, inputs, report);
+  checkPlaceholders(ctx.prompts, built, inputs.descriptions, report);
   checkReachable(built, report);
-  return { formatVersion: FORMAT_VERSION, inputs, ...limits, steps: built };
+  return workflowModel(inputs, limits, built);
+}
+
+function workflowModel(
+  inputs: InputDeclarations,
+  limits: { maxTransitions?: number; runTimeoutMs?: Millis; declaredRunTimeout?: string },
+  steps: readonly Step[],
+): Workflow {
+  return {
+    formatVersion: FORMAT_VERSION,
+    inputs: inputs.descriptions,
+    ...optionalInputDefaults(inputs.defaults),
+    ...limits,
+    steps,
+  };
+}
+
+function optionalInputDefaults(defaults: Readonly<Record<string, string>>): {
+  readonly inputDefaults?: Readonly<Record<string, string>>;
+} {
+  return Object.keys(defaults).length === 0 ? {} : { inputDefaults: defaults };
 }
 
 /** The optional run limits. A limit the manifest leaves out is left out here too. */
@@ -179,19 +204,76 @@ function readLimits(
   };
 }
 
-function readInputs(raw: unknown, report: Report): Record<string, string> {
-  const inputs: Record<string, string> = {};
-  if (raw === undefined) return inputs;
+function readInputs(raw: unknown, report: Report): InputDeclarations {
+  const declarations: InputDeclarations = { descriptions: {}, defaults: {} };
+  if (raw === undefined) return declarations;
   if (!isRecord(raw)) {
-    report("inputs", "inputs must be a map from input name to a description");
-    return inputs;
+    report("inputs", "inputs must be a map from input name to a description or definition");
+    return declarations;
   }
-  for (const [name, description] of Object.entries(raw)) {
-    if (!NAME_PATTERN.test(name)) report(`inputs.${name}`, `input name \`${name}\` is not valid`);
-    if (typeof description === "string") inputs[name] = description;
-    else report(`inputs.${name}`, "an input description must be a string");
+  for (const [name, value] of Object.entries(raw)) {
+    const path = `inputs.${name}`;
+    if (!NAME_PATTERN.test(name)) report(path, `input name \`${name}\` is not valid`);
+    readInputDeclaration(name, value, path, declarations, report);
   }
-  return inputs;
+  return declarations;
+}
+
+function readInputDeclaration(
+  name: string,
+  value: unknown,
+  path: string,
+  declarations: InputDeclarations,
+  report: Report,
+): void {
+  if (typeof value === "string") {
+    declarations.descriptions[name] = value;
+    return;
+  }
+  if (!isRecord(value)) {
+    report(path, "an input description must be a string");
+    return;
+  }
+  readInputDefinition(name, value, path, declarations, report);
+}
+
+function readInputDefinition(
+  name: string,
+  value: Raw,
+  path: string,
+  declarations: InputDeclarations,
+  report: Report,
+): void {
+  for (const key of Object.keys(value)) {
+    if (key !== "description" && key !== "default") {
+      report(`${path}.${key}`, `unknown field \`${key}\``);
+    }
+  }
+  readInputDescription(name, value.description, path, declarations, report);
+  readInputDefault(name, value, path, declarations, report);
+}
+
+function readInputDescription(
+  name: string,
+  value: unknown,
+  path: string,
+  declarations: InputDeclarations,
+  report: Report,
+): void {
+  if (typeof value === "string") declarations.descriptions[name] = value;
+  else report(`${path}.description`, "an input description is required and must be a string");
+}
+
+function readInputDefault(
+  name: string,
+  value: Raw,
+  path: string,
+  declarations: InputDeclarations,
+  report: Report,
+): void {
+  if (!Object.hasOwn(value, "default")) return;
+  if (typeof value.default === "string") declarations.defaults[name] = value.default;
+  else report(`${path}.default`, "an input default must be text; quote it");
 }
 
 function collectStepIds(rawSteps: readonly unknown[], report: Report): Set<StepId> {
