@@ -31,6 +31,17 @@ async function executable(path: string, body: string): Promise<void> {
   await chmod(path, 0o755);
 }
 
+/** A repository with one commit and a bare origin. */
+async function gitRepo(repo: string, bare: string): Promise<void> {
+  await mkdir(repo);
+  await run("git", ["init", "-q", "-b", "main"], { cwd: repo, env: gitEnv });
+  await writeFile(join(repo, "README.md"), "ticket test\n");
+  await run("git", ["add", "."], { cwd: repo, env: gitEnv });
+  await run("git", ["commit", "-q", "-m", "first"], { cwd: repo, env: gitEnv });
+  await run("git", ["init", "-q", "--bare", bare], { env: gitEnv });
+  await run("git", ["remote", "add", "origin", bare], { cwd: repo, env: gitEnv });
+}
+
 function fixPrompt(number: number, why: string, handled = ""): string {
   return `You were implementing the GitHub issue below. The work is committed on the current
 branch. A check of that work came back with problems. Fix those problems. Do not
@@ -75,14 +86,8 @@ test("the ticket fixer prompt names its sender and only earlier feedback", async
   const npmCount = join(root, "npm-count");
   const ghCount = join(root, "gh-count");
   const pr = join(root, "pr");
-  await mkdir(repo);
   await mkdir(bin);
-  await run("git", ["init", "-q", "-b", "main"], { cwd: repo, env: gitEnv });
-  await writeFile(join(repo, "README.md"), "ticket test\n");
-  await run("git", ["add", "."], { cwd: repo, env: gitEnv });
-  await run("git", ["commit", "-q", "-m", "first"], { cwd: repo, env: gitEnv });
-  await run("git", ["init", "-q", "--bare", bare], { env: gitEnv });
-  await run("git", ["remote", "add", "origin", bare], { cwd: repo, env: gitEnv });
+  await gitRepo(repo, bare);
   await executable(
     join(bin, "npm"),
     `if [ "$1" = ci ]; then exit 0; fi
@@ -147,7 +152,7 @@ esac
     home,
     runId,
     source: TICKET,
-    inputs: { task: TASK, issue: "273", merge: "no" },
+    inputs: { task: TASK, issue: "273", merge: "no", ci: "yes" },
     repository: repo,
     executor: localExecutor({ ...process.env, PATH: `${bin}:${process.env.PATH}` }),
     adapters: fakeHarnessAdapters(script),
@@ -178,4 +183,47 @@ esac
       "\n\n### Review 006-review\n\nreview feedback\n",
     ),
   );
+});
+
+/** With ci=no, ship does not wait for checks, so a repository with no CI ends ready at once. */
+test("the ticket Loopfile ships without CI when ci is no", async () => {
+  const dir = join(root, "no-ci");
+  const repo = join(dir, "repo");
+  const bin = join(dir, "bin");
+  const home = join(dir, "home");
+  const runId = "20260921-120000-no-ci";
+  await mkdir(bin, { recursive: true });
+  await gitRepo(repo, join(dir, "origin.git"));
+  await executable(join(bin, "npm"), "exit 0\n");
+  await executable(
+    join(bin, "gh"),
+    `case "$1 $2" in
+  "pr view") exit 1 ;;
+  "issue view") printf 'Ticket title\n' ;;
+  "pr checks") printf 'no checks reported\n'; exit 1 ;;
+esac
+`,
+  );
+  const script: FakeScript = {
+    implement: [[{ do: "result", outcome: "done" }]],
+    review: [
+      [
+        { do: "dataPut", key: "review.notes", content: "notes" },
+        { do: "result", outcome: "approved" },
+      ],
+    ],
+  };
+  await mkdir(runPaths(home, runId).root, { recursive: true });
+
+  const ended = await executeRun({
+    home,
+    runId,
+    source: TICKET,
+    inputs: { task: TASK, issue: "273", merge: "no", ci: "no" },
+    repository: repo,
+    executor: localExecutor({ ...process.env, PATH: `${bin}:${process.env.PATH}` }),
+    adapters: fakeHarnessAdapters(script),
+  });
+
+  assert.equal(ended.result, "success");
 });
