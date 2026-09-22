@@ -1380,7 +1380,7 @@ steps:
   - id: test
     kind: agent
     harness: claude
-    timeout: 1s
+    timeout: 5s
     prompt: test
     outputs: [log]
     on:
@@ -1405,7 +1405,7 @@ steps:
       test: [
         [
           { do: "dataPut", key: "test.log", content: "test handoff" },
-          { do: "sleep", ms: 2000 },
+          { do: "sleep", ms: 6000 },
         ],
       ],
       fix: [

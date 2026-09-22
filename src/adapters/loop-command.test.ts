@@ -82,7 +82,13 @@ async function waitForEnd(home: string, loopId: string): Promise<readonly LoopEv
   const path = loopPaths(home, loopId).events;
   for (let tries = 0; tries < 800; tries += 1) {
     const events = parseEventLog<LoopEvent>(await readFile(path, "utf8").catch(() => ""));
-    if (events.at(-1)?.type === "loop.ended") return events;
+    if (events.at(-1)?.type === "loop.ended") {
+      for (let ownerTries = 0; ownerTries < 50; ownerTries += 1) {
+        if ((await pingOwner(loopPaths(home, loopId).socket, 20)) === undefined) return events;
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      throw new Error("the loop owner did not close");
+    }
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
   throw new Error("the loop did not end");

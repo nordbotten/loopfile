@@ -1,11 +1,11 @@
 /**
  * The v1 `list --json` shape (#52, ADR 0006, ADR 0007).
  *
- * `loopfile list` scans every run folder and shows one row per run. Each row
- * is a `RunListEntry`: a small, derived summary, not a copy of `status.json`.
- * `discoverRuns` (`src/adapters/run-discovery.ts`) is the one place that reads
- * a run folder to build these; `status` (#36) reuses it for its own bare,
- * interactive listing rather than scanning the folder a second way.
+ * `loopfile list` scans every loop and run folder and shows one row per
+ * object. Each row is a small, derived summary, not a copy of `status.json`.
+ * The discovery adapters are the one place that read state folders to build
+ * these; `status` (#36) reuses run discovery for its own bare, interactive
+ * listing rather than scanning the folder a second way.
  *
  * `RunListState` widens `RunLifecycle` (`src/domain/status.ts`) with the two
  * states a reader derives and `status.json` never holds (`crashed`, `unknown`,
@@ -16,8 +16,8 @@
  */
 
 import type { Timestamp } from "./events.ts";
-import type { RunId } from "./model.ts";
-import type { RunLifecycle } from "./status.ts";
+import type { LoopId, RunId } from "./model.ts";
+import type { LoopLifecycle, LoopStatusSource, RunLifecycle } from "./status.ts";
 
 /** The `list --json` format version this tool writes (ADR 0006). */
 export const LIST_FORMAT_VERSION = 1;
@@ -37,6 +37,7 @@ export type RunListState = RunLifecycle | "crashed" | "unknown" | "unreadable";
  */
 export interface RunListEntry {
   readonly runId: RunId;
+  readonly loopId: LoopId | null;
   readonly loopfileName: string | null;
   readonly state: RunListState;
   readonly currentStep: string | null;
@@ -44,8 +45,23 @@ export interface RunListEntry {
   readonly elapsedMs: number | null;
 }
 
+/** Every state a `list` loop row may show. */
+export type LoopListState = LoopLifecycle | "crashed";
+
+/** One loop's derived summary in `list --json`. */
+export interface LoopListEntry {
+  readonly loopId: LoopId;
+  readonly loopfileName: string;
+  readonly state: LoopListState;
+  readonly source: LoopStatusSource;
+  readonly runs: number;
+  readonly startedAt: Timestamp;
+  readonly elapsedMs: number;
+}
+
 /** `list --json`'s whole output. */
 export interface RunList {
   readonly formatVersion: typeof LIST_FORMAT_VERSION;
+  readonly loops: readonly LoopListEntry[];
   readonly runs: readonly RunListEntry[];
 }
