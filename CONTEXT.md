@@ -126,6 +126,10 @@ _Avoid_: Round
 Stop the current attempt of a running run from outside it, with `loopfile interrupt`. The attempt counts toward the step's `maxAttempts`, and the same step gets a new attempt, as after a crash and resume. The run's routes are not used.
 _Avoid_: Retry, restart, kill
 
+**Continue**:
+Make an ended run go on, with `loopfile continue`. It is the same run, on the same branch and workspace. The step that stopped the run gets a new attempt with the same inputs, as after an interrupt, and the run's limits count again from the continue. A completed run cannot continue. A crashed run resumes instead.
+_Avoid_: Retry (a loop's new run for a failed run), restart, rerun
+
 **Materialized Loopfile**:
 The fixed copy of a Loopfile that one run owns, made at launch from any input type. It holds only what the Loopfile shipped. A prompt written inline in the manifest becomes a file in a run-owned folder next to it, not inside it. In a loop, the loop makes one Materialized Loopfile when it starts, and each run's Materialized Loopfile is a copy of it.
 _Avoid_: Snapshot, copy, extracted package
