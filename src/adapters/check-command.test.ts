@@ -149,7 +149,12 @@ test("a non-JSON check prints prose and applies launch input validation", async 
   const io = capture();
   assert.equal(await checkCommand(["check", directory], io.out, io.err), 2);
   assert.equal(io.output, "");
-  assert.match(io.errors, /missing --input for issue/);
+  assert.equal(
+    io.errors,
+    "error: missing --input issue: The issue number\n" +
+      "code: bad_argument\n" +
+      "help: Give each with --input <name>=<value>.\n",
+  );
 
   const valid = capture();
   assert.equal(
@@ -157,4 +162,24 @@ test("a non-JSON check prints prose and applies launch input validation", async 
     0,
   );
   assert.equal(valid.output, "Loopfile is valid.\n");
+});
+
+test("check reports every undeclared input on its own error line", async () => {
+  const directory = await source(VALID);
+  const io = capture();
+  assert.equal(
+    await checkCommand(
+      ["check", directory, "--input", "other=1", "--input", "another=2"],
+      io.out,
+      io.err,
+    ),
+    2,
+  );
+  assert.equal(
+    io.errors,
+    "error: --input other is not declared by the Loopfile. Declared inputs: issue.\n" +
+      "error: --input another is not declared by the Loopfile. Declared inputs: issue.\n" +
+      "code: bad_argument\n" +
+      "help: Give each with --input <name>=<value>.\n",
+  );
 });

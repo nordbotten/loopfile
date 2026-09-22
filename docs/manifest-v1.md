@@ -66,8 +66,9 @@ which every step can read. The step ID `input` is reserved.
 - A declared input that no prompt uses is fine. A step can read it with
   `loopfile data get input.<name>`.
 - An `--input` that is not declared is a launch error, and a declared input with
-  no `--input` is a launch error that lists every input with its description.
-  That message is the only place v1 shows the descriptions.
+  no `--input` is a launch error. Each problem input gets its own `error:` line,
+  and a missing input's line shows its description. That message is the only
+  place v1 shows the descriptions.
 - A description is one string, not an object. An object form can arrive later for
   the one input that needs more, with no format version bump.
 
