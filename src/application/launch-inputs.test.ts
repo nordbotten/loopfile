@@ -19,7 +19,7 @@ test("flags become a map, and the value keeps every `=` after the first", () => 
 test("a flag with no `=` is refused", () => {
   const result = parseInputFlags(["issue"]);
   assert.equal(result.ok, false);
-  assert.match(!result.ok ? result.message : "", /<name>=<value>/);
+  assert.match(!result.ok ? (result.messages[0] ?? "") : "", /<name>=<value>/);
 });
 
 test("a name that breaks the ID rule is refused", () => {
@@ -32,7 +32,7 @@ test("a name that breaks the ID rule is refused", () => {
 test("the same name twice is refused", () => {
   const result = parseInputFlags(["a=1", "a=2"]);
   assert.equal(result.ok, false);
-  assert.match(!result.ok ? result.message : "", /more than once/);
+  assert.match(!result.ok ? (result.messages[0] ?? "") : "", /more than once/);
 });
 
 test("given inputs must match the declared ones exactly", () => {
@@ -41,15 +41,17 @@ test("given inputs must match the declared ones exactly", () => {
 
   const undeclared = checkAgainstDeclared({ issue: "1", repo: "x", other: "y" }, declared);
   assert.equal(undeclared.ok, false);
-  assert.match(!undeclared.ok ? undeclared.message : "", /other is not declared.*issue, repo/);
+  assert.deepEqual(!undeclared.ok ? undeclared.messages : [], [
+    "--input other is not declared by the Loopfile. Declared inputs: issue, repo.",
+  ]);
 
   const none = checkAgainstDeclared({ other: "y" }, {});
-  assert.match(!none.ok ? none.message : "", /takes no inputs/);
+  assert.deepEqual(!none.ok ? none.messages : [], [
+    "--input other is not declared by the Loopfile. The Loopfile takes no inputs.",
+  ]);
 
   const missing = checkAgainstDeclared({ issue: "1" }, declared);
-  assert.equal(missing.ok, false);
-  assert.match(!missing.ok ? missing.message : "", /missing --input for repo/);
-  assert.match(!missing.ok ? missing.message : "", /issue: The issue number\n {2}repo: The repo/);
+  assert.deepEqual(!missing.ok ? missing.messages : [], ["missing --input repo: The repo"]);
 
   assert.deepEqual(checkAgainstDeclared({}, {}), { ok: true, inputs: {} });
 });

@@ -16,6 +16,7 @@ import { parseArgs } from "node:util";
 import {
   checkAgainstDeclared,
   encodeLaunch,
+  INPUT_HELP,
   type InputsCheck,
   LAUNCH_ENV,
   type LaunchRequest,
@@ -107,7 +108,7 @@ export async function launchCommand(
   if (!source.ok) return source.exitCode;
 
   const inputs = resolveInputs(args.inputs, source.workflow);
-  if (!inputs.ok) return refuse(io, inputs.message, 2);
+  if (!inputs.ok) return refuse(io, inputs.messages, 2, "bad_argument", INPUT_HELP);
 
   const request: LaunchRequest = {
     source: args.source,
@@ -215,12 +216,13 @@ function parseLaunchArgs(argv: readonly string[]): LaunchArgs | undefined {
 
 function refuse(
   io: LaunchIo,
-  message: string,
+  message: string | readonly string[],
   exitCode: 1 | 2,
   code: "bad_argument" | "invalid_manifest" | "operation_failed" = "bad_argument",
   help = USAGE,
 ): number {
-  io.err(renderOperatorFailure({ summary: message, code, help }, exitCode).stderr);
+  const messages = typeof message === "string" ? [message] : message;
+  io.err(renderOperatorFailureLines(messages, code, help, exitCode).stderr);
   return exitCode;
 }
 

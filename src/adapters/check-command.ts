@@ -1,9 +1,9 @@
 /** `loopfile check <source> [--json]`: validate without starting a run. */
 
 import { parseArgs } from "node:util";
-import { checkAgainstDeclared, parseInputFlags } from "../application/launch-inputs.ts";
+import { checkAgainstDeclared, INPUT_HELP, parseInputFlags } from "../application/launch-inputs.ts";
 import type { LoadError, LoadResult } from "../application/load-workflow.ts";
-import { renderOperatorFailure } from "../application/operator-error.ts";
+import { renderOperatorFailureLines } from "../application/operator-error.ts";
 import { loadInput, loadThinText } from "./directory-loader.ts";
 import { classifyInput, InputError, type InputKind, readStdin } from "./input.ts";
 
@@ -47,7 +47,7 @@ export async function checkCommand(
   if (!reportManifest(source.result, args.json, out)) return 1;
 
   const inputs = checkInputs(args.inputs, source.result.workflow.inputs);
-  if (!inputs.ok) return fail(err, inputs.message, 2, USAGE);
+  if (!inputs.ok) return fail(err, inputs.messages, 2, INPUT_HELP);
 
   out(args.json ? "[]\n" : "Loopfile is valid.\n");
   return 0;
@@ -159,11 +159,12 @@ function renderErrors(errors: readonly LoadError[]): string {
 
 function fail(
   err: Out,
-  summary: string,
+  summary: string | readonly string[],
   exitCode: 1 | 2,
   help: string,
   code: "bad_argument" | "operation_failed" = "bad_argument",
 ): number {
-  err(renderOperatorFailure({ summary, code, help }, exitCode).stderr);
+  const summaries = typeof summary === "string" ? [summary] : summary;
+  err(renderOperatorFailureLines(summaries, code, help, exitCode).stderr);
   return exitCode;
 }

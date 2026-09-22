@@ -12,7 +12,9 @@ export type LaunchInputs = Readonly<Record<string, string>>;
 
 export type InputsCheck =
   | { readonly ok: true; readonly inputs: LaunchInputs }
-  | { readonly ok: false; readonly message: string };
+  | { readonly ok: false; readonly messages: readonly string[] };
+
+export const INPUT_HELP = "Give each with --input <name>=<value>.";
 
 /** Turns each `--input` value, `name=value`, into a map. The value is everything after the first `=`. */
 export function parseInputFlags(flags: readonly string[]): InputsCheck {
@@ -30,11 +32,7 @@ export function parseInputFlags(flags: readonly string[]): InputsCheck {
   return { ok: true, inputs: Object.fromEntries(inputs) };
 }
 
-/**
- * Every declared input is required and nothing else is accepted
- * (`docs/manifest-v1.md#inputs`). A missing input lists all of them, with
- * their descriptions.
- */
+/** Every declared input is required and nothing else is accepted (`docs/manifest-v1.md#inputs`). */
 export function checkAgainstDeclared(
   given: LaunchInputs,
   declared: Readonly<Record<string, string>>,
@@ -42,25 +40,23 @@ export function checkAgainstDeclared(
   const undeclared = Object.keys(given).filter((name) => !(name in declared));
   if (undeclared.length > 0) {
     const known = Object.keys(declared);
+    const declaration =
+      known.length === 0
+        ? "The Loopfile takes no inputs."
+        : `Declared inputs: ${known.join(", ")}.`;
     return refuse(
-      `--input ${undeclared.join(", ")} is not declared by the Loopfile. ` +
-        (known.length === 0
-          ? "The Loopfile takes no inputs."
-          : `Declared inputs: ${known.join(", ")}.`),
+      undeclared.map((name) => `--input ${name} is not declared by the Loopfile. ${declaration}`),
     );
   }
   const missing = Object.keys(declared).filter((name) => !(name in given));
   if (missing.length > 0) {
-    const lines = Object.entries(declared).map(([name, text]) => `  ${name}: ${text}`);
-    return refuse(
-      `missing --input for ${missing.join(", ")}. The Loopfile needs:\n${lines.join("\n")}`,
-    );
+    return refuse(missing.map((name) => `missing --input ${name}: ${declared[name]}`));
   }
   return { ok: true, inputs: given };
 }
 
-function refuse(message: string): InputsCheck {
-  return { ok: false, message };
+function refuse(message: string | readonly string[]): InputsCheck {
+  return { ok: false, messages: typeof message === "string" ? [message] : message };
 }
 
 /** Where a source is, what kind it is and what the run owner needs to start the run (#35, ADR 0008). */
