@@ -304,6 +304,36 @@ printf 'next stderr\\n' >&2
   }
 });
 
+test("max runs stops --next before it is called again", async () => {
+  const setupResult = await setup();
+  const script = join(setupResult.repo, "next-once.sh");
+  await writeFile(
+    script,
+    `#!/bin/sh
+count=$(cat .next-count 2>/dev/null || echo 0)
+printf '%s\\n' "$((count + 1))" > .next-count
+printf '{}\\n'
+`,
+  );
+  try {
+    const captured = io();
+    const code = await loopCommand(
+      ["loop", setupResult.source, "--next", "sh next-once.sh", "--max-runs", "1", "-d"],
+      cli,
+      captured.value,
+      setupResult.env,
+      { repository: setupResult.repo },
+    );
+    assert.equal(code, 0, captured.errors());
+    const events = await waitForEnd(setupResult.home, captured.output().trim());
+    assert.equal(events.filter((event) => event.type === "loop.run_started").length, 1);
+    assert.equal(loopStatus(events).endReason, "max_runs");
+    assert.equal((await readFile(join(setupResult.repo, ".next-count"), "utf8")).trim(), "1");
+  } finally {
+    await rm(setupResult.root, { recursive: true, force: true });
+  }
+});
+
 test("a failing --next command ends the loop without starting a run", async () => {
   const setupResult = await setup();
   try {
@@ -386,6 +416,7 @@ test("loop --times starts a detached owner and two command runs", async () => {
         event.type === "loop.run_started",
     );
     assert.equal(started.length, 2);
+    assert.equal(events[0]?.type === "loop.created" ? events[0].maxRuns : undefined, null);
     assert.equal(loopStatus(events).state, "completed");
     for (const child of started) {
       const childEvents = parseEventLog(
@@ -506,6 +537,18 @@ test("loop input errors happen before a loop folder exists", async () => {
       { args: ["-d"], message: "a loop needs one input source: --times, --list or --next" },
       { args: ["--times", "0", "-d"], message: "--times must be an integer of 1 or more" },
       {
+        args: ["--max-runs", "0", "--times", "2", "-d"],
+        message: "--max-runs must be an integer of 1 or more",
+      },
+      {
+        args: ["--max-runs=-1", "--times", "2", "-d"],
+        message: "--max-runs must be an integer of 1 or more",
+      },
+      {
+        args: ["--max-runs", "nope", "--times", "2", "-d"],
+        message: "--max-runs must be an integer of 1 or more",
+      },
+      {
         args: ["--times", "2", "--list", "items", "-d"],
         message: "a loop takes only one input source",
       },
@@ -524,6 +567,57 @@ test("loop input errors happen before a loop folder exists", async () => {
       assert.match(captured.errors(), /code: bad_argument/);
     }
     await assert.rejects(stat(join(setupResult.home, "loops")));
+  } finally {
+    await rm(setupResult.root, { recursive: true, force: true });
+  }
+});
+
+test("an attached loop stops at max-runs and exits successfully", async () => {
+  const setupResult = await setup(
+    "formatVersion: 1\nsteps:\n  - id: work\n    kind: command\n    run: 'true'\n",
+  );
+  try {
+    const captured = io();
+    const code = await loopCommand(
+      ["loop", setupResult.source, "--times", "5", "--max-runs", "2"],
+      cli,
+      captured.value,
+      setupResult.env,
+      { repository: setupResult.repo, pollMs: 10, ownerPingTimeoutMs: 50 },
+    );
+    assert.equal(code, 0, captured.errors());
+    const loopId = captured.output().trim();
+    const events = await waitForEnd(setupResult.home, loopId);
+    assert.equal(events.filter((event) => event.type === "loop.run_started").length, 2);
+    assert.equal(events[0]?.type === "loop.created" ? events[0].maxRuns : undefined, 2);
+    assert.equal(loopStatus(events).state, "completed");
+    assert.equal(loopStatus(events).endReason, "max_runs");
+    assert.match(captured.errors(), new RegExp(`ended: ${loopId} completed max_runs`));
+  } finally {
+    await rm(setupResult.root, { recursive: true, force: true });
+  }
+});
+
+test("max runs caps a retry", async () => {
+  const setupResult = await setup();
+  const counter = join(setupResult.root, "retry-count");
+  await writeFile(
+    join(setupResult.source, "manifest.yaml"),
+    `formatVersion: 1\nsteps:\n  - id: work\n    kind: command\n    run: ${JSON.stringify(`test -e ${counter} || (touch ${counter} && exit 1)`)}\n`,
+  );
+  try {
+    const captured = io();
+    const code = await loopCommand(
+      ["loop", setupResult.source, "--times", "1", "--retry", "1", "--max-runs", "1"],
+      cli,
+      captured.value,
+      setupResult.env,
+      { repository: setupResult.repo, pollMs: 10, ownerPingTimeoutMs: 50 },
+    );
+    assert.equal(code, 0, captured.errors());
+    const events = await waitForEnd(setupResult.home, captured.output().trim());
+    assert.equal(events.filter((event) => event.type === "loop.run_started").length, 1);
+    assert.equal(loopStatus(events).endReason, "max_runs");
   } finally {
     await rm(setupResult.root, { recursive: true, force: true });
   }

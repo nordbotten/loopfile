@@ -131,7 +131,7 @@ async function driveLoop(
       index,
       inputSet: action.inputSet,
       sourceIndex: action.sourceIndex,
-      retryOf: null,
+      retryOf: action.retryOf ?? null,
     });
 
     const started = await startChildRun(deps, {
@@ -198,6 +198,9 @@ async function nextAction(
   loopId: string,
   workflow: Workflow | undefined,
 ): Promise<ReturnType<typeof nextLoopAction>> {
+  if (status.maxRuns !== null && status.runs >= status.maxRuns) {
+    return nextLoopAction(status, child, source, undefined, workflow);
+  }
   const nextResult = await nextResultFor(source, child, repositoryPath, ownerEnv, loopId);
   return nextLoopAction(status, child, source, nextResult, workflow);
 }

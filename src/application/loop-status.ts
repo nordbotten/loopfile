@@ -25,9 +25,14 @@ export function loopStatus(events: readonly LoopEvent[]): LoopStatus {
     state: "running",
     source: statusSource(created.source),
     fixedInputs: created.fixedInputs,
+    retry: created.retry,
+    maxRuns: created.maxRuns,
     place: created.source.kind === "next" ? null : 0,
     runs: 0,
     retries: 0,
+    lastInputSet: null,
+    lastSourceIndex: null,
+    lastRetryCount: 0,
     runIds: [],
     currentRunId: null,
     pausedUntil: null,
@@ -72,7 +77,14 @@ function runStarted(
   event: Extract<LoopEvent, { readonly type: "loop.run_started" }>,
 ): void {
   status.runs += 1;
-  if (event.retryOf !== null) status.retries += 1;
+  if (event.retryOf !== null) {
+    status.retries += 1;
+    status.lastRetryCount += 1;
+  } else {
+    status.lastRetryCount = 0;
+  }
+  status.lastInputSet = event.inputSet;
+  status.lastSourceIndex = event.sourceIndex;
   status.runIds = [...status.runIds, event.runId];
   status.currentRunId = event.runId;
   status.pausedUntil = null;
