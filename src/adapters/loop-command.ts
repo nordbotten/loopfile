@@ -273,33 +273,27 @@ async function createAndStartLoop(
     );
     return started.failure.exitCode;
   }
-  io.out(`${loopId}\n`);
-  io.err(renderOperatorConfirmation({ started: loopId }));
-  if (args.detach) return 0;
-  return await followAttachedLoop(loopId, home, io.err, options);
+  if (args.detach) {
+    io.out(`${loopId}\n`);
+    io.err(renderOperatorConfirmation({ started: loopId }));
+    return 0;
+  }
+  const interrupted = new AbortController();
+  const onInterrupt = (): void => interrupted.abort();
+  process.once("SIGINT", onInterrupt);
+  try {
+    io.out(`${loopId}\n`);
+    io.err(renderOperatorConfirmation({ started: loopId }));
+    return await followLoop(loopId, home, io.err, options, interrupted.signal);
+  } finally {
+    process.off("SIGINT", onInterrupt);
+  }
 }
 
 interface ObservedRun {
   readonly index: number;
   readonly runId: string;
   ended: boolean;
-}
-
-/** Follows a loop without opening the run monitor, so terminal and pipe output match. */
-async function followAttachedLoop(
-  loopId: string,
-  home: string,
-  err: (text: string) => void,
-  options: LoopCommandOptions,
-): Promise<number> {
-  const interrupted = new AbortController();
-  const onInterrupt = (): void => interrupted.abort();
-  process.once("SIGINT", onInterrupt);
-  try {
-    return await followLoop(loopId, home, err, options, interrupted.signal);
-  } finally {
-    process.off("SIGINT", onInterrupt);
-  }
 }
 
 async function followLoop(

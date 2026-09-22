@@ -409,7 +409,7 @@ test("an attached loop reports a failed child as an operator failure", async () 
       cli,
       captured.value,
       setupResult.env,
-      { repository: setupResult.repo, pollMs: 10, ownerPingTimeoutMs: 50 },
+      { repository: setupResult.repo, pollMs: 10, ownerPingTimeoutMs: 30_000 },
     );
     assert.equal(code, 1);
     const loopId = captured.output().trim();
