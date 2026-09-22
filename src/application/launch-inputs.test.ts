@@ -5,7 +5,9 @@ import {
   decodeLaunch,
   encodeLaunch,
   type LaunchRequest,
+  mergeInputSet,
   parseInputFlags,
+  parseInputSet,
 } from "./launch-inputs.ts";
 
 test("flags become a map, and the value keeps every `=` after the first", () => {
@@ -14,6 +16,40 @@ test("flags become a map, and the value keeps every `=` after the first", () => 
     inputs: { issue: "42", q: "a=b", empty: "" },
   });
   assert.deepEqual(parseInputFlags([]), { ok: true, inputs: {} });
+});
+
+test("JSON input sets must be objects with string values", () => {
+  assert.deepEqual(parseInputSet('{"issue":"42","empty":""}'), {
+    ok: true,
+    inputs: { issue: "42", empty: "" },
+  });
+  assert.deepEqual(parseInputSet("null"), {
+    ok: false,
+    messages: ["input set is not a JSON object"],
+  });
+  assert.deepEqual(parseInputSet('["42"]'), {
+    ok: false,
+    messages: ["input set is not a JSON object"],
+  });
+  assert.deepEqual(parseInputSet('{"issue":42,"other":null}'), {
+    ok: false,
+    messages: ['input "issue" is not a string', 'input "other" is not a string'],
+  });
+  assert.deepEqual(parseInputSet("not json"), {
+    ok: false,
+    messages: ["input set is not valid JSON"],
+  });
+});
+
+test("fixed and source input sets cannot share a name", () => {
+  assert.deepEqual(mergeInputSet({ project: "loopfile" }, { issue: "42" }), {
+    ok: true,
+    inputs: { project: "loopfile", issue: "42" },
+  });
+  assert.deepEqual(mergeInputSet({ issue: "41", project: "loopfile" }, { issue: "42" }), {
+    ok: false,
+    messages: ['input "issue" is given by both --input and the input source'],
+  });
 });
 
 test("a flag with no `=` is refused", () => {
