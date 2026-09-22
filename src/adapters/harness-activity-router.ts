@@ -26,6 +26,8 @@ export interface HarnessActivityRouterOptions {
   events(): readonly RunEvent[];
   /** The latest data is needed by the run's terminal event. */
   readonly onData?: (data: HarnessData) => void;
+  /** Existing run totals, carried into the next harness call. */
+  readonly initialData?: HarnessData;
   /** Overridable for tests only. */
   readonly now?: () => Date;
 }
@@ -34,7 +36,7 @@ export function harnessActivityRouter(
   options: HarnessActivityRouterOptions,
 ): (activity: HarnessActivity) => void {
   const now = options.now ?? (() => new Date());
-  let data: HarnessData = NO_HARNESS_DATA;
+  let data = options.initialData ?? NO_HARNESS_DATA;
   return (activity) => {
     const result = applyHarnessActivity(data, activity, now().toISOString(), options.secrets);
     data = result.data;

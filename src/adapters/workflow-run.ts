@@ -524,8 +524,11 @@ async function visit(
   loopfileName: string,
 ): Promise<Visited> {
   const attemptId = nextAttemptId(replay(tracked.history), step.id);
-  tracked.harnessData = NO_HARNESS_DATA;
-  tracked.status.onHarnessUpdate(tracked.history, NO_HARNESS_DATA);
+  tracked.harnessData = {
+    ...NO_HARNESS_DATA,
+    metrics: { ...tracked.harnessData.metrics, permissionDenials: null },
+  };
+  tracked.status.onHarnessUpdate(tracked.history, tracked.harnessData);
   const startedAt = new Date().toISOString();
   const attempt = await createAttemptDirectory(owner.paths.attempts, attemptId);
   let current: AttemptIdentity | undefined;
@@ -690,6 +693,7 @@ function activityFor(owner: RunOwner, tracked: Tracked, attemptId: string) {
         secrets: { attemptSecret: secret },
         status: tracked.status,
         events: () => tracked.history,
+        initialData: tracked.harnessData,
         onData: (data) => {
           tracked.harnessData = data;
         },

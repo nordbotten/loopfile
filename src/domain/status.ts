@@ -117,8 +117,9 @@ export interface LastTransition {
 }
 
 /**
- * Run totals. Each field is `null` until a harness reports it, and a number,
- * including `0`, once one has (ADR 0007).
+ * Run metrics. The five usage fields are sums of harness-call reports; `null`
+ * means no report supplied a number, and `0` is a reported value (ADR 0007).
+ * Permission denials remain the current attempt's reported count.
  */
 export interface StatusMetrics {
   readonly inputTokens: number | null;
