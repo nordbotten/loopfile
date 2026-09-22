@@ -11,9 +11,14 @@ const status: LoopStatus = {
   state: "running",
   source: { kind: "times", count: 3 },
   fixedInputs: { project: "loopfile" },
+  retry: 0,
+  maxRuns: null,
   place: 1,
   runs: 1,
   retries: 0,
+  lastInputSet: { project: "loopfile" },
+  lastSourceIndex: 1,
+  lastRetryCount: 0,
   runIds: ["run-one"],
   currentRunId: "run-one",
   pausedUntil: null,
@@ -47,6 +52,65 @@ test("starts the next run after a completed child", () => {
     inputSet: { project: "loopfile" },
     sourceIndex: 2,
   });
+});
+
+test("ends well instead of starting when max runs is reached", () => {
+  assert.deepEqual(
+    nextLoopAction({ ...status, runs: 2, maxRuns: 2 }, { state: "completed", runId: "run-one" }),
+    { kind: "end", reason: "max_runs" },
+  );
+});
+
+test("does not need a next command result when max runs is reached", () => {
+  assert.deepEqual(
+    nextLoopAction(
+      { ...status, source: { kind: "next", command: "next-input" }, maxRuns: 1, runs: 1 },
+      { state: "completed", runId: "run-one" },
+      { kind: "next", command: "next-input" },
+      { kind: "output", result: { ok: true, inputs: { issue: "41" } } },
+    ),
+    { kind: "end", reason: "max_runs" },
+  );
+});
+
+test("allows a failed run's retry with the same input", () => {
+  assert.deepEqual(
+    nextLoopAction(
+      { ...status, retry: 1, lastRetryCount: 0 },
+      { state: "failed", runId: "run-one" },
+    ),
+    {
+      kind: "start",
+      inputSet: { project: "loopfile" },
+      sourceIndex: 1,
+      retryOf: "run-one",
+    },
+  );
+});
+
+test("max runs stops a retry", () => {
+  assert.deepEqual(
+    nextLoopAction(
+      { ...status, retry: 1, maxRuns: 1, runs: 1, lastRetryCount: 0 },
+      { state: "failed", runId: "run-one" },
+    ),
+    { kind: "end", reason: "max_runs" },
+  );
+});
+
+test("a failed run with no retries left ends the loop", () => {
+  assert.deepEqual(action({ state: "failed", runId: "run-one" }), {
+    kind: "end",
+    reason: "run_failed",
+    detail: "run run-one failed",
+  });
+});
+
+test("does not retry a cancelled child", () => {
+  assert.deepEqual(
+    nextLoopAction({ ...status, retry: 1 }, { state: "cancelled", runId: "run-one" }),
+    { kind: "end", reason: "run_failed", detail: "run run-one cancelled" },
+  );
 });
 
 test("starts next runs from the command result and resolves defaults", () => {

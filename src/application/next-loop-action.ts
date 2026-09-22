@@ -13,7 +13,12 @@ export type LastChild =
 
 /** The next deterministic move for a loop driver. */
 export type LoopAction =
-  | { readonly kind: "start"; readonly inputSet: InputSet; readonly sourceIndex: number | null }
+  | {
+      readonly kind: "start";
+      readonly inputSet: InputSet;
+      readonly sourceIndex: number | null;
+      readonly retryOf?: string;
+    }
   | { readonly kind: "wait" }
   | { readonly kind: "end"; readonly reason: LoopEndReason; readonly detail?: string };
 
@@ -31,15 +36,45 @@ export function nextLoopAction(
   workflow?: Pick<Workflow, "inputs" | "inputDefaults">,
 ): LoopAction {
   if (lastChild.state === "running") return { kind: "wait" };
+  const failed = failedChildAction(status, lastChild);
+  if (failed !== undefined) return failed;
   const childEnd = childEndAction(lastChild);
   if (childEnd !== undefined) return childEnd;
+  return uncappedSourceAction(status, source, nextResult, workflow);
+}
+
+function failedChildAction(status: LoopStatus, child: LastChild): LoopAction | undefined {
+  if (child.state !== "failed") return undefined;
+  if (status.lastRetryCount >= status.retry) {
+    return { kind: "end", reason: "run_failed", detail: `run ${child.runId} failed` };
+  }
+  if (atRunCap(status)) return { kind: "end", reason: "max_runs" };
+  return {
+    kind: "start",
+    inputSet: status.lastInputSet ?? status.fixedInputs,
+    sourceIndex: status.lastSourceIndex,
+    retryOf: child.runId,
+  };
+}
+
+function uncappedSourceAction(
+  status: LoopStatus,
+  source: LoopSource | undefined,
+  nextResult: NextSourceResult | undefined,
+  workflow: Pick<Workflow, "inputs" | "inputDefaults"> | undefined,
+): LoopAction {
+  if (atRunCap(status)) return { kind: "end", reason: "max_runs" };
   if (source?.kind === "next") return nextCommandAction(status, nextResult, workflow);
   return source?.kind === "list" ? nextListAction(status, source) : nextTimesAction(status);
 }
 
+function atRunCap(status: LoopStatus): boolean {
+  return status.maxRuns !== null && status.runs >= status.maxRuns;
+}
+
 function childEndAction(child: LastChild): LoopAction | undefined {
-  if (child.state === "failed" || child.state === "cancelled") {
-    return { kind: "end", reason: "run_failed", detail: `run ${child.runId} ${child.state}` };
+  if (child.state === "cancelled") {
+    return { kind: "end", reason: "run_failed", detail: `run ${child.runId} cancelled` };
   }
   if (child.state === "crashed") {
     return { kind: "end", reason: "internal_error", detail: `child run ${child.runId} crashed` };

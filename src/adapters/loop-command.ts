@@ -47,7 +47,7 @@ import {
 import { pingOwner } from "./run-owner.ts";
 
 const USAGE =
-  "Usage: loopfile loop <source> (--times N | --list <file> | --next <command>) [--input k=v]... [-d]";
+  "Usage: loopfile loop <source> (--times N | --list <file> | --next <command>) [--input k=v]... [--retry N] [--max-runs N] [-d]";
 const HELP = `${USAGE}
 
 Run a Loopfile repeatedly in the background. Each non-empty JSON Lines input
@@ -71,6 +71,8 @@ interface LoopArgs {
   readonly times: string[];
   readonly list: string[];
   readonly next: string[];
+  readonly retry: string[];
+  readonly maxRuns: string[];
   readonly inputs: readonly string[];
   readonly detach: boolean;
   readonly help: boolean;
@@ -100,6 +102,8 @@ interface ValidLoopArgs {
   readonly count: number | undefined;
   readonly list: string | undefined;
   readonly next: string | undefined;
+  readonly retry: number;
+  readonly maxRuns: number | undefined;
   readonly inputs: readonly string[];
   readonly detach: boolean;
 }
@@ -111,37 +115,9 @@ function validateLoopArgs(args: LoopArgs, io: LoopIo): ValidLoopArgs | number {
     return refuse(io, "a loop needs one input source: --times, --list or --next");
   }
   if (sources > 1) return refuse(io, "a loop takes only one input source");
-  if (args.times.length > 0) {
-    const count = parseTimes(args.times[0] as string, io);
-    return count === undefined
-      ? 2
-      : {
-          source: args.source,
-          count,
-          list: undefined,
-          next: undefined,
-          inputs: args.inputs,
-          detach: args.detach,
-        };
-  }
-  if (args.list.length > 0) {
-    return {
-      source: args.source,
-      count: undefined,
-      list: args.list[0],
-      next: undefined,
-      inputs: args.inputs,
-      detach: args.detach,
-    };
-  }
-  return {
-    source: args.source,
-    count: undefined,
-    list: undefined,
-    next: args.next[0],
-    inputs: args.inputs,
-    detach: args.detach,
-  };
+  const limits = parseLoopLimits(args, io);
+  if (limits === undefined) return 2;
+  return loopSourceArgs(args, limits, io);
 }
 
 async function startLoop(
@@ -237,8 +213,8 @@ async function createAndStartLoop(
         loopfileName: basename(args.source),
         source,
         fixedInputs,
-        retry: 0,
-        maxRuns: null,
+        retry: args.retry,
+        maxRuns: args.maxRuns ?? null,
         pauseMs: null,
         program,
       });
@@ -537,6 +513,8 @@ function parseLoopArgs(argv: readonly string[]): LoopArgs | undefined {
         times: { type: "string", multiple: true },
         list: { type: "string", multiple: true },
         next: { type: "string", multiple: true },
+        retry: { type: "string", multiple: true },
+        "max-runs": { type: "string", multiple: true },
         input: { type: "string", multiple: true },
         detach: { type: "boolean", short: "d" },
         help: { type: "boolean", short: "h" },
@@ -549,6 +527,8 @@ function parseLoopArgs(argv: readonly string[]): LoopArgs | undefined {
       times: values.times ?? [],
       list: values.list ?? [],
       next: values.next ?? [],
+      retry: values.retry ?? [],
+      maxRuns: values["max-runs"] ?? [],
       inputs: values.input ?? [],
       detach: values.detach === true,
       help: values.help === true,
@@ -558,10 +538,84 @@ function parseLoopArgs(argv: readonly string[]): LoopArgs | undefined {
   }
 }
 
+function loopSourceArgs(
+  args: LoopArgs,
+  limits: { readonly retry: number; readonly maxRuns: number | undefined },
+  io: LoopIo,
+): ValidLoopArgs | number {
+  if (args.times.length > 0) {
+    const count = parseTimes(args.times[0] as string, io);
+    if (count === undefined) return 2;
+    return {
+      source: args.source as string,
+      count,
+      list: undefined,
+      next: undefined,
+      ...limits,
+      inputs: args.inputs,
+      detach: args.detach,
+    };
+  }
+  if (args.list.length > 0) {
+    return {
+      source: args.source as string,
+      count: undefined,
+      list: args.list[0],
+      next: undefined,
+      ...limits,
+      inputs: args.inputs,
+      detach: args.detach,
+    };
+  }
+  return {
+    source: args.source as string,
+    count: undefined,
+    list: undefined,
+    next: args.next[0],
+    ...limits,
+    inputs: args.inputs,
+    detach: args.detach,
+  };
+}
+
+function parseLoopLimits(
+  args: LoopArgs,
+  io: LoopIo,
+): { readonly retry: number; readonly maxRuns: number | undefined } | undefined {
+  const retry = parseOptionalRetry(args.retry, io);
+  if (retry === undefined) return undefined;
+  const maxRuns = parseOptionalCount(args.maxRuns, "--max-runs", io);
+  if (maxRuns === undefined && args.maxRuns.length > 0) return undefined;
+  return { retry, maxRuns };
+}
+
 function parseTimes(value: string, io: LoopIo): number | undefined {
+  return parseCount(value, "--times", io);
+}
+
+function parseOptionalRetry(values: readonly string[], io: LoopIo): number | undefined {
+  if (values.length === 0) return 0;
+  const value = values[0] as string;
+  const retry = Number(value);
+  if (!/^\d+$/.test(value) || !Number.isSafeInteger(retry)) {
+    refuse(io, "--retry must be an integer of 0 or more");
+    return undefined;
+  }
+  return retry;
+}
+
+function parseOptionalCount(
+  values: readonly string[],
+  flag: string,
+  io: LoopIo,
+): number | undefined {
+  return values.length === 0 ? undefined : parseCount(values[0] as string, flag, io);
+}
+
+function parseCount(value: string, flag: string, io: LoopIo): number | undefined {
   const count = Number(value);
   if (!/^\d+$/.test(value) || !Number.isSafeInteger(count) || count < 1) {
-    refuse(io, "--times must be an integer of 1 or more");
+    refuse(io, `${flag} must be an integer of 1 or more`);
     return undefined;
   }
   return count;
