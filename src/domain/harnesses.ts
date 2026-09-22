@@ -28,6 +28,7 @@ export const HARNESSES: Readonly<Record<HarnessName, HarnessSpec>> = {
       "--output-format",
       "--input-format",
       "--verbose",
+      "--setting-sources",
       "--model",
       "--effort",
     ],

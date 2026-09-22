@@ -16,3 +16,24 @@ Use Loopfile to run a deterministic software-engineering workflow and follow it 
 5. Read the result with `loopfile result <runid> --json`.
 6. On failure, act on the reported end reason or code.
 7. Remove the run with `loopfile remove <runid>`.
+
+## Claude Code step permissions
+
+For Claude Code Agent and Ralph steps, the adapter loads only project and local
+settings (`--setting-sources project,local`), never the operator's
+`~/.claude/settings.json`. Its default mode is `auto`; these commands are always
+allowed:
+
+- `Bash(loopfile data *)`
+- `Bash(loopfile result *)`
+
+The adapter also wires the attempt scratch folder and run-owner socket. Claude's
+classifier decides other commands. A manifest can use `args` to change that:
+
+- `--settings '<json>'` is merged into the adapter settings and can widen the
+  allowlist, for example `{"permissions":{"allow":["Bash(git *)"]}}`.
+- `--permission-mode <mode>` changes the mode and overrides the `auto` default.
+- `--dangerously-skip-permissions` enables yolo mode. Use it only for a trusted
+  manifest; it removes the normal permission checks. Yolo is never the default.
+
+Read `loopfile docs manifest` for the complete manifest rules.
