@@ -20,6 +20,7 @@
 
 import {
   EVENT_TYPES,
+  type EventRecord,
   type RunCancelled,
   type RunEnded,
   type RunEndReason,
@@ -76,14 +77,16 @@ export interface RunState {
  * only the newest one can be cut short. Anything else that does not read as an
  * event throws: the missing facts are somewhere in the middle of the run.
  */
-export function parseEventLog(text: string): readonly RunEvent[] {
+export function parseEventLog<Event extends EventRecord = RunEvent>(
+  text: string,
+): readonly Event[] {
   const lines = text.split("\n");
   if (lines.at(-1) === "") lines.pop();
-  const events: RunEvent[] = [];
+  const events: Event[] = [];
   for (const [index, line] of lines.entries()) {
     const event = readEvent(line);
     if (event !== undefined) {
-      events.push(event);
+      events.push(event as Event);
       continue;
     }
     if (index !== lines.length - 1) {
@@ -94,7 +97,7 @@ export function parseEventLog(text: string): readonly RunEvent[] {
 }
 
 /** One line as an event, or `undefined` when it is not one. */
-function readEvent(line: string): RunEvent | undefined {
+function readEvent(line: string): EventRecord | undefined {
   let value: unknown;
   try {
     value = JSON.parse(line);
@@ -105,7 +108,7 @@ function readEvent(line: string): RunEvent | undefined {
   const record = value as Record<string, unknown>;
   if (typeof record.seq !== "number" || typeof record.at !== "string") return undefined;
   if (typeof record.type !== "string" || !EVENT_TYPES.has(record.type)) return undefined;
-  return value as RunEvent;
+  return value as EventRecord;
 }
 
 /**
