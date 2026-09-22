@@ -65,7 +65,7 @@ Commands:
   prune [--older-than <age>] [--dry-run]
   logs <runid> [<attempt>] [--stdout | --stderr] [--iteration <n>]
   logs <runid> --owner
-  status [<runid>] [--monitor | --json]
+  status [<runid>|<loopid>] [--monitor | --json]
   tail <runid> [--json]
   result <runid> [--json]
   unpack <file.loop> [<destination>]
