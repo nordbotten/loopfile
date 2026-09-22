@@ -12,6 +12,7 @@ import type { LoopEvent } from "../domain/events.ts";
 import { loopCommand } from "./loop-command.ts";
 import { loopPaths, runPaths } from "./run-directory.ts";
 import { pingOwner } from "./run-owner.ts";
+import { tailCommand } from "./tail-command.ts";
 
 const run = promisify(execFile);
 const cli = fileURLToPath(new URL("../cli.ts", import.meta.url));
@@ -481,6 +482,126 @@ test("loop --times starts a detached owner and two command runs", async () => {
       );
       assert.equal(childEvents.at(-1)?.type, "run.ended");
     }
+  } finally {
+    await rm(setupResult.root, { recursive: true, force: true });
+  }
+});
+
+test("tail follows a running times loop through both children", async () => {
+  const setupResult = await setup(
+    "formatVersion: 1\nsteps:\n  - id: work\n    kind: command\n    run: sleep 0.05\n",
+  );
+  try {
+    const started = io();
+    assert.equal(
+      await loopCommand(
+        ["loop", setupResult.source, "--times", "2", "-d"],
+        cli,
+        started.value,
+        setupResult.env,
+        { repository: setupResult.repo, pollMs: 10 },
+      ),
+      0,
+      started.errors(),
+    );
+    let output = "";
+    let errors = "";
+    const code = await tailCommand(
+      ["tail", started.output().trim()],
+      (text) => {
+        output += text;
+      },
+      (text) => {
+        errors += text;
+      },
+      setupResult.env,
+      { pollIntervalMs: 10, ownerPingTimeoutMs: 1_000 },
+    );
+
+    assert.equal(code, 0, errors);
+    const lines = output.trimEnd().split("\n");
+    assert.equal(lines.filter((line) => /step started$/.test(line)).length, 2);
+    assert.equal(lines.filter((line) => /step ended clean exit$/.test(line)).length, 2);
+    assert.equal(lines.filter((line) => /^loop: run \d+ \S+ started$/.test(line)).length, 2);
+    assert.equal(lines.filter((line) => /loop: run \d+ \S+ completed/.test(line)).length, 2);
+    assert.match(lines.at(-1) ?? "", /^loop: ended completed source_empty$/);
+  } finally {
+    await rm(setupResult.root, { recursive: true, force: true });
+  }
+});
+
+test("tail --json includes loop and child events", async () => {
+  const setupResult = await setup(
+    "formatVersion: 1\nsteps:\n  - id: work\n    kind: command\n    run: sleep 0.05\n",
+  );
+  try {
+    const started = io();
+    assert.equal(
+      await loopCommand(
+        ["loop", setupResult.source, "--times", "2", "-d"],
+        cli,
+        started.value,
+        setupResult.env,
+        { repository: setupResult.repo, pollMs: 10 },
+      ),
+      0,
+      started.errors(),
+    );
+    let output = "";
+    const code = await tailCommand(
+      ["tail", started.output().trim(), "--json"],
+      (text) => {
+        output += text;
+      },
+      () => undefined,
+      setupResult.env,
+      { pollIntervalMs: 10, ownerPingTimeoutMs: 1_000 },
+    );
+
+    assert.equal(code, 0);
+    const events = output
+      .trimEnd()
+      .split("\n")
+      .map((line) => JSON.parse(line) as { type?: string });
+    assert.equal(events.filter((event) => event.type === "loop.run_started").length, 2);
+    assert.equal(events.filter((event) => event.type === "run.created").length, 2);
+    assert.equal(events.filter((event) => event.type === "run.ended").length, 2);
+    assert.equal(events.at(-1)?.type, "loop.ended");
+  } finally {
+    await rm(setupResult.root, { recursive: true, force: true });
+  }
+});
+
+test("tail returns 1 for a failed loop", async () => {
+  const setupResult = await setup(
+    "formatVersion: 1\nsteps:\n  - id: work\n    kind: command\n    run: exit 1\n",
+  );
+  try {
+    const started = io();
+    assert.equal(
+      await loopCommand(
+        ["loop", setupResult.source, "--times", "2", "-d"],
+        cli,
+        started.value,
+        setupResult.env,
+        { repository: setupResult.repo, pollMs: 10 },
+      ),
+      0,
+      started.errors(),
+    );
+    let output = "";
+    const code = await tailCommand(
+      ["tail", started.output().trim()],
+      (text) => {
+        output += text;
+      },
+      () => undefined,
+      setupResult.env,
+      { pollIntervalMs: 10, ownerPingTimeoutMs: 1_000 },
+    );
+
+    assert.equal(code, 1);
+    assert.match(output, /loop: ended failed run_failed/);
   } finally {
     await rm(setupResult.root, { recursive: true, force: true });
   }

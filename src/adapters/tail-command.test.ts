@@ -79,6 +79,16 @@ test("tail on an unknown run gives a clear error and exits 2", async () => {
   assert.match(out.errText(), new RegExp(runId));
 });
 
+test("tail on a missing loop gives no_such_loop", async () => {
+  const { home } = newRun();
+  const out = capture();
+  const code = await tailCommand(["tail", "loop-20260917-160344-k3f7"], out.out, out.err, {
+    LOOPFILE_HOME: home,
+  });
+  assert.equal(code, 2);
+  assert.match(out.errText(), /code: no_such_loop/);
+});
+
 test("tail on a run with no activity log gives a clear error and exits 2", async () => {
   const { home, runId } = newRun();
   const paths = runPaths(home, runId);

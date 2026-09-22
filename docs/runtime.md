@@ -470,6 +470,14 @@ the end event (`run.ended` or `run.cancelled`), and returns the same codes.
 Nothing else goes to stdout. The events are a public output, versioned by the
 event format version ([ADR 0010](adr/0010-tail-json-events-are-public.md)).
 
+`loopfile tail <loopid>` follows every child run in order. It prints each
+child's activity lines and these loop lines: `loop: run <index> <runid> started`,
+`loop: run <index> <runid> <state>`, `loop: pause until <time>`, and
+`loop: ended <state> <endReason>`. `--json` prints the loop events as written
+alongside each child's run events. A missing loop returns `no_such_loop`; a
+completed, failed or cancelled loop returns 0, 1 or 1, and a loop owner that is
+gone returns 2.
+
 To wait for the run and read how it ended:
 
 ```sh
