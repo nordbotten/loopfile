@@ -1,8 +1,6 @@
 /** `loopfile loop <source> --times N | --list <file> | --next <command> -d` (#60, #62, #63). */
 
-import { createHash } from "node:crypto";
 import { readFile, rm } from "node:fs/promises";
-import { createRequire } from "node:module";
 import { basename } from "node:path";
 import { parseArgs } from "node:util";
 import {
@@ -37,6 +35,7 @@ import {
   prepareLaunchSource,
   startDetachedOwner,
 } from "./launch-command.ts";
+import { programIdentity } from "./program-identity.ts";
 import {
   createLoopDirectory,
   type LoopPaths,
@@ -46,8 +45,6 @@ import {
   runPaths,
 } from "./run-directory.ts";
 import { pingOwner } from "./run-owner.ts";
-
-const { version } = createRequire(import.meta.url)("../../package.json") as { version: string };
 
 const USAGE =
   "Usage: loopfile loop <source> (--times N | --list <file> | --next <command>) [--input k=v]... [--retry N] [--max-runs N] [-d]";
@@ -622,15 +619,6 @@ function parseCount(value: string, flag: string, io: LoopIo): number | undefined
     return undefined;
   }
   return count;
-}
-
-async function programIdentity(cli: string): Promise<{ version: string; digest: string }> {
-  return {
-    version,
-    digest: createHash("sha256")
-      .update(await readFile(cli))
-      .digest("hex"),
-  };
 }
 
 async function materialize(
