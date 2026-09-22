@@ -185,6 +185,17 @@ test("d detaches, leaves the run active and listed", async () => {
   await owner.close();
 });
 
+test("d detaches when a prompt before the monitor paused the input", async () => {
+  const { runId, owner, env } = await setup(true);
+  const t = terminal();
+  t.input.pause();
+  const result = attachMonitor(runId, t.io, env, OPTIONS);
+  await sleep(TICK * 3);
+  t.input.write("d");
+  assert.equal(await within(result, TICK * 2 + 200), 0);
+  await owner.close();
+});
+
 test("Ctrl+C detaches", async () => {
   const { runId, owner, env } = await setup(true);
   const t = terminal();
