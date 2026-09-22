@@ -46,7 +46,7 @@ const { version } = createRequire(import.meta.url)("../package.json") as { versi
 const HELP = `loopfile ${version} - run deterministic agent workflows
 
 Usage:
-  loopfile <directory|file.loop|-> [-d] [--input <name>=<value>]...
+  loopfile <directory|file.loop|github:owner/repo|-> [-d] [--trust] [--input <name>=<value>]...
   loopfile [options]
 
 Learn more:
@@ -73,6 +73,7 @@ Commands:
 
 Options:
   -d, --detach
+  --trust
   --input <name>=<value>
   -h, --help
   -v, --version
@@ -167,7 +168,13 @@ export function main(
     return step.exitCode;
   }
 
-  let values: { help?: boolean; version?: boolean; detach?: boolean; input?: string[] };
+  let values: {
+    help?: boolean;
+    version?: boolean;
+    detach?: boolean;
+    trust?: boolean;
+    input?: string[];
+  };
   let positionals: string[];
   try {
     ({ values, positionals } = parseArgs({
@@ -178,6 +185,7 @@ export function main(
         // Read again by `launchCommand`, which owns them; named here so the
         // strict parse accepts them.
         detach: { type: "boolean", short: "d" },
+        trust: { type: "boolean" },
         input: { type: "string", multiple: true },
       },
       allowPositionals: true,
