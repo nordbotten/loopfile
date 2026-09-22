@@ -16,15 +16,17 @@ import { parseArgs } from "node:util";
 import {
   checkAgainstDeclared,
   encodeLaunch,
-  optionalLoopFields,
   type InputsCheck,
   inputHelp,
   LAUNCH_ENV,
+  type LaunchInputs,
   type LaunchRequest,
+  optionalLoopFields,
   parseInputFlags,
 } from "../application/launch-inputs.ts";
-import type { LoadResult } from "../application/load-workflow.ts";
+import type { LoadError, LoadResult } from "../application/load-workflow.ts";
 import {
+  type OperatorErrorCode,
   renderOperatorConfirmation,
   renderOperatorFailure,
   renderOperatorFailureLines,
@@ -33,7 +35,7 @@ import { decodeMessage, encodeMessage, PING } from "../application/owner-protoco
 import { endedHelp, runEndFromStatus } from "../application/run-end.ts";
 import { ownerGoneMessage } from "../application/tail.ts";
 import type { Workflow } from "../domain/model.ts";
-import { loadInput, loadThinText } from "./directory-loader.ts";
+import { loadDirectory, loadInput, loadThinText } from "./directory-loader.ts";
 import { classifyInput, type InputKind, readStdin } from "./input.ts";
 import {
   attachMonitor,
@@ -269,10 +271,7 @@ function refuseLoadResult(
     );
     return;
   }
-  const messages = result.errors.map((error) => {
-    const where = error.line === undefined ? "" : `line ${error.line}: `;
-    return `${where}${error.path === "" ? "" : `${error.path}: `}${error.message}`;
-  });
+  const messages = manifestErrorMessages(result.errors);
   io.err(
     renderOperatorFailureLines(
       messages,
@@ -292,26 +291,169 @@ async function start(
   env: Record<string, string | undefined>,
   options: LaunchOptions,
 ): Promise<number> {
-  const home = loopfileHome(env as NodeJS.ProcessEnv);
-  const runId = newRunId();
+  const started = await startRun({
+    source: request.source,
+    sourceKind: request.kind,
+    sourceText: request.sourceText,
+    workflow,
+    repository: request.repository,
+    inputs: request.inputs,
+    runId: newRunId(),
+    loopId: request.loopId,
+    loopIndex: request.loopIndex,
+    cli,
+    env,
+    readyTimeoutMs: options.readyTimeoutMs,
+  });
+  if (!started.ok) return refuseStart(io, started.failure);
+  return await continueAfterReady(started.runId, detach, "started", io, env, options);
+}
+
+/** The detached start seam used by `loopfile <source>` and loop owners. */
+export interface StartRunOptions {
+  /** A Materialized Loopfile folder, or a launch source when `workflow` is given. */
+  readonly source: string;
+  readonly sourceKind?: InputKind;
+  readonly sourceText?: string;
+  readonly workflow?: Workflow;
+  readonly repository: string;
+  readonly inputs: LaunchInputs;
+  readonly runId: string;
+  readonly loopId?: string;
+  readonly loopIndex?: number;
+  /** The CLI script used to start the detached run owner. */
+  readonly cli: string;
+  readonly env: Record<string, string | undefined>;
+  /** Overridable for tests only. */
+  readonly readyTimeoutMs?: number;
+}
+
+export interface StartRunFailure {
+  readonly messages: readonly string[];
+  readonly code: OperatorErrorCode;
+  readonly help: string;
+  readonly exitCode: 1 | 2;
+}
+
+export type StartRunResult =
+  | { readonly ok: true; readonly runId: string }
+  | { readonly ok: false; readonly failure: StartRunFailure };
+
+/** Makes a run folder, starts its detached owner and waits for the ready handshake. */
+export async function startRun(options: StartRunOptions): Promise<StartRunResult> {
+  const workflow = await workflowForStart(options);
+  if (!workflow.ok) return workflow;
+
+  const inputs = checkAgainstDeclared(
+    options.inputs,
+    workflow.workflow.inputs,
+    workflow.workflow.inputDefaults,
+  );
+  if (!inputs.ok) {
+    return {
+      ok: false,
+      failure: startFailure(
+        inputs.messages,
+        "bad_argument",
+        inputHelp(workflow.workflow.inputDefaults),
+        2,
+      ),
+    };
+  }
+
+  const home = loopfileHome(options.env as NodeJS.ProcessEnv);
   let paths: RunPaths;
   try {
     paths = await createRunDirectory({
       home,
-      runId,
-      targetRepository: request.repository,
-      stepIds: workflow.steps.map((step) => step.id),
+      runId: options.runId,
+      targetRepository: options.repository,
+      stepIds: workflow.workflow.steps.map((step) => step.id),
     });
   } catch (error) {
-    return refuse(io, (error as Error).message, 1, "operation_failed");
+    return {
+      ok: false,
+      failure: startFailure((error as Error).message, "operation_failed", USAGE, 1),
+    };
   }
-  const ownerEnv = { ...env, [LAUNCH_ENV]: encodeLaunch(request) };
-  return await startOwner(
-    { runId, paths, ownerEnv, detach, cli, confirmation: "started" },
-    io,
-    env,
-    options,
+
+  const request: LaunchRequest = {
+    source: options.source,
+    kind: options.sourceKind ?? "directory",
+    ...(options.sourceText === undefined ? {} : { sourceText: options.sourceText }),
+    repository: options.repository,
+    inputs: inputs.inputs,
+    ...optionalLoopFields(options.loopId, options.loopIndex),
+  };
+  return await startDetachedOwner({
+    runId: options.runId,
+    paths,
+    ownerEnv: { ...options.env, [LAUNCH_ENV]: encodeLaunch(request) },
+    cli: options.cli,
+    readyTimeoutMs: options.readyTimeoutMs ?? READY_TIMEOUT_MS,
+  });
+}
+
+async function workflowForStart(
+  options: StartRunOptions,
+): Promise<
+  | { readonly ok: true; readonly workflow: Workflow }
+  | { readonly ok: false; readonly failure: StartRunFailure }
+> {
+  if (options.workflow !== undefined) return { ok: true, workflow: options.workflow };
+  try {
+    const loaded = await loadDirectory(options.source);
+    if (loaded.status === "loaded") return { ok: true, workflow: loaded.workflow };
+    if (loaded.status === "older") {
+      return {
+        ok: false,
+        failure: startFailure(
+          `manifest formatVersion ${loaded.formatVersion} is outdated`,
+          "operation_failed",
+          `Run: loopfile upgrade ${options.source}`,
+          2,
+        ),
+      };
+    }
+    return {
+      ok: false,
+      failure: startFailure(
+        manifestErrorMessages(loaded.errors),
+        "invalid_manifest",
+        "Fix the manifest before launching.",
+        1,
+      ),
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      failure: startFailure((error as Error).message, "operation_failed", USAGE, 1),
+    };
+  }
+}
+
+function manifestErrorMessages(errors: readonly LoadError[]): readonly string[] {
+  return errors.map((error) => {
+    const where = error.line === undefined ? "" : `line ${error.line}: `;
+    return `${where}${error.path === "" ? "" : `${error.path}: `}${error.message}`;
+  });
+}
+
+function startFailure(
+  messages: string | readonly string[],
+  code: OperatorErrorCode,
+  help: string,
+  exitCode: 1 | 2,
+): StartRunFailure {
+  return { messages: typeof messages === "string" ? [messages] : messages, code, help, exitCode };
+}
+
+function refuseStart(io: LaunchIo, failure: StartRunFailure): number {
+  io.err(
+    renderOperatorFailureLines(failure.messages, failure.code, failure.help, failure.exitCode)
+      .stderr,
   );
+  return failure.exitCode;
 }
 
 /** What `startOwner` starts, and how the CLI goes on once it is ready. */
@@ -339,29 +481,78 @@ export async function startOwner(
   env: Record<string, string | undefined>,
   options: LaunchOptions,
 ): Promise<number> {
-  const owner = spawnOwner(cli, runId, paths.ownerLog, ownerEnv);
+  const started = await startDetachedOwner({
+    runId,
+    paths,
+    ownerEnv,
+    cli,
+    readyTimeoutMs: options.readyTimeoutMs ?? READY_TIMEOUT_MS,
+  });
+  if (!started.ok) {
+    io.err(
+      renderOperatorFailureLines(
+        started.failure.messages,
+        started.failure.code,
+        started.failure.help,
+        started.failure.exitCode,
+      ).stderr,
+    );
+    return started.failure.exitCode;
+  }
+  return await continueAfterReady(started.runId, detach, confirmation, io, env, options);
+}
+
+interface DetachedOwnerStart {
+  readonly runId: string;
+  readonly paths: RunPaths;
+  readonly ownerEnv: Record<string, string | undefined>;
+  readonly cli: string;
+  readonly readyTimeoutMs: number;
+}
+
+async function startDetachedOwner(options: DetachedOwnerStart): Promise<StartRunResult> {
+  let owner: ChildProcess;
+  try {
+    owner = spawnOwner(options.cli, options.runId, options.paths.ownerLog, options.ownerEnv);
+  } catch (error) {
+    return {
+      ok: false,
+      failure: startFailure(
+        (error as Error).message,
+        "operation_failed",
+        await ownerLogHelp(options.paths.ownerLog),
+        2,
+      ),
+    };
+  }
+
   const ready = await waitForReady(
     owner,
-    paths.socket,
-    runId,
-    options.readyTimeoutMs ?? READY_TIMEOUT_MS,
+    options.paths.socket,
+    options.runId,
+    options.readyTimeoutMs,
   );
   if (ready !== "ready") {
     if (ready === "timeout") owner.kill("SIGTERM");
-    const failure = await failedStart(paths.ownerLog, runId, ready);
-    io.err(renderOperatorFailure(failure, 2).stderr);
-    return 2;
+    return { ok: false, failure: await failedStart(options.paths.ownerLog, options.runId, ready) };
   }
   owner.unref();
+  return { ok: true, runId: options.runId };
+}
+
+async function continueAfterReady(
+  runId: string,
+  detach: boolean,
+  confirmation: "started" | "resumed",
+  io: Pick<LaunchIo, "out" | "err" | "monitor">,
+  env: Record<string, string | undefined>,
+  options: LaunchOptions,
+): Promise<number> {
   io.out(`${runId}\n`);
   io.err(renderOperatorConfirmation({ [confirmation]: runId }));
 
-  if (detach) {
-    return 0;
-  }
-  if (hasTerminal(io.monitor)) {
-    return await attachMonitor(runId, io.monitor, env, options.monitor);
-  }
+  if (detach) return 0;
+  if (hasTerminal(io.monitor)) return await attachMonitor(runId, io.monitor, env, options.monitor);
   return await reportEnd(runId, io, env, options);
 }
 
@@ -486,11 +677,12 @@ async function failedStart(
   ownerLog: string,
   runId: string,
   waited: Waited,
-): Promise<{ readonly summary: string; readonly code: "operation_failed"; readonly help: string }> {
+): Promise<StartRunFailure> {
   const why = waited === "timeout" ? "did not say ready in time" : "exited before it was ready";
-  return {
-    summary: `the run owner for ${runId} ${why}`,
-    code: "operation_failed",
-    help: await ownerLogHelp(ownerLog),
-  };
+  return startFailure(
+    `the run owner for ${runId} ${why}`,
+    "operation_failed",
+    await ownerLogHelp(ownerLog),
+    2,
+  );
 }

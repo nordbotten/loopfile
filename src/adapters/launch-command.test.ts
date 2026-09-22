@@ -8,7 +8,7 @@ import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { parseEventLog } from "../application/replay.ts";
-import { type LaunchIo, launchCommand } from "./launch-command.ts";
+import { type LaunchIo, launchCommand, startRun } from "./launch-command.ts";
 import { listCommand } from "./list-command.ts";
 import type { MonitorIo } from "./monitor.ts";
 import { writeArchive } from "./pack-command.ts";
@@ -120,6 +120,50 @@ async function detached(source: string, home: string, env: NodeJS.ProcessEnv, re
   const events = await waitForEnd(home, runId);
   return { runId, events, paths: runPaths(home, runId) };
 }
+
+test("a Materialized Loopfile can start a run with a chosen ID", async () => {
+  const { repo, source, home, env } = await setup();
+  const runId = "20260922-180000-from-code";
+  const started = await startRun({
+    source,
+    repository: repo,
+    inputs: { issue: "42" },
+    runId,
+    loopId: "loop-20260922-180000-parent",
+    loopIndex: 1,
+    cli,
+    env,
+  });
+  assert.deepEqual(started, { ok: true, runId });
+  const events = await waitForEnd(home, runId);
+  assert.equal(resultOf(events), "success");
+  const created = events[0];
+  assert.deepEqual(
+    created?.type === "run.created"
+      ? { loopId: created.loopId, loopIndex: created.loopIndex }
+      : undefined,
+    { loopId: "loop-20260922-180000-parent", loopIndex: 1 },
+  );
+  assert.ok(await stat(runPaths(home, runId).root));
+});
+
+test("a run started from code rejects bad inputs before making its run folder", async () => {
+  const { repo, source, home, env } = await setup();
+  const started = await startRun({
+    source,
+    repository: repo,
+    inputs: {},
+    runId: "20260922-180000-bad-input",
+    cli,
+    env,
+  });
+  assert.equal(started.ok, false);
+  if (!started.ok) {
+    assert.deepEqual(started.failure.messages, ["missing --input issue: The issue number"]);
+    assert.equal(started.failure.code, "bad_argument");
+  }
+  await assert.rejects(stat(join(home, "runs")));
+});
 
 test("a thin manifest from stdin starts a run and materializes the manifest", async () => {
   const { repo, home, env } = await setup();
