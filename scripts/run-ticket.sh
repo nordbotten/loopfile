@@ -2,8 +2,10 @@
 # Pick one ready issue and start loops/ticket on it with a pinned loopfile.
 #
 #   scripts/run-ticket.sh pin        build and copy loopfile to $LOOPFILE_PIN
-#   scripts/run-ticket.sh [--merge]  pick the lowest ready issue and start a run
-#   scripts/run-ticket.sh --loop [--merge]
+#   scripts/run-ticket.sh [--merge] [--no-ci]
+#                                    pick the lowest ready issue and start a run;
+#                                    --no-ci ships without waiting for CI
+#   scripts/run-ticket.sh --loop [--merge] [--no-ci]
 #                                    follow each run with tail, then start the
 #                                    next; stop when a run does not complete or
 #                                    no issue is ready
@@ -30,14 +32,16 @@ if [ "${1:-}" = pin ]; then
 fi
 
 merge=no
+ci=yes
 dry_run=no
 loop=no
 for arg in "$@"; do
   case "$arg" in
     --merge) merge=yes ;;
+    --no-ci) ci=no ;;
     --dry-run) dry_run=yes ;;
     --loop) loop=yes ;;
-    *) echo "usage: $0 [pin | --merge | --loop | --dry-run]" >&2; exit 2 ;;
+    *) echo "usage: $0 [pin | --merge | --no-ci | --loop | --dry-run]" >&2; exit 2 ;;
   esac
 done
 
@@ -82,7 +86,7 @@ start() {
 
 $(gh issue view "$issue" --json body -q .body)"
   (cd "$root" && PATH="$pin/bin:$PATH" loopfile "$root/loops/ticket" -d \
-    --input task="$task" --input issue="$issue" --input merge="$merge")
+    --input task="$task" --input issue="$issue" --input merge="$merge" --input ci="$ci")
 }
 
 runid=$(start)
