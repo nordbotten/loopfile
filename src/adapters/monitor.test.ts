@@ -103,6 +103,7 @@ function status(runId: string, overrides: Partial<StatusProjection> = {}): Statu
       totalTokens: null,
       costUsd: null,
       toolCalls: null,
+      permissionDenials: null,
     },
     ...overrides,
   } as StatusProjection;

@@ -16,6 +16,7 @@
  */
 
 import type { InputName, Outcome, OutputName, StepId, Target } from "./model.ts";
+import type { StatusMetrics } from "./status.ts";
 
 /** The event format version this tool writes (ADR 0006). */
 export const EVENT_FORMAT_VERSION = 1;
@@ -245,11 +246,15 @@ export interface RunEnded extends EventBase {
   readonly reason: RunEndReason;
   /** The step that hit its limit, for `attempt_limit`. Left out for every other reason. */
   readonly stepId?: StepId;
+  /** The final live metrics, so `tail --json` exposes them with the end event. */
+  readonly metrics?: StatusMetrics;
 }
 
 /** `loopfile cancel` or a signal reached the run owner. It writes this and exits. */
 export interface RunCancelled extends EventBase {
   readonly type: "run.cancelled";
+  /** The final live metrics, so `tail --json` exposes them with the cancel event. */
+  readonly metrics?: StatusMetrics;
 }
 
 /** Every event that may appear in `events.jsonl`. */

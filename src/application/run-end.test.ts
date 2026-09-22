@@ -30,7 +30,14 @@ function status(overrides: Partial<StatusProjection> = {}): StatusProjection {
     lastTransition: null,
     transitions: 0,
     maxTransitions: 20,
-    metrics: { inputTokens: 0, outputTokens: 0, totalTokens: 0, costUsd: 0, toolCalls: 0 },
+    metrics: {
+      inputTokens: 0,
+      outputTokens: 0,
+      totalTokens: 0,
+      costUsd: 0,
+      toolCalls: 0,
+      permissionDenials: 0,
+    },
     ...overrides,
   } as StatusProjection;
 }

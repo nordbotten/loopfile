@@ -100,11 +100,9 @@ async function readResult(
   }
 
   try {
-    const loopfileName = parseStatusProjection(
-      JSON.parse(await readFile(paths.status, "utf8")),
-    ).loopfileName;
+    const status = parseStatusProjection(JSON.parse(await readFile(paths.status, "utf8")));
     const values = await readDeclaredValues(paths, events);
-    return buildResultView(events, loopfileName, values);
+    return buildResultView(events, status.loopfileName, values, status.metrics);
   } catch (error) {
     return {
       summary: `could not read result for run ${runId}${errorMessage(error)}`,

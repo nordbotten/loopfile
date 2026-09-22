@@ -126,6 +126,7 @@ export interface StatusMetrics {
   readonly totalTokens: number | null;
   readonly costUsd: number | null;
   readonly toolCalls: number | null;
+  readonly permissionDenials: number | null;
 }
 
 /** `status.json`: the status projection (ADR 0007). */

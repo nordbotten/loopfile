@@ -114,6 +114,14 @@ test("a straight-line workflow runs every step in the workspace and ends in succ
     type: "run.ended",
     result: "success",
     reason: "end_state",
+    metrics: {
+      inputTokens: null,
+      outputTokens: null,
+      totalTokens: null,
+      costUsd: null,
+      toolCalls: null,
+      permissionDenials: null,
+    },
     seq: 9,
     at: events.at(-1)?.at,
   });

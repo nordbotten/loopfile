@@ -118,7 +118,8 @@ function metricsText(status: StatusProjection): string {
   const cost = m.costUsd === null ? "unknown" : `$${m.costUsd.toFixed(2)}`;
   return (
     `tokens ${metric(m.totalTokens)} (in ${metric(m.inputTokens)} / out ${metric(m.outputTokens)})` +
-    ` · cost ${cost} · tool calls ${metric(m.toolCalls)}`
+    ` · cost ${cost} · tool calls ${metric(m.toolCalls)}` +
+    ` · permission denials ${metric(m.permissionDenials)}`
   );
 }
 

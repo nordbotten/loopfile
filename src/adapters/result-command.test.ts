@@ -60,6 +60,7 @@ function status(runId: string, running: boolean, end: "success" | "failure" | "c
       totalTokens: null,
       costUsd: null,
       toolCalls: null,
+      permissionDenials: null,
     },
   };
 }
@@ -148,6 +149,14 @@ test("a finished run prints all operator facts as JSON and exits 0", async () =>
     repositoryPath: "/repo",
     branch: `loopfile/${runId}`,
     baseCommit: "abc123",
+    metrics: {
+      inputTokens: null,
+      outputTokens: null,
+      totalTokens: null,
+      costUsd: null,
+      toolCalls: null,
+      permissionDenials: null,
+    },
     lastOutcome: {
       stepId: "review",
       attemptId: "001-review",

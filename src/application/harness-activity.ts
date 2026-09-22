@@ -29,7 +29,7 @@ export function applyHarnessActivity(
     case "tool":
       return {
         data: { ...data, lastActivityAt: at },
-        logText: `${activity.tool} ${activity.target}`.trim(),
+        logText: `${activity.tool} ${activity.target}${activity.denied ? " (denied)" : ""}`.trim(),
       };
     case "progress":
       return {

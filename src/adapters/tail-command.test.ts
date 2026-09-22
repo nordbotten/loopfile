@@ -106,6 +106,33 @@ test("tail on an ended run prints the last lines and exits 0, with no owner need
   assert.deepEqual(out.lines(), lines.slice(-10));
 });
 
+test("tail --json prints terminal metrics", async () => {
+  const { home, runId } = newRun();
+  const paths = runPaths(home, runId);
+  await mkdir(paths.root, { recursive: true });
+  await writeFile(paths.activity, "ignored\n");
+  await writeFile(
+    paths.events,
+    `${JSON.stringify({ type: "run.created", seq: 1, at: "x" })}\n${endEvent(2, {
+      metrics: {
+        inputTokens: null,
+        outputTokens: null,
+        totalTokens: null,
+        costUsd: null,
+        toolCalls: null,
+        permissionDenials: 3,
+      },
+    })}\n`,
+  );
+
+  const out = capture();
+  const code = await tailCommand(["tail", runId, "--json"], out.out, out.err, {
+    LOOPFILE_HOME: home,
+  });
+  assert.equal(code, 0);
+  assert.equal(JSON.parse(out.lines()[1] ?? "{}").metrics.permissionDenials, 3);
+});
+
 test("tail on an ended run never prints a half-written trailing line", async () => {
   const { home, runId } = newRun();
   const paths = runPaths(home, runId);

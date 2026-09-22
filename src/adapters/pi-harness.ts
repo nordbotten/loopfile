@@ -125,6 +125,7 @@ function metrics(totals: Totals, toolCalls: number): StatusMetrics {
     totalTokens: plus(totals.input, totals.output),
     costUsd: totals.cost,
     toolCalls,
+    permissionDenials: null,
   };
 }
 

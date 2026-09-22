@@ -46,6 +46,7 @@ export const UNKNOWN_METRICS: StatusMetrics = {
   totalTokens: null,
   costUsd: null,
   toolCalls: null,
+  permissionDenials: null,
 };
 
 /** No harness data yet: on start or resume, before the harness reports anything again (ADR 0007). */

@@ -19,6 +19,13 @@ test("parses a completed example with every metric reported, including 0", () =>
   assert.equal(parsed.metrics.toolCalls, 0);
 });
 
+test("reads a status.json without permissionDenials as unknown", () => {
+  const value = roundTrip(runningExample) as Record<string, unknown>;
+  delete (value.metrics as Record<string, unknown>).permissionDenials;
+  const parsed = parseStatusProjection(value);
+  assert.equal(parsed.metrics.permissionDenials, null);
+});
+
 test("rejects a value that is not an object", () => {
   assert.throws(() => parseStatusProjection("not json"), InvalidStatusProjectionError);
   assert.throws(() => parseStatusProjection(null), InvalidStatusProjectionError);
@@ -94,7 +101,7 @@ for (const field of currentFields) {
   });
 }
 
-/** Every field of `metrics` is required, `null` or a number, never missing. */
+/** Existing fields of `metrics` are required, `null` or a number, never missing. */
 const metricsFields = ["inputTokens", "outputTokens", "totalTokens", "costUsd", "toolCalls"];
 
 for (const field of metricsFields) {

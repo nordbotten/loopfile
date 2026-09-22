@@ -79,6 +79,7 @@ test("opening a writer writes status.json at once, fresh from the given events",
     totalTokens: null,
     costUsd: null,
     toolCalls: null,
+    permissionDenials: null,
   });
 });
 
@@ -191,6 +192,7 @@ test("many harness updates within a second give at most about one write, and the
         totalTokens: null,
         costUsd: null,
         toolCalls: null,
+        permissionDenials: null,
       },
     });
   }
@@ -227,6 +229,7 @@ test("a harness update after the rate limit window writes at once", async () => 
       totalTokens: null,
       costUsd: null,
       toolCalls: null,
+      permissionDenials: null,
     },
   });
   await writer.flush();
@@ -275,6 +278,7 @@ test("a harness update inside the rate-limit window, then run.ended: the schedul
       totalTokens: null,
       costUsd: null,
       toolCalls: null,
+      permissionDenials: null,
     },
   });
 
