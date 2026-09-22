@@ -49,6 +49,34 @@ test("starts the next run after a completed child", () => {
   });
 });
 
+test("starts list runs with the source set merged into fixed inputs", () => {
+  const list: LoopStatus = { ...status, source: { kind: "list", count: 2 }, place: 0 };
+  assert.deepEqual(
+    nextLoopAction(
+      list,
+      { state: "none" },
+      { kind: "list", sets: [{ issue: "41" }, { issue: "42" }] },
+    ),
+    {
+      kind: "start",
+      inputSet: { project: "loopfile", issue: "41" },
+      sourceIndex: 1,
+    },
+  );
+  assert.deepEqual(
+    nextLoopAction(
+      { ...list, place: 1 },
+      { state: "completed", runId: "run-one" },
+      { kind: "list", sets: [{ issue: "41" }, { issue: "42" }] },
+    ),
+    {
+      kind: "start",
+      inputSet: { project: "loopfile", issue: "42" },
+      sourceIndex: 2,
+    },
+  );
+});
+
 test("ends when the source is empty", () => {
   assert.deepEqual(
     nextLoopAction({ ...status, place: 3 }, { state: "completed", runId: "run-three" }),

@@ -78,7 +78,7 @@ test("--help is a short command index", () => {
       .split("\n"),
     [
       "  pack <directory> [-o <path>] [--force]",
-      "  loop <source> (--times N) [--input k=v]... [-d]",
+      "  loop <source> (--times N | --list <file>) [--input k=v]... [-d]",
       "  check <source> [--json]",
       "  docs [<topic>]",
       "  list [--json]",
