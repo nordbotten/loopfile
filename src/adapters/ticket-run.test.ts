@@ -49,6 +49,7 @@ async function gitRepo(repo: string, bare: string): Promise<void> {
   await run("git", ["commit", "-q", "-m", "first"], { cwd: repo, env: gitEnv });
   await run("git", ["init", "-q", "--bare", bare], { env: gitEnv });
   await run("git", ["remote", "add", "origin", bare], { cwd: repo, env: gitEnv });
+  await run("git", ["push", "-q", "origin", "main"], { cwd: repo, env: gitEnv });
 }
 
 function fixPrompt(number: number, why: string, handled = ""): string {
@@ -237,4 +238,69 @@ esac
   });
 
   assert.equal(ended.result, "success");
+});
+
+/** A PR that main moved past goes to fix with the conflict, then ships. */
+test("the ticket Loopfile sends a conflict with main to fix", async () => {
+  const dir = join(root, "conflict");
+  const repo = join(dir, "repo");
+  const bin = join(dir, "bin");
+  const home = join(dir, "home");
+  const runId = "20260921-120000-conflict";
+  await mkdir(bin, { recursive: true });
+  await gitRepo(repo, join(dir, "origin.git"));
+  // setup changes README on the run's branch and, as another run would, on main.
+  // gate commits the fix agent's resolved file, which the fake agent cannot do.
+  await executable(
+    join(bin, "npm"),
+    `if [ "$1" = ci ]; then
+  printf 'branch\\n' > README.md && git commit -qam branch
+  cd ${JSON.stringify(repo)} && printf 'main\\n' > README.md && git commit -qam main && git push -q origin main
+fi
+if [ "$2" = gate:quiet ] && git rev-parse -q --verify MERGE_HEAD > /dev/null; then
+  git add -A && git commit -q --no-edit
+fi
+exit 0
+`,
+  );
+  await executable(
+    join(bin, "gh"),
+    `case "$1 $2" in
+  "pr view") exit 1 ;;
+  "issue view") printf 'Ticket title\\n' ;;
+esac
+`,
+  );
+  const approve: FakeAction[] = [
+    { do: "dataPut", key: "review.notes", content: "notes" },
+    { do: "result", outcome: "approved" },
+  ];
+  const script: FakeScript = {
+    implement: [[{ do: "result", outcome: "done" }]],
+    fix: [
+      [
+        { do: "savePrompt", path: "../fix-1.md" },
+        { do: "write", path: "README.md", content: "resolved\n" },
+        { do: "result", outcome: "done" },
+      ],
+    ],
+    review: [approve, approve],
+  };
+  const paths = runPaths(home, runId);
+  await mkdir(paths.root, { recursive: true });
+
+  const ended = await executeRun({
+    home,
+    runId,
+    source: TICKET,
+    inputs: { task: TASK, issue: "273", merge: "no", ci: "no" },
+    repository: repo,
+    executor: localExecutor({ ...process.env, ...gitEnv, PATH: `${bin}:${process.env.PATH}` }),
+    adapters: fakeHarnessAdapters(script),
+  });
+
+  assert.equal(ended.result, "success");
+  const prompt = await readFile(join(dirname(paths.workspace), "fix-1.md"), "utf8");
+  assert.match(prompt, /`ship` ended with `conflict`/);
+  assert.match(prompt, /stopped on a conflict[\s\S]*CONFLICT[\s\S]*README\.md/);
 });

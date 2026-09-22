@@ -2,8 +2,8 @@
 #
 # setup -> implement -> test -> review -> ship
 #
-# A failed test, a review that asks for changes or a red CI goes to fix, not
-# back to implement, so the agent works on the feedback and does not start over.
+# A failed test, a review that asks for changes, a red CI or a conflict with
+# main goes to fix, not back to implement, so the agent works on the feedback and does not start over.
 #
 # Start it with scripts/run-ticket.sh, which picks the issue and gives the inputs.
 formatVersion: 1
@@ -84,6 +84,15 @@ steps:
     run: |
       issue=$(loopfile data get input.issue)
       branch=$(git branch --show-current)
+      # Other runs merge to main while this one works. Bring main in first, so
+      # the PR does not go stale. A conflict stays in the workspace for fix.
+      git fetch origin main
+      if ! git merge --no-edit origin/main > "$LOOPFILE_SCRATCH/merge.txt" 2>&1; then
+        { cat "$LOOPFILE_SCRATCH/merge.txt"; git diff --name-only --diff-filter=U; } > "$LOOPFILE_SCRATCH/conflict.txt"
+        loopfile data put ship.conflict "$LOOPFILE_SCRATCH/conflict.txt"
+        loopfile result conflict
+        exit 0
+      fi
       git push -u origin HEAD
       body="$LOOPFILE_SCRATCH/pr-body.md"
       {
@@ -125,7 +134,9 @@ steps:
     timeout: 45m
     outputs:
       ci: [ci_failed]
+      conflict: [conflict]
     on:
       merged: $success
       ready: $success
       ci_failed: fix
+      conflict: fix
