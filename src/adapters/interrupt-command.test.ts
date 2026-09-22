@@ -108,7 +108,15 @@ test("interrupt confirms after starting the same step's next attempt", async () 
   const result = await interrupt(runId, env);
   assert.equal(result.code, 0, result.err);
   assert.equal(result.err, `interrupted: ${runId}\n`);
-  assert.equal((await events(paths)).filter((event) => event.type === "attempt.started").length, 2);
+  await until(
+    async () => {
+      if ((await events(paths)).filter((event) => event.type === "attempt.started").length !== 2)
+        return undefined;
+      const status = JSON.parse(await readFile(paths.status, "utf8").catch(() => "null"));
+      return status?.current?.attempt === 2 ? true : undefined;
+    },
+    "the replacement attempt in status",
+  );
   const status = JSON.parse(await readFile(paths.status, "utf8"));
   assert.equal(status.current.attempt, 2);
   assert.equal(await requestCancel(paths.socket, runId), true);
