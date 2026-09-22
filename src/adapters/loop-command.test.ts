@@ -97,6 +97,14 @@ async function waitForRunStart(home: string, loopId: string): Promise<void> {
   throw new Error("the first loop run did not start");
 }
 
+async function waitForOwnerGone(home: string, loopId: string): Promise<void> {
+  for (let tries = 0; tries < 800; tries += 1) {
+    if ((await pingOwner(loopPaths(home, loopId).socket, 10)) !== loopId) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error("the loop owner did not stop");
+}
+
 async function killLoopOwner(home: string, loopId: string): Promise<void> {
   for (let tries = 0; tries < 100; tries += 1) {
     const events = parseEventLog<LoopEvent>(
@@ -396,6 +404,7 @@ test("a changed CLI ends a loop before its second run", async () => {
       "loopfile changed from 0.1.0 to 0.1.0",
     );
     assert.equal(events.filter((event) => event.type === "loop.run_started").length, 1);
+    await waitForOwnerGone(setupResult.home, loopId);
   } finally {
     await rm(cliCopy, { force: true });
     await rm(setupResult.root, { recursive: true, force: true });
