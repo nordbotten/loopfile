@@ -3,6 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
+import { claudeAdapter } from "./claude-harness.ts";
 import { loadDirectory, loadPacked } from "./directory-loader.ts";
 import { packCommand } from "./pack-command.ts";
 
@@ -15,6 +16,32 @@ async function loaded(load: Promise<Awaited<ReturnType<typeof loadDirectory>>>) 
   const result = await load;
   assert.equal(result.status, "loaded");
   return result.status === "loaded" ? result.workflow : undefined;
+}
+
+function inlineSettings(args: readonly string[]) {
+  const index = args.indexOf("--settings");
+  assert.ok(index >= 0);
+  const value = args[index + 1];
+  assert.ok(value !== undefined);
+  return JSON.parse(value);
+}
+
+function mergedSettings(args: readonly string[]) {
+  const prepared = claudeAdapter.prepare({
+    context: {
+      runId: "20260922-test",
+      attemptId: "001-step",
+      stepId: "step",
+      workspace: "/workspace",
+      scratch: "/attempt/scratch",
+      endpoint: "/attempt/socket",
+      attemptSecret: "secret",
+    },
+    prompt: "",
+    args,
+    wiringFolder: "/attempt/wiring",
+  });
+  return JSON.parse(prepared.wiringFiles["settings.json"] ?? "");
 }
 
 test("examples/implement-review loads with the real loader", async () => {
@@ -37,6 +64,11 @@ test("examples/implement-review loads with the real loader", async () => {
     assert.equal(implement.harness, "claude");
     assert.equal(implement.model, "claude-opus-5");
     assert.equal(implement.effort, "high");
+    assert.deepEqual(inlineSettings(implement.args), {
+      permissions: {
+        allow: ["Bash(npm test *)", "Bash(git add *)", "Bash(git commit *)"],
+      },
+    });
     assert.equal(implement.maxIterations, 20);
     assert.equal(implement.maxAttempts, 6);
     assert.equal(implement.timeoutMs, 30 * 60 * 1000);
@@ -57,11 +89,39 @@ test("examples/implement-review loads with the real loader", async () => {
   if (review?.kind === "agent") {
     assert.equal(review.harness, "claude");
     assert.equal(review.effort, "medium");
+    assert.deepEqual(inlineSettings(review.args), {
+      permissions: {
+        allow: ["Bash(git diff *)", "Bash(git log *)", "Bash(git show *)"],
+      },
+    });
     assert.deepEqual(review.outputs, { feedback: ["changes_requested"] });
     assert.equal(review.maxAttempts, 5);
     assert.deepEqual(review.on, { approved: "$success", changes_requested: "implement" });
     assert.equal(review.onFailure, "review");
   }
+});
+
+test("implement-review allowlists merge with Claude's runtime permissions", async () => {
+  const workflow = await loaded(loadDirectory(EXAMPLE));
+  const [implement, , review] = workflow?.steps ?? [];
+  assert.equal(implement?.kind, "ralph");
+  assert.equal(review?.kind, "agent");
+  if (implement?.kind !== "ralph" || review?.kind !== "agent") return;
+
+  assert.deepEqual(mergedSettings(implement.args).permissions.allow, [
+    "Bash(loopfile data *)",
+    "Bash(loopfile result *)",
+    "Bash(npm test *)",
+    "Bash(git add *)",
+    "Bash(git commit *)",
+  ]);
+  assert.deepEqual(mergedSettings(review.args).permissions.allow, [
+    "Bash(loopfile data *)",
+    "Bash(loopfile result *)",
+    "Bash(git diff *)",
+    "Bash(git log *)",
+    "Bash(git show *)",
+  ]);
 });
 
 test("the packed .loop of examples/implement-review loads to the same model", async () => {
