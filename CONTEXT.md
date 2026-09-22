@@ -106,9 +106,9 @@ Every value put under one data key, oldest first. A step always reads the newest
 One execution of a Loopfile against a target repository, from launch to final outcome.
 _Avoid_: Job (kept for a possible future scheduler)
 
-**Loop** (verb):
-Run a Loopfile many times, one run after another, with `loopfile loop`. Each run it starts is an ordinary run with its own run ID. The whole repeat has an ID of its own that holds the runs it started and its place in the input source.
-_Avoid_: Batch, burn
+**Loop**:
+Running a Loopfile many times, one run after another, with `loopfile loop`. As a noun, the loop is the whole repeat. It has a loop ID of its own and holds the runs it started and its place in the input source. Each run it starts is an ordinary run with its own run ID. As a verb, to loop a Loopfile is to start a loop for it.
+_Avoid_: Batch, burn, repeat, series
 
 **Input source**:
 Where a loop gets the input set of its next run: a count, a list or a command. A loop has exactly one. A Loopfile with no inputs still loops from a count or a command.
