@@ -21,6 +21,12 @@ import type { RunLifecycle, StatusProjection } from "../domain/status.ts";
 
 /** A run folder name this tool made: a UTC stamp to the second, then a random tail (`run-directory.ts`). */
 const RUN_ID_PATTERN = /^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})-[a-z2-7]{4}$/;
+const LOOP_ID_PATTERN = /^loop-\d{4}\d{2}\d{2}-\d{2}\d{2}\d{2}-[a-z2-7]{4}$/;
+
+/** Whether `name` is a loop ID this tool could have made. */
+export function isLoopId(name: string): boolean {
+  return LOOP_ID_PATTERN.test(name);
+}
 
 /** Whether `name` is a run ID this tool could have made, and so a run folder `list` should show. */
 export function isRunId(name: string): boolean {

@@ -98,6 +98,11 @@ export function loopfileHome(env: NodeJS.ProcessEnv = process.env): string {
   return override ? resolve(override) : join(env.HOME ?? homedir(), ".loopfile");
 }
 
+/** A new loop ID, such as `loop-20260917-160344-k3f9`. */
+export function newLoopId(at: Date = new Date()): string {
+  return `loop-${newRunId(at)}`;
+}
+
 /**
  * A new run ID, such as `20260917-160344-k3f9` (#81).
  *
@@ -126,7 +131,29 @@ export async function pathExists(path: string): Promise<boolean> {
     });
 }
 
-/** Where each of a run's files goes, given a home and a run ID. */
+/** Every path a loop owns. */
+export interface LoopPaths {
+  readonly root: string;
+  readonly events: string;
+  readonly status: string;
+  readonly loopfile: string;
+  readonly socket: string;
+  readonly ownerLog: string;
+}
+
+/** Where each of a loop's files goes, given a home and a loop ID. */
+export function loopPaths(home: string, loopId: string): LoopPaths {
+  const root = join(home, "loops", loopId);
+  return {
+    root,
+    events: join(root, "events.jsonl"),
+    status: join(root, "status.json"),
+    loopfile: join(root, "loopfile"),
+    socket: join(root, "owner.sock"),
+    ownerLog: join(root, "owner.log"),
+  };
+}
+
 export function runPaths(home: string, runId: string): RunPaths {
   const root = join(home, "runs", runId);
   return {

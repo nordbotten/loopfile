@@ -32,8 +32,8 @@
  *   The one-field `loopfile` object is flattened to `loopfileName`.
  */
 
-import type { Timestamp, TransitionCause } from "./events.ts";
-import type { AttemptId, HarnessName, Outcome, RunId, StepId, Target } from "./model.ts";
+import type { LoopEndReason, Timestamp, TransitionCause } from "./events.ts";
+import type { AttemptId, HarnessName, LoopId, Outcome, RunId, StepId, Target } from "./model.ts";
 
 /** The status format version this tool writes (ADR 0006). */
 export const STATUS_FORMAT_VERSION = 1;
@@ -117,8 +117,10 @@ export interface LastTransition {
 }
 
 /**
- * Run totals. Each field is `null` until a harness reports it, and a number,
- * including `0`, once one has (ADR 0007).
+ * Run metrics. The five usage fields are sums of harness-call reports from
+ * ended attempts plus the live current attempt; `null` means no report supplied
+ * a number, and `0` is a reported value (ADR 0007). Permission denials remain
+ * the current attempt's reported count.
  */
 export interface StatusMetrics {
   readonly inputTokens: number | null;
@@ -127,6 +129,39 @@ export interface StatusMetrics {
   readonly costUsd: number | null;
   readonly toolCalls: number | null;
   readonly permissionDenials: number | null;
+}
+
+/** The loop status format this tool writes (ADR 0006). */
+export const LOOP_STATUS_FORMAT_VERSION = 1;
+
+/** States written to a loop's status projection. */
+export type LoopLifecycle = "running" | "completed" | "cancelled" | "failed";
+
+/** The compact source description held in loop status. */
+export type LoopStatusSource =
+  | { readonly kind: "times" | "list"; readonly count: number }
+  | { readonly kind: "next"; readonly command: string };
+
+/** `status.json`: the status projection of one loop. */
+export interface LoopStatus {
+  readonly formatVersion: typeof LOOP_STATUS_FORMAT_VERSION;
+  readonly seq: number;
+  readonly loopId: LoopId;
+  readonly loopfileName: string;
+  readonly state: LoopLifecycle;
+  readonly source: LoopStatusSource;
+  readonly place: number | null;
+  readonly runs: number;
+  readonly retries: number;
+  readonly runIds: readonly RunId[];
+  readonly currentRunId: RunId | null;
+  readonly pausedUntil: Timestamp | null;
+  readonly cancelRequested: "now" | "after_run" | null;
+  readonly endReason: LoopEndReason | null;
+  readonly cancelMode: "now" | "after_run" | null;
+  readonly detail: string | null;
+  readonly startedAt: Timestamp;
+  readonly endedAt: Timestamp | null;
 }
 
 /** `status.json`: the status projection (ADR 0007). */

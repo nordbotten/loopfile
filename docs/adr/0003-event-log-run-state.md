@@ -2,10 +2,14 @@
 
 The source of truth for a run is `events.jsonl`: an append-only file with one JSON event on each line. Current run state is built by replaying the events. We picked this over a `state.json` that is changed in place plus attempt records that never change, because a crash between those two writes leaves them out of step, and because the activity log, the status projection and resume all need one ordered feed of facts. Runs have hundreds of events, so replay is cheap.
 
+## Loops
+
+A loop has its own append-only `events.jsonl` under `loops/<loopid>/`, separate from every child run. The loop owner is its one writer; readers derive loop status by folding that log, and the same append path writes each event with `fsync`.
+
 ## Decisions
 
 - **Location:** `~/.loopfile/runs/<runid>/` on Linux and macOS. `LOOPFILE_HOME` overrides `~/.loopfile`.
-- **What is an event:** a state change (run created, attempt started and ended, outcome, route taken, run ended) or a step's call to Loopfile's data layer (`data.get` and `data.put`). Harness activity such as tool calls, tokens and progress text is not an event. It goes only to the activity log. A terminal event may also carry the final metrics snapshot so `tail --json` can expose the same run metrics; live harness updates remain outside the event log.
+- **What is an event:** a state change (run created, attempt started and ended, outcome, route taken, run ended) or a step's call to Loopfile's data layer (`data.get` and `data.put`). Harness activity such as tool calls, tokens and progress text is not an event. It goes only to the activity log. Live harness progress remains outside the event log, but an attempt's final metrics are part of its `attempt.ended` event. A terminal event may also carry the final metrics snapshot so `tail --json` can expose the same run metrics.
 - **Data layer events:** each one is named after the command that made it, so a put is `data.put` and a get is `data.get`, whatever the key holds (#93). They record the call name, the key, the byte size and a content digest. They never record the content.
 - **Event envelope:** each event has a `seq` number that goes up by one for each event, a timestamp and a type. The first event, `run.created`, records the event format version. The rules for reading older versions belong to the versioning decision (#59).
 - **Workspace in `run.created`:** the event records the target repository path, the resolved base commit SHA and the run branch name `loopfile/<runid>`. The base is the target repository's `HEAD` at launch, which moves, so the event log must hold the commit the run actually started from (#87).

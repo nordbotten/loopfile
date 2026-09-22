@@ -31,7 +31,7 @@ import {
 } from "../domain/status.ts";
 import { type RunResult, replay } from "./replay.ts";
 
-/** Live harness data (ADR 0007): last activity, short progress text, run-total metrics. */
+/** Live harness data (ADR 0007): last activity, short progress text and current-attempt metrics. */
 export interface HarnessData {
   /** `null` before the harness has reported anything. */
   readonly lastActivityAt: Timestamp | null;
@@ -56,6 +56,36 @@ export const NO_HARNESS_DATA: HarnessData = {
   metrics: UNKNOWN_METRICS,
 };
 
+/** Adds one harness report to a metrics sum; unknown usage values do not erase known values. */
+export function addMetrics(soFar: StatusMetrics, report: StatusMetrics): StatusMetrics {
+  return {
+    inputTokens: addMetric(soFar.inputTokens, report.inputTokens),
+    outputTokens: addMetric(soFar.outputTokens, report.outputTokens),
+    totalTokens: addMetric(soFar.totalTokens, report.totalTokens),
+    costUsd: addMetric(soFar.costUsd, report.costUsd),
+    toolCalls: addMetric(soFar.toolCalls, report.toolCalls),
+    // Denials describe the current attempt; keep the existing attempt-local behavior.
+    permissionDenials: report.permissionDenials ?? null,
+  };
+}
+
+/** Sums the metrics on completed attempts; old attempts without the field are unknown. */
+export function sumAttemptMetrics(events: readonly RunEvent[]): StatusMetrics {
+  let metrics = UNKNOWN_METRICS;
+  for (const event of events) {
+    if (event.type === "attempt.ended") {
+      metrics = addMetrics(metrics, event.metrics ?? UNKNOWN_METRICS);
+    }
+  }
+  return metrics;
+}
+
+function addMetric(soFar: number | null, report: number | null): number | null {
+  if (soFar === null) return report;
+  if (report === null) return soFar;
+  return soFar + report;
+}
+
 /** What `projectStatus` needs beyond the events and the harness data. */
 export interface ProjectStatusContext {
   readonly workflow: Workflow;
@@ -70,7 +100,7 @@ export interface ProjectStatusContext {
  *
  * `events` must be a valid run log: it starts with `run.created`, the same
  * rule `replay` enforces. `harnessData` carries what no event does — the
- * harness's own activity time, progress text and totals.
+ * harness's own activity time, progress text and current-attempt metrics.
  */
 export function projectStatus(
   events: readonly RunEvent[],
@@ -80,6 +110,7 @@ export function projectStatus(
   const state = replay(events);
   const open = openAttempt(events);
   const lifecycle = lifecycleOf(state.result);
+  const endedMetrics = sumAttemptMetrics(events);
 
   return {
     formatVersion: STATUS_FORMAT_VERSION,
@@ -99,7 +130,7 @@ export function projectStatus(
     lastTransition: lastTransition(state.transitions),
     transitions: state.transitions.length,
     maxTransitions: context.workflow.maxTransitions ?? null,
-    metrics: harnessData.metrics,
+    metrics: open === undefined ? endedMetrics : addMetrics(endedMetrics, harnessData.metrics),
   };
 }
 

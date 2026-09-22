@@ -6,6 +6,8 @@ import { test } from "node:test";
 import {
   createRunDirectory,
   loopfileHome,
+  loopPaths,
+  newLoopId,
   newRunId,
   RunDirectoryError,
   runPaths,
@@ -22,6 +24,23 @@ test("an empty LOOPFILE_HOME is no override", () => {
 
 test("a relative LOOPFILE_HOME becomes absolute", () => {
   assert.equal(loopfileHome({ HOME: "/home/ada", LOOPFILE_HOME: "lf" }), join(process.cwd(), "lf"));
+});
+
+test("a loop ID uses the run timestamp and prefix", () => {
+  const id = newLoopId(new Date("2026-09-17T16:03:44.500Z"));
+  assert.match(id, /^loop-20260917-160344-[a-z2-7]{4}$/);
+});
+
+test("every loop file sits under the loop folder", () => {
+  const paths = loopPaths("/tmp/lf", "loop-20260917-160344-k3f9");
+  assert.deepEqual(paths, {
+    root: "/tmp/lf/loops/loop-20260917-160344-k3f9",
+    events: "/tmp/lf/loops/loop-20260917-160344-k3f9/events.jsonl",
+    status: "/tmp/lf/loops/loop-20260917-160344-k3f9/status.json",
+    loopfile: "/tmp/lf/loops/loop-20260917-160344-k3f9/loopfile",
+    socket: "/tmp/lf/loops/loop-20260917-160344-k3f9/owner.sock",
+    ownerLog: "/tmp/lf/loops/loop-20260917-160344-k3f9/owner.log",
+  });
 });
 
 test("every run file sits under the run folder", () => {

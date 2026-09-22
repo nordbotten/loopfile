@@ -4,14 +4,15 @@
  *
  * Pure: an update and the harness data so far go in; the next harness data
  * and the log line (if any) come out. Tool calls and progress text become
- * `activity.log` lines; metrics only ever land in `status.json`. No update is
- * an event. Every update sets the last activity time.
+ * `activity.log` lines; metrics only ever land in `status.json`. A metrics
+ * report adds its one-call totals to the five usage fields so far. No update
+ * is an event. Every update sets the last activity time.
  */
 
 import type { Timestamp } from "../domain/events.ts";
 import { type ActivitySecrets, filterActivityText } from "./activity.ts";
 import type { HarnessActivity } from "./harness.ts";
-import type { HarnessData } from "./status-projection.ts";
+import { addMetrics, type HarnessData } from "./status-projection.ts";
 
 export interface HarnessActivityResult {
   readonly data: HarnessData;
@@ -41,6 +42,9 @@ export function applyHarnessActivity(
         logText: activity.text,
       };
     case "metrics":
-      return { data: { ...data, lastActivityAt: at, metrics: activity.metrics }, logText: null };
+      return {
+        data: { ...data, lastActivityAt: at, metrics: addMetrics(data.metrics, activity.metrics) },
+        logText: null,
+      };
   }
 }

@@ -7,9 +7,9 @@ import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { sha256 } from "../application/data-store.ts";
-import { endedHelp, runEndFromEvent } from "../application/run-end.ts";
 import type { HarnessAdapters } from "../application/harness.ts";
 import { parseEventLog, replay } from "../application/replay.ts";
+import { endedHelp, runEndFromEvent } from "../application/run-end.ts";
 import type { RunEvent } from "../domain/events.ts";
 import { type EventLog, openEventLog } from "./event-log.ts";
 import { type FakeScript, fakeHarnessAdapters } from "./fake-harness.test.ts";
@@ -102,6 +102,29 @@ test("a straight-line workflow runs every step in the workspace and ends in succ
   assert.deepEqual(
     events.map((event) => event.seq),
     [1, 2, 3, 4, 5, 6, 7, 8, 9],
+  );
+  assert.deepEqual(
+    events
+      .filter((event) => event.type === "attempt.ended")
+      .map((event) => event.type === "attempt.ended" && event.metrics),
+    [
+      {
+        inputTokens: null,
+        outputTokens: null,
+        totalTokens: null,
+        costUsd: null,
+        toolCalls: null,
+        permissionDenials: null,
+      },
+      {
+        inputTokens: null,
+        outputTokens: null,
+        totalTokens: null,
+        costUsd: null,
+        toolCalls: null,
+        permissionDenials: null,
+      },
+    ],
   );
   const transitions = events.filter((event) => event.type === "transition");
   assert.deepEqual(
@@ -452,6 +475,177 @@ test("a failing tests step with no onFailure ends the run in failure", async () 
   assert.deepEqual(attemptSteps(events), ["implement", "tests"]);
 });
 
+test("status metrics sum reports from two agent-step calls", async () => {
+  const { ended, events, paths } = await execute(
+    `formatVersion: 1
+steps:
+  - id: work
+    kind: agent
+    harness: claude
+    prompt: Work.
+    on:
+      again: work
+      done: $success
+`,
+    fakeHarnessAdapters({
+      work: [
+        [
+          {
+            do: "activity",
+            activity: {
+              kind: "metrics",
+              metrics: {
+                inputTokens: 1,
+                outputTokens: 2,
+                totalTokens: 3,
+                costUsd: 1,
+                toolCalls: 4,
+                permissionDenials: null,
+              },
+            },
+          },
+          { do: "result", outcome: "again" },
+        ],
+        [
+          {
+            do: "activity",
+            activity: {
+              kind: "metrics",
+              metrics: {
+                inputTokens: 10,
+                outputTokens: 20,
+                totalTokens: 30,
+                costUsd: 2,
+                toolCalls: 40,
+                permissionDenials: null,
+              },
+            },
+          },
+          { do: "result", outcome: "done" },
+        ],
+      ],
+    }),
+  );
+  assert.equal(ended.result, "success");
+  assert.deepEqual(
+    events
+      .filter((event) => event.type === "attempt.ended")
+      .map((event) => event.type === "attempt.ended" && event.metrics),
+    [
+      {
+        inputTokens: 1,
+        outputTokens: 2,
+        totalTokens: 3,
+        costUsd: 1,
+        toolCalls: 4,
+        permissionDenials: null,
+      },
+      {
+        inputTokens: 10,
+        outputTokens: 20,
+        totalTokens: 30,
+        costUsd: 2,
+        toolCalls: 40,
+        permissionDenials: null,
+      },
+    ],
+  );
+  assert.deepEqual(JSON.parse(await readFile(paths.status, "utf8")).metrics, {
+    inputTokens: 11,
+    outputTokens: 22,
+    totalTokens: 33,
+    costUsd: 3,
+    toolCalls: 44,
+    permissionDenials: null,
+  });
+});
+
+test("status metrics sum all three Ralph iterations", async () => {
+  const { ended, events, paths } = await execute(
+    `formatVersion: 1
+steps:
+  - id: loop
+    kind: ralph
+    harness: claude
+    maxIterations: 3
+    prompt: Loop.
+    on:
+      done: $success
+`,
+    fakeHarnessAdapters({
+      loop: [
+        [
+          {
+            do: "activity",
+            activity: {
+              kind: "metrics",
+              metrics: {
+                inputTokens: 1,
+                outputTokens: 2,
+                totalTokens: 3,
+                costUsd: 1,
+                toolCalls: 4,
+                permissionDenials: null,
+              },
+            },
+          },
+        ],
+        [
+          {
+            do: "activity",
+            activity: {
+              kind: "metrics",
+              metrics: {
+                inputTokens: 10,
+                outputTokens: 20,
+                totalTokens: 30,
+                costUsd: 2,
+                toolCalls: 40,
+                permissionDenials: null,
+              },
+            },
+          },
+        ],
+        [
+          {
+            do: "activity",
+            activity: {
+              kind: "metrics",
+              metrics: {
+                inputTokens: 100,
+                outputTokens: 200,
+                totalTokens: 300,
+                costUsd: 4,
+                toolCalls: 400,
+                permissionDenials: null,
+              },
+            },
+          },
+          { do: "result", outcome: "done" },
+        ],
+      ],
+    }),
+  );
+  assert.equal(ended.result, "success");
+  const attempt = events.find((event) => event.type === "attempt.ended");
+  assert.deepEqual(attempt?.type === "attempt.ended" && attempt.metrics, {
+    inputTokens: 111,
+    outputTokens: 222,
+    totalTokens: 333,
+    costUsd: 7,
+    toolCalls: 444,
+    permissionDenials: null,
+  });
+  assert.deepEqual(JSON.parse(await readFile(paths.status, "utf8")).metrics, {
+    inputTokens: 111,
+    outputTokens: 222,
+    totalTokens: 333,
+    costUsd: 7,
+    toolCalls: 444,
+    permissionDenials: null,
+  });
+});
+
 test("denials from a completed attempt do not hint for a later failed attempt", async () => {
   const script: FakeScript = {
     implement: [
@@ -596,6 +790,8 @@ steps:
   );
   const end = runEnd(events);
   assert.equal(end?.type === "run.ended" && end.reason, "run_timeout");
+  const interrupted = events.find((event) => event.type === "attempt.interrupted");
+  assert.equal(interrupted?.type === "attempt.interrupted" && "metrics" in interrupted, false);
   const pid = Number((await readFile(marker, "utf8")).trim());
   assert.throws(() => process.kill(pid, 0), { code: "ESRCH" });
 });

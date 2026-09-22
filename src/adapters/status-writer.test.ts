@@ -181,7 +181,13 @@ test("many harness updates within a second give at most about one write, and the
     now: () => now,
   });
 
-  const events = log(created);
+  const events = log(created, {
+    type: "attempt.started",
+    at: at(1),
+    attemptId: "001-plan",
+    stepId: "plan",
+    processGroupId: 1,
+  });
   for (let i = 1; i <= 10; i++) {
     writer.onHarnessUpdate(events, {
       lastActivityAt: at(i),

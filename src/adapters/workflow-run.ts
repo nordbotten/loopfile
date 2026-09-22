@@ -40,7 +40,11 @@ import {
   type RunEndedFields,
 } from "../application/run-limits.ts";
 import { parseStatusProjection } from "../application/status.ts";
-import { type HarnessData, NO_HARNESS_DATA } from "../application/status-projection.ts";
+import {
+  type HarnessData,
+  NO_HARNESS_DATA,
+  sumAttemptMetrics,
+} from "../application/status-projection.ts";
 import {
   type AttemptEndFields,
   endOfAttempt,
@@ -439,7 +443,7 @@ function refusal(check: LimitCheck): RunEndedFields | undefined {
 }
 
 async function end(tracked: Tracked, event: RunEndedFields): Promise<RunEndedFields> {
-  const ended = { ...event, metrics: tracked.harnessData.metrics };
+  const ended = { ...event, metrics: sumAttemptMetrics(tracked.history) };
   await tracked.log.append(ended);
   return ended;
 }
@@ -457,7 +461,7 @@ export async function appendInternalError(
 }
 
 async function cancelRun(tracked: Tracked): Promise<{ readonly result: "cancelled" }> {
-  await tracked.log.append({ type: "run.cancelled", metrics: tracked.harnessData.metrics });
+  await tracked.log.append({ type: "run.cancelled", metrics: sumAttemptMetrics(tracked.history) });
   return { result: "cancelled" };
 }
 
@@ -530,7 +534,7 @@ async function visit(
 ): Promise<Visited> {
   const attemptId = nextAttemptId(replay(tracked.history), step.id);
   tracked.harnessData = NO_HARNESS_DATA;
-  tracked.status.onHarnessUpdate(tracked.history, NO_HARNESS_DATA);
+  tracked.status.onHarnessUpdate(tracked.history, tracked.harnessData);
   const startedAt = new Date().toISOString();
   const attempt = await createAttemptDirectory(owner.paths.attempts, attemptId);
   let current: AttemptIdentity | undefined;
@@ -587,7 +591,12 @@ async function visit(
     const by = guard.stoppedBy();
     if (by === "cancel" || by === "interrupt") await guard.drained();
     if (by !== undefined) return { kind: "interrupted", attemptId, by };
-    await tracked.log.append({ type: "attempt.ended", attemptId, ...ended });
+    await tracked.log.append({
+      type: "attempt.ended",
+      attemptId,
+      ...ended,
+      metrics: tracked.harnessData.metrics,
+    });
     return { kind: "ended", attemptId, end: ended };
   } finally {
     guard.clear();
@@ -695,6 +704,7 @@ function activityFor(owner: RunOwner, tracked: Tracked, attemptId: string) {
         secrets: { attemptSecret: secret },
         status: tracked.status,
         events: () => tracked.history,
+        initialData: tracked.harnessData,
         onData: (data) => {
           tracked.harnessData = data;
         },

@@ -477,6 +477,50 @@ test("a run.ended after a run.cancelled is the final result", () => {
   assert.deepEqual(state.result, { result: "failure", reason: "attempt_limit" });
 });
 
+test("reads attempt metrics whether the field is present or absent", () => {
+  const events = parseEventLog(
+    eventLog(
+      created,
+      {
+        type: "attempt.ended",
+        at: at(1),
+        attemptId: "001-plan",
+        result: "success",
+        reason: "clean_exit",
+        metrics: {
+          inputTokens: 1,
+          outputTokens: 2,
+          totalTokens: 3,
+          costUsd: 4,
+          toolCalls: 5,
+          permissionDenials: null,
+        },
+      },
+      {
+        type: "attempt.ended",
+        at: at(2),
+        attemptId: "002-plan",
+        result: "success",
+        reason: "clean_exit",
+      },
+    ),
+  );
+
+  const withMetrics = events[1];
+  assert.equal(withMetrics?.type, "attempt.ended");
+  assert.deepEqual(withMetrics?.type === "attempt.ended" && withMetrics.metrics, {
+    inputTokens: 1,
+    outputTokens: 2,
+    totalTokens: 3,
+    costUsd: 4,
+    toolCalls: 5,
+    permissionDenials: null,
+  });
+  const withoutMetrics = events[2];
+  assert.equal(withoutMetrics?.type, "attempt.ended");
+  assert.equal(withoutMetrics?.type === "attempt.ended" && "metrics" in withoutMetrics, false);
+});
+
 test("reads a log whose last line has no newline", () => {
   const events = parseEventLog(cleanRun.trimEnd());
 

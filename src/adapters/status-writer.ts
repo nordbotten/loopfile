@@ -68,9 +68,9 @@ export interface OpenStatusWriterOptions {
 
 /**
  * Opens a run's status writer and writes the first `status.json` at once,
- * fresh from `options.events` with no harness data (ADR 0007: "writes a fresh
- * file from `events.jsonl`, with harness metrics `null` until the harness
- * reports them again").
+ * fresh from `options.events` with no live harness data. Ended-attempt metrics
+ * still come from the event log; current-attempt metrics are unknown until the
+ * harness reports them again (ADR 0007).
  */
 export async function openStatusWriter(options: OpenStatusWriterOptions): Promise<StatusWriter> {
   const now = options.now ?? (() => Date.now());
