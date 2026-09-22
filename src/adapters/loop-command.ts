@@ -1,4 +1,4 @@
-/** `loopfile loop <source> --times N | --list <file> -d` (#60, #62). */
+/** `loopfile loop <source> --times N | --list <file> [--retry N] -d` (#60, #62, #64). */
 
 import { createHash } from "node:crypto";
 import { readFile, rm } from "node:fs/promises";
@@ -43,7 +43,8 @@ import {
 
 const { version } = createRequire(import.meta.url)("../../package.json") as { version: string };
 
-const USAGE = "Usage: loopfile loop <source> (--times N | --list <file>) [--input k=v]... [-d]";
+const USAGE =
+  "Usage: loopfile loop <source> (--times N | --list <file>) [--input k=v]... [--retry N] [-d]";
 const HELP = `${USAGE}
 
 Run a Loopfile repeatedly in the background. Each non-empty JSON Lines input
@@ -65,6 +66,7 @@ interface LoopArgs {
   readonly list: string[];
   readonly next: string[];
   readonly inputs: readonly string[];
+  readonly retry: string[];
   readonly detach: boolean;
   readonly help: boolean;
 }
@@ -83,7 +85,9 @@ export async function loopCommand(
     io.out(HELP);
     return 0;
   }
-  const valid = validateLoopArgs(args, io);
+  const retry = parseRetry(args.retry[0] ?? "0", io);
+  if (retry === undefined) return 2;
+  const valid = validateLoopArgs(args, io, retry);
   if (typeof valid === "number") return valid;
   return await startLoop(valid, cli, io, env, options);
 }
@@ -93,9 +97,10 @@ interface ValidLoopArgs {
   readonly count: number | undefined;
   readonly list: string | undefined;
   readonly inputs: readonly string[];
+  readonly retry: number;
 }
 
-function validateLoopArgs(args: LoopArgs, io: LoopIo): ValidLoopArgs | number {
+function validateLoopArgs(args: LoopArgs, io: LoopIo, retry: number): ValidLoopArgs | number {
   if (args.source === undefined) return refuse(io, "loop needs one source");
   const sources = args.times.length + args.list.length + args.next.length;
   if (sources === 0) {
@@ -108,9 +113,9 @@ function validateLoopArgs(args: LoopArgs, io: LoopIo): ValidLoopArgs | number {
     const count = parseTimes(args.times[0] as string, io);
     return count === undefined
       ? 2
-      : { source: args.source, count, list: undefined, inputs: args.inputs };
+      : { source: args.source, count, list: undefined, inputs: args.inputs, retry };
   }
-  return { source: args.source, count: undefined, list: args.list[0], inputs: args.inputs };
+  return { source: args.source, count: undefined, list: args.list[0], inputs: args.inputs, retry };
 }
 
 async function startLoop(
@@ -189,7 +194,7 @@ async function createAndStartLoop(
         loopfileName: basename(args.source),
         source,
         fixedInputs,
-        retry: 0,
+        retry: args.retry,
         maxRuns: null,
         pauseMs: null,
         program,
@@ -294,6 +299,7 @@ function parseLoopArgs(argv: readonly string[]): LoopArgs | undefined {
         list: { type: "string", multiple: true },
         next: { type: "string", multiple: true },
         input: { type: "string", multiple: true },
+        retry: { type: "string", multiple: true },
         detach: { type: "boolean", short: "d" },
         help: { type: "boolean", short: "h" },
       },
@@ -306,12 +312,22 @@ function parseLoopArgs(argv: readonly string[]): LoopArgs | undefined {
       list: values.list ?? [],
       next: values.next ?? [],
       inputs: values.input ?? [],
+      retry: values.retry ?? [],
       detach: values.detach === true,
       help: values.help === true,
     };
   } catch {
     return undefined;
   }
+}
+
+function parseRetry(value: string, io: LoopIo): number | undefined {
+  const retry = Number(value);
+  if (!/^\d+$/.test(value) || !Number.isSafeInteger(retry) || retry < 0) {
+    refuse(io, "--retry must be an integer of 0 or more");
+    return undefined;
+  }
+  return retry;
 }
 
 function parseTimes(value: string, io: LoopIo): number | undefined {

@@ -26,8 +26,10 @@ after(() => rm(root, { recursive: true, force: true }));
 let count = 0;
 
 async function setup(
-  command: string,
-  sourceText = `formatVersion: 1\nsteps:\n  - id: work\n    kind: command\n    run: ${JSON.stringify(command)}\n`,
+  command: string | ((base: string) => string),
+  sourceText = `formatVersion: 1\nsteps:\n  - id: work\n    kind: command\n    run: ${JSON.stringify(typeof command === "function" ? "" : command)}\n`,
+  retry = 0,
+  sourceCount = 3,
 ) {
   count += 1;
   const base = join(root, `case-${count}`);
@@ -44,7 +46,12 @@ async function setup(
     cwd: repo,
     env: { ...process.env, ...gitEnv },
   });
-  await writeFile(join(source, "manifest.yaml"), sourceText);
+  await writeFile(
+    join(source, "manifest.yaml"),
+    typeof command === "function"
+      ? `formatVersion: 1\nsteps:\n  - id: work\n    kind: command\n    run: ${JSON.stringify(command(base))}\n`
+      : sourceText,
+  );
 
   const paths = loopPaths(home, loopId);
   await mkdir(paths.root, { recursive: true });
@@ -56,15 +63,15 @@ async function setup(
     eventFormatVersion: 1,
     repositoryPath: repo,
     loopfileName: "source",
-    source: { kind: "times", count: 3 },
+    source: { kind: "times", count: sourceCount },
     fixedInputs: {},
-    retry: 0,
+    retry,
     maxRuns: null,
     pauseMs: null,
     program: { version: "test", digest: "test" },
   });
   await log.close();
-  return { env: { ...process.env, ...gitEnv, LOOPFILE_HOME: home }, home, loopId };
+  return { base, env: { ...process.env, ...gitEnv, LOOPFILE_HOME: home }, home, loopId };
 }
 
 async function loopEvents(home: string, loopId: string): Promise<readonly LoopEvent[]> {
@@ -126,5 +133,54 @@ test("stops after the first failed child", async () => {
   assert.equal(ended.state, "failed");
   assert.equal(ended.endReason, "run_failed");
   assert.match(ended.detail ?? "", /^run .+ failed$/);
+  assert.deepEqual(ended, loopStatus(events));
+});
+
+test("ends with an internal error when a child cannot start", async () => {
+  const setupResult = await setup("true");
+  const ended = await runLoop(setupResult.home, setupResult.loopId, {
+    cli,
+    env: setupResult.env,
+    startRun: async () => ({
+      ok: false,
+      failure: { messages: ["could not start"], code: "operation_failed", help: "", exitCode: 1 },
+    }),
+  });
+  const events = await loopEvents(setupResult.home, setupResult.loopId);
+
+  assert.equal(ended.state, "failed");
+  assert.equal(ended.endReason, "internal_error");
+  assert.equal(ended.detail, "could not start");
+  assert.deepEqual(ended, loopStatus(events));
+});
+
+test("retries a failed child as a new run and completes when it passes", async () => {
+  const setupResult = await setup(
+    (base) => {
+      const mark = join(base, "outside-workspace-state");
+      return `if test -e ${mark}; then exit 0; else touch ${mark}; exit 1; fi`;
+    },
+    undefined,
+    1,
+    1,
+  );
+  const ended = await runLoop(setupResult.home, setupResult.loopId, {
+    cli,
+    env: setupResult.env,
+  });
+  const events = await loopEvents(setupResult.home, setupResult.loopId);
+  const started = events.filter(
+    (event): event is Extract<LoopEvent, { type: "loop.run_started" }> =>
+      event.type === "loop.run_started",
+  );
+
+  assert.equal(started.length, 2);
+  assert.equal(started[1]?.retryOf, started[0]?.runId);
+  assert.deepEqual(
+    { inputSet: started[1]?.inputSet, sourceIndex: started[1]?.sourceIndex },
+    { inputSet: started[0]?.inputSet, sourceIndex: started[0]?.sourceIndex },
+  );
+  assert.equal(ended.state, "completed");
+  assert.equal(ended.endReason, "source_empty");
   assert.deepEqual(ended, loopStatus(events));
 });

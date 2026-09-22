@@ -227,7 +227,7 @@ test("loop --times starts a detached owner and two command runs", async () => {
   try {
     const captured = io();
     const code = await loopCommand(
-      ["loop", setupResult.source, "--times", "2", "-d"],
+      ["loop", setupResult.source, "--times", "2", "--retry", "2", "-d"],
       cli,
       captured.value,
       setupResult.env,
@@ -249,6 +249,7 @@ test("loop --times starts a detached owner and two command runs", async () => {
     assert.equal(pinged, true);
 
     const events = await waitForEnd(setupResult.home, loopId);
+    assert.equal(events[0]?.type === "loop.created" ? events[0].retry : undefined, 2);
     const started = events.filter(
       (event): event is Extract<LoopEvent, { type: "loop.run_started" }> =>
         event.type === "loop.run_started",
@@ -279,6 +280,11 @@ test("loop input errors happen before a loop folder exists", async () => {
         message: "a loop takes only one input source",
       },
       { args: ["--input", "missing=value", "--times", "2", "-d"], message: "--input missing" },
+      { args: ["--retry", "-1", "--times", "2", "-d"], message: "could not parse loop arguments" },
+      {
+        args: ["--retry", "nope", "--times", "2", "-d"],
+        message: "--retry must be an integer of 0 or more",
+      },
     ]) {
       const captured = io();
       const code = await loopCommand(

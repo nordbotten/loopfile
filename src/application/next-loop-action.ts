@@ -1,4 +1,10 @@
-import type { InputSet, LoopEndReason, LoopSource } from "../domain/events.ts";
+import type {
+  InputSet,
+  LoopEndReason,
+  LoopEvent,
+  LoopRunStarted,
+  LoopSource,
+} from "../domain/events.ts";
 import type { LoopStatus } from "../domain/status.ts";
 import { mergeInputSet } from "./launch-inputs.ts";
 
@@ -12,7 +18,12 @@ export type LastChild =
 
 /** The next deterministic move for a loop driver. */
 export type LoopAction =
-  | { readonly kind: "start"; readonly inputSet: InputSet; readonly sourceIndex: number }
+  | {
+      readonly kind: "start";
+      readonly inputSet: InputSet;
+      readonly sourceIndex: number | null;
+      readonly retryOf?: string;
+    }
   | { readonly kind: "wait" }
   | { readonly kind: "end"; readonly reason: LoopEndReason; readonly detail?: string };
 
@@ -21,11 +32,45 @@ export function nextLoopAction(
   status: LoopStatus,
   lastChild: LastChild,
   source?: LoopSource,
+  retry = 0,
+  history: readonly LoopEvent[] = [],
 ): LoopAction {
   if (lastChild.state === "running") return { kind: "wait" };
+  const retryAction = retryFailedChild(lastChild, retry, history);
+  if (retryAction !== undefined) return retryAction;
   const childEnd = childEndAction(lastChild);
   if (childEnd !== undefined) return childEnd;
   return source?.kind === "list" ? nextListAction(status, source) : nextTimesAction(status);
+}
+
+function retryFailedChild(
+  child: LastChild,
+  retry: number,
+  history: readonly LoopEvent[],
+): LoopAction | undefined {
+  if (child.state !== "failed" || retry === 0) return undefined;
+  const started = history.filter(isRunStarted);
+  const current = started.findLast((event) => event.runId === child.runId);
+  if (current === undefined) return undefined;
+
+  const byId = new Map(started.map((event) => [event.runId, event]));
+  let retriesSoFar = 0;
+  let parentId = current.retryOf;
+  while (parentId !== null) {
+    retriesSoFar += 1;
+    parentId = byId.get(parentId)?.retryOf ?? null;
+  }
+  if (retriesSoFar >= retry) return undefined;
+  return {
+    kind: "start",
+    inputSet: current.inputSet,
+    sourceIndex: current.sourceIndex,
+    retryOf: child.runId,
+  };
+}
+
+function isRunStarted(event: LoopEvent): event is LoopRunStarted {
+  return event.type === "loop.run_started";
 }
 
 function childEndAction(child: LastChild): LoopAction | undefined {

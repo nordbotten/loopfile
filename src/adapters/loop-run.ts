@@ -1,4 +1,4 @@
-/** Runs a loop in-process, starting one detached child run at a time (#59). */
+/** Runs a loop in-process, starting one detached child run at a time (#59, #64). */
 
 import { readFile, rename, writeFile } from "node:fs/promises";
 import { loopStatus } from "../application/loop-status.ts";
@@ -44,50 +44,7 @@ export async function runLoop(
 
   const log = await openEventLog<LoopEvent>(paths.events);
   try {
-    for (;;) {
-      const status = loopStatus(history);
-      const child = await lastChild(home, status);
-      const action = nextLoopAction(status, child, created.source);
-
-      if (action.kind === "wait") {
-        await waitForChild(home, status.currentRunId ?? status.runIds.at(-1) ?? "", deps.pollMs);
-        continue;
-      }
-      if (action.kind === "end") {
-        return await appendEnd(log, history, paths.status, action);
-      }
-
-      const runId = newRunId();
-      const index = status.runs + 1;
-      await appendLoopEvent(log, history, paths.status, {
-        type: "loop.run_started",
-        runId,
-        index,
-        inputSet: action.inputSet,
-        sourceIndex: action.sourceIndex,
-        retryOf: null,
-      });
-
-      const started = await (deps.startRun ?? startRun)({
-        source: paths.loopfile,
-        sourceKind: "directory",
-        repository: created.repositoryPath,
-        inputs: action.inputSet,
-        runId,
-        loopId,
-        loopIndex: index,
-        cli: deps.cli,
-        env: deps.env,
-      });
-      if (!started.ok) {
-        return await appendEnd(log, history, paths.status, {
-          kind: "end",
-          reason: "internal_error",
-          detail: started.failure.messages.join("; "),
-        });
-      }
-      await waitForChild(home, runId, deps.pollMs);
-    }
+    return await driveLoop(home, loopId, created, deps, log, history, paths.loopfile, paths.status);
   } catch (error) {
     if (history.at(-1)?.type !== "loop.ended") {
       await appendLoopEvent(log, history, paths.status, {
@@ -100,6 +57,60 @@ export async function runLoop(
     throw error;
   } finally {
     await log.close();
+  }
+}
+
+async function driveLoop(
+  home: string,
+  loopId: string,
+  created: Extract<LoopEvent, { readonly type: "loop.created" }>,
+  deps: RunLoopDeps,
+  log: EventLog<LoopEvent>,
+  history: LoopEvent[],
+  loopfilePath: string,
+  statusPath: string,
+): Promise<LoopStatus> {
+  for (;;) {
+    const status = loopStatus(history);
+    const child = await lastChild(home, status);
+    const action = nextLoopAction(status, child, created.source, created.retry, history);
+
+    if (action.kind === "wait") {
+      await waitForChild(home, status.currentRunId ?? status.runIds.at(-1) ?? "", deps.pollMs);
+      continue;
+    }
+    if (action.kind === "end") return await appendEnd(log, history, statusPath, action);
+
+    const runId = newRunId();
+    const index = status.runs + 1;
+    await appendLoopEvent(log, history, statusPath, {
+      type: "loop.run_started",
+      runId,
+      index,
+      inputSet: action.inputSet,
+      sourceIndex: action.sourceIndex,
+      retryOf: action.retryOf ?? null,
+    });
+
+    const started = await (deps.startRun ?? startRun)({
+      source: loopfilePath,
+      sourceKind: "directory",
+      repository: created.repositoryPath,
+      inputs: action.inputSet,
+      runId,
+      loopId,
+      loopIndex: index,
+      cli: deps.cli,
+      env: deps.env,
+    });
+    if (!started.ok) {
+      return await appendEnd(log, history, statusPath, {
+        kind: "end",
+        reason: "internal_error",
+        detail: started.failure.messages.join("; "),
+      });
+    }
+    await waitForChild(home, runId, deps.pollMs);
   }
 }
 

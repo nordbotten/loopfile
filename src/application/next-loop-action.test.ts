@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import type { LoopEvent } from "../domain/events.ts";
 import type { LoopStatus } from "../domain/status.ts";
 import { type LastChild, nextLoopAction } from "./next-loop-action.ts";
 
@@ -27,6 +28,24 @@ const status: LoopStatus = {
 
 function action(child: LastChild) {
   return nextLoopAction(status, child);
+}
+
+function started(
+  runId: string,
+  inputSet: Record<string, string>,
+  sourceIndex: number,
+  retryOf: string | null = null,
+): Extract<LoopEvent, { type: "loop.run_started" }> {
+  return {
+    seq: 2,
+    at: "2026-09-22T10:00:00.000Z",
+    type: "loop.run_started",
+    runId,
+    index: 1,
+    inputSet,
+    sourceIndex,
+    retryOf,
+  };
 }
 
 test("starts the first run with fixed inputs", () => {
@@ -92,14 +111,53 @@ test("waits for a running child", () => {
   assert.deepEqual(action({ state: "running", runId: "run-one" }), { kind: "wait" });
 });
 
-test("ends on a failed or cancelled child", () => {
-  for (const state of ["failed", "cancelled"] as const) {
-    assert.deepEqual(action({ state, runId: "run-one" }), {
-      kind: "end",
-      reason: "run_failed",
-      detail: `run run-one ${state}`,
-    });
-  }
+test("retries a failed child with the same input set and source place", () => {
+  assert.deepEqual(
+    nextLoopAction(status, { state: "failed", runId: "run-one" }, undefined, 1, [
+      started("run-one", { project: "loopfile" }, 1),
+    ]),
+    {
+      kind: "start",
+      inputSet: { project: "loopfile" },
+      sourceIndex: 1,
+      retryOf: "run-one",
+    },
+  );
+});
+
+test("ends when a failed child has used its retries", () => {
+  assert.deepEqual(
+    nextLoopAction(status, { state: "failed", runId: "run-two" }, undefined, 1, [
+      started("run-one", { project: "loopfile" }, 1),
+      started("run-two", { project: "loopfile" }, 1, "run-one"),
+    ]),
+    { kind: "end", reason: "run_failed", detail: "run run-two failed" },
+  );
+});
+
+test("counts retries independently for each input set", () => {
+  assert.deepEqual(
+    nextLoopAction(status, { state: "failed", runId: "run-b" }, undefined, 1, [
+      started("run-a", { issue: "a" }, 1),
+      started("run-a-retry", { issue: "a" }, 1, "run-a"),
+      started("run-b", { issue: "b" }, 2),
+    ]),
+    {
+      kind: "start",
+      inputSet: { issue: "b" },
+      sourceIndex: 2,
+      retryOf: "run-b",
+    },
+  );
+});
+
+test("a cancelled child is never retried", () => {
+  assert.deepEqual(
+    nextLoopAction(status, { state: "cancelled", runId: "run-one" }, undefined, 1, [
+      started("run-one", { project: "loopfile" }, 1),
+    ]),
+    { kind: "end", reason: "run_failed", detail: "run run-one cancelled" },
+  );
 });
 
 test("ends when a child owner has crashed", () => {
