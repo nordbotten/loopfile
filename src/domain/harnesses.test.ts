@@ -30,6 +30,7 @@ test("claude owns the flags its adapter sets, and not --settings", () => {
     "--output-format",
     "--input-format",
     "--verbose",
+    "--setting-sources",
     "--model",
     "--effort",
   ]);

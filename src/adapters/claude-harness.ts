@@ -13,12 +13,14 @@
  * other values win. The value must be inline JSON: a path is an error.
  *
  * `settings.json` lets the agent reach the run owner. It never sets
- * `sandbox.enabled`, so the user's own sandbox choice stays, and Claude Code
- * merges these lists with the user's settings. `allowUnixSockets` works only
- * on macOS: on Linux the sandbox blocks Unix sockets with seccomp, so
- * `excludedCommands` runs `loopfile` outside the sandbox. `acceptEdits` lets
- * the agent edit files; other Bash commands stay denied unless the user
- * widens them with `--permission-mode` in `args`, which wins over this file.
+ * `sandbox.enabled`, so Claude's default or project/local setting stays. Claude
+ * Code loads only project and local settings, not the user's `~/.claude` settings.
+ * `allowUnixSockets` works only on macOS: on Linux the sandbox blocks Unix
+ * sockets with seccomp, so `excludedCommands` runs `loopfile` outside the
+ * sandbox. The adapter's allowlist is always allowed; auto mode lets Claude's
+ * classifier decide other commands. `--permission-mode` in `args` wins over
+ * the default, and `--dangerously-skip-permissions` remains an explicit yolo
+ * choice.
  *
  * The adapter never reads `result`, `subtype` or `is_error` to find an
  * outcome (ADR 0004): only `loopfile result` reports one.
@@ -42,6 +44,8 @@ export const claudeAdapter: HarnessAdapter = {
         "--output-format",
         "stream-json",
         "--verbose",
+        "--setting-sources",
+        "project,local",
         "--settings",
         join(call.wiringFolder, "settings.json"),
         ...(call.model === undefined ? [] : ["--model", call.model]),
@@ -110,7 +114,7 @@ function settings({ context }: HarnessCall) {
     permissions: {
       allow: ["Bash(loopfile data *)", "Bash(loopfile result *)"],
       additionalDirectories: [context.scratch],
-      defaultMode: "acceptEdits",
+      defaultMode: "auto",
     },
     sandbox: {
       excludedCommands: ["loopfile *"],

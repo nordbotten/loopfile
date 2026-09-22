@@ -60,6 +60,8 @@ test("with no args, model or effort, the argument list is exactly the adapter's"
     "--output-format",
     "stream-json",
     "--verbose",
+    "--setting-sources",
+    "project,local",
     "--settings",
     `${attempt}/wiring/settings.json`,
   ]);
@@ -78,6 +80,8 @@ test("args come first, and --model then --effort come last", () => {
     "--output-format",
     "stream-json",
     "--verbose",
+    "--setting-sources",
+    "project,local",
     "--settings",
     `${attempt}/wiring/settings.json`,
     "--model",
@@ -103,13 +107,22 @@ test("the prompt is in stdin and in no argument, and no argument is --bare", () 
   assert.equal(args.includes("--bare"), false);
 });
 
+test("a permission mode in args stays ahead of the adapter settings", () => {
+  const prepared = claudeAdapter.prepare({ ...call, args: ["--permission-mode", "plan"] });
+  assert.deepEqual(prepared.args.slice(0, 2), ["--permission-mode", "plan"]);
+  assert.equal(
+    JSON.parse(prepared.wiringFiles["settings.json"] as string).permissions.defaultMode,
+    "auto",
+  );
+});
+
 test("settings.json allows the step commands, the scratch folder and the attempt socket", () => {
   const { wiringFiles } = claudeAdapter.prepare(call);
   assert.deepEqual(JSON.parse(wiringFiles["settings.json"] as string), {
     permissions: {
       allow: ["Bash(loopfile data *)", "Bash(loopfile result *)"],
       additionalDirectories: [`${attempt}/scratch`],
-      defaultMode: "acceptEdits",
+      defaultMode: "auto",
     },
     sandbox: {
       excludedCommands: ["loopfile *"],

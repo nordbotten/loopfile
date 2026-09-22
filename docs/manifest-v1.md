@@ -108,6 +108,33 @@ which every step can read. The step ID `input` is reserved.
 | `args` | no | `[]` | A list of strings. The adapter gives each one to the harness as one argument, unchanged: no shell, no templating, no `{{ ... }}` placeholders. The loader rejects an owned flag (see below). On a Ralph step every iteration gets the same `args`. |
 | `maxIterations` | ralph only, no | `10` | An integer of 1 or more, per attempt. |
 
+### Claude Code permissions
+
+For `claude` Agent and Ralph steps, the adapter passes `--setting-sources
+project,local`, so a user's `~/.claude/settings.json` cannot affect a step.
+It keeps this adapter allowlist and sandbox wiring:
+
+- `Bash(loopfile data *)`
+- `Bash(loopfile result *)`
+- access to the attempt scratch folder and run-owner socket, with `loopfile`
+  outside the sandbox where required by the platform
+
+The default permission mode is `auto`: allowlisted commands are always allowed,
+and Claude's classifier decides other commands. To change the permissions from a
+manifest, use `args`:
+
+```yaml
+args:
+  - --settings
+  - '{"permissions":{"allow":["Bash(git *)"]}}'
+```
+
+`--settings '<json>'` is merged into the adapter settings, so it can widen the
+allowlist. `--permission-mode <mode>` changes the mode and wins over the
+adapter's `auto` default. `--dangerously-skip-permissions` enables yolo mode;
+use it only when the manifest is trusted because it removes the normal
+permission checks. Yolo is never the default.
+
 Exactly one of `prompt` and `promptFile` must be present. Both, or neither, is a
 load error. A prompt is a [Handlebars](https://handlebarsjs.com/) template over prompt data,
 which the run owner fills before each harness call (#96). It may use plain
@@ -161,7 +188,7 @@ A step whose `args` holds an owned flag, as `--flag value` or `--flag=value`,
 is a load error. It names the step and the flag. Owned flags:
 
 - `claude`: `-p`, `--print`, `--output-format`, `--input-format`, `--verbose`,
-  `--model` (use `model`) and `--effort` (use `effort`).
+  `--setting-sources`, `--model` (use `model`) and `--effort` (use `effort`).
   `--settings` is not owned. `claude` uses only the last `--settings`, so the
   adapter takes a `--settings '<json>'` out of `args` and merges it into its
   own `settings.json`. The value must be inline JSON that is a map. Maps merge,

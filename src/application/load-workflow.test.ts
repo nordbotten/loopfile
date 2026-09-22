@@ -826,6 +826,15 @@ test("--settings and an owned flag of another harness are allowed in args", () =
   assert.equal(loadWorkflow(withStep(2, { args: ["--effort", "x"] }), options).status, "loaded");
 });
 
+test("Claude's setting source flag is adapter-owned", () => {
+  for (const args of [["--setting-sources", "user"], ["--setting-sources=user"]]) {
+    assert.match(
+      only(withStep(0, { args }), "steps[0].args"),
+      /args of step implement has --setting-sources, which the claude adapter sets/,
+    );
+  }
+});
+
 test("args on a command step is an error", () => {
   assert.match(
     only(withStep(1, { args: [] }), "steps[1].args"),
