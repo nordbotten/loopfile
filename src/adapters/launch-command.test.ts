@@ -95,6 +95,13 @@ function session(tty = false) {
   return { io, screen, out: () => out, err: () => err };
 }
 
+async function remoteFolders(): Promise<readonly string[]> {
+  return (await readdir(tmpdir(), { withFileTypes: true }))
+    .filter((entry) => entry.isDirectory() && entry.name.startsWith("loopfile-remote-"))
+    .map((entry) => entry.name)
+    .sort();
+}
+
 function resultOf(events: ReturnType<typeof parseEventLog>): string | undefined {
   const last = events.at(-1);
   return last?.type === "run.ended" ? last.result : undefined;
@@ -127,6 +134,7 @@ test("a trusted GitHub Remote Loopfile runs and uses the repository name", async
   const fixture = await makeGitFixture({
     "manifest.yaml": "formatVersion: 1\nsteps:\n  - id: done\n    kind: command\n    run: 'true'\n",
   });
+  const remoteBefore = await remoteFolders();
   try {
     const s = session();
     assert.equal(
@@ -143,6 +151,7 @@ test("a trusted GitHub Remote Loopfile runs and uses the repository name", async
       0,
       s.err(),
     );
+    assert.deepEqual(await remoteFolders(), remoteBefore);
     const runId = s.out().trim();
     assert.equal(resultOf(await waitForEnd(home, runId)), "success");
     const status = JSON.parse(await readFile(runPaths(home, runId).status, "utf8")) as {
@@ -195,6 +204,7 @@ test("an untrusted GitHub Remote Loopfile refuses without making a run", async (
 test("a remote manifest failure cleans its fetched folder", async () => {
   const { repo, home, env } = await setup("formatVersion: 1\nsteps: []\n");
   const fixture = await makeGitFixture({ "manifest.yaml": "formatVersion: 1\nsteps: []\n" });
+  const remoteBefore = await remoteFolders();
   try {
     const s = session();
     assert.equal(
@@ -207,6 +217,30 @@ test("a remote manifest failure cleans its fetched folder", async () => {
       ),
       1,
     );
+    assert.deepEqual(await remoteFolders(), remoteBefore);
+    await assert.rejects(stat(join(home, "runs")));
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("a remote git failure reports operation_failed and git stderr", async () => {
+  const { repo, home, env } = await setup();
+  const fixture = await makeGitFixture({ "manifest.yaml": "formatVersion: 1\nsteps: []\n" });
+  try {
+    const s = session();
+    assert.equal(
+      await launchCommand(
+        ["github:acme/missing", "--trust"],
+        cli,
+        s.io,
+        { ...env, ...fixture.env },
+        { repository: repo },
+      ),
+      2,
+    );
+    assert.match(s.err(), /error: "fatal: .*acme\/missing.*does not appear to be a git repository/);
+    assert.match(s.err(), /code: operation_failed/);
     await assert.rejects(stat(join(home, "runs")));
   } finally {
     await fixture.cleanup();
