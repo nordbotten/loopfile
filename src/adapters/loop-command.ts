@@ -16,10 +16,13 @@ import {
 } from "../application/launch-inputs.ts";
 import {
   renderOperatorConfirmation,
+  renderOperatorFailure,
   renderOperatorFailureLines,
 } from "../application/operator-error.ts";
+import { parseStatusProjection } from "../application/status.ts";
 import type { InputSet, LoopEvent, LoopSource } from "../domain/events.ts";
 import type { Workflow } from "../domain/model.ts";
+import type { LoopStatus, StatusProjection } from "../domain/status.ts";
 import {
   materializeDirectory,
   materializePacked,
@@ -40,7 +43,9 @@ import {
   loopfileHome,
   loopPaths,
   newLoopId,
+  runPaths,
 } from "./run-directory.ts";
+import { pingOwner } from "./run-owner.ts";
 
 const { version } = createRequire(import.meta.url)("../../package.json") as { version: string };
 
@@ -52,12 +57,14 @@ Run a Loopfile repeatedly in the background. Each non-empty JSON Lines input
 set in --list starts one run. --next runs a command before each run; its stdout
 is one JSON input set, or whitespace to end the loop.
 `;
-const ATTACHED_HELP = "attached loops are not built yet: add -d";
-
 export interface LoopCommandOptions {
   readonly readStdin?: () => Promise<Buffer>;
   readonly repository?: string;
   readonly readyTimeoutMs?: number;
+  /** Overridable for tests only. Production follows loop status every 500 ms. */
+  readonly pollMs?: number;
+  /** Overridable for tests only. */
+  readonly ownerPingTimeoutMs?: number;
 }
 
 type LoopIo = Pick<LaunchIo, "out" | "err" | "upgrade">;
@@ -101,6 +108,7 @@ interface ValidLoopArgs {
   readonly next: string | undefined;
   readonly inputs: readonly string[];
   readonly retry: number;
+  readonly detach: boolean;
 }
 
 function validateLoopArgs(args: LoopArgs, io: LoopIo, retry: number): ValidLoopArgs | number {
@@ -110,7 +118,6 @@ function validateLoopArgs(args: LoopArgs, io: LoopIo, retry: number): ValidLoopA
     return refuse(io, "a loop needs one input source: --times, --list or --next");
   }
   if (sources > 1) return refuse(io, "a loop takes only one input source");
-  if (!args.detach) return refuse(io, "attached loops are not built yet", ATTACHED_HELP);
   if (args.times.length > 0) {
     const count = parseTimes(args.times[0] as string, io);
     return count === undefined
@@ -122,6 +129,7 @@ function validateLoopArgs(args: LoopArgs, io: LoopIo, retry: number): ValidLoopA
           next: undefined,
           inputs: args.inputs,
           retry,
+          detach: args.detach,
         };
   }
   if (args.list.length > 0) {
@@ -132,6 +140,7 @@ function validateLoopArgs(args: LoopArgs, io: LoopIo, retry: number): ValidLoopA
       next: undefined,
       inputs: args.inputs,
       retry,
+      detach: args.detach,
     };
   }
   return {
@@ -141,6 +150,7 @@ function validateLoopArgs(args: LoopArgs, io: LoopIo, retry: number): ValidLoopA
     next: args.next[0],
     inputs: args.inputs,
     retry,
+    detach: args.detach,
   };
 }
 
@@ -270,9 +280,205 @@ async function createAndStartLoop(
     );
     return started.failure.exitCode;
   }
-  io.out(`${loopId}\n`);
-  io.err(renderOperatorConfirmation({ started: loopId }));
-  return 0;
+  if (args.detach) {
+    io.out(`${loopId}\n`);
+    io.err(renderOperatorConfirmation({ started: loopId }));
+    return 0;
+  }
+  const interrupted = new AbortController();
+  const onInterrupt = (): void => interrupted.abort();
+  process.once("SIGINT", onInterrupt);
+  try {
+    io.out(`${loopId}\n`);
+    io.err(renderOperatorConfirmation({ started: loopId }));
+    return await followLoop(loopId, home, io.err, options, interrupted.signal);
+  } finally {
+    process.off("SIGINT", onInterrupt);
+  }
+}
+
+interface ObservedRun {
+  readonly index: number;
+  readonly runId: string;
+  ended: boolean;
+}
+
+async function followLoop(
+  loopId: string,
+  home: string,
+  err: (text: string) => void,
+  options: LoopCommandOptions,
+  signal: AbortSignal,
+): Promise<number> {
+  const paths = loopPaths(home, loopId);
+  const observed = new Map<string, ObservedRun>();
+  const pollMs = options.pollMs ?? 500;
+
+  for (;;) {
+    if (signal.aborted) return 0;
+    const statusExit = await observeLoopStatus(
+      await readLoopStatus(paths.status),
+      observed,
+      home,
+      err,
+      options,
+      signal,
+    );
+    if (statusExit !== undefined) return statusExit;
+
+    const ownerExit = await observeLoopOwner(
+      loopId,
+      paths.socket,
+      paths.status,
+      observed,
+      home,
+      err,
+      options,
+      signal,
+    );
+    if (ownerExit !== undefined) return ownerExit;
+    await sleepForLoop(pollMs, signal);
+  }
+}
+
+async function observeLoopStatus(
+  status: LoopStatus | undefined,
+  observed: Map<string, ObservedRun>,
+  home: string,
+  err: (text: string) => void,
+  options: LoopCommandOptions,
+  signal: AbortSignal,
+): Promise<number | undefined> {
+  if (status === undefined) return undefined;
+  await reportRuns(status, observed, home, err, options, signal);
+  if (signal.aborted) return 0;
+  return status.state === "running" ? undefined : reportLoopEnd(status, err);
+}
+
+async function observeLoopOwner(
+  loopId: string,
+  socketPath: string,
+  statusPath: string,
+  observed: Map<string, ObservedRun>,
+  home: string,
+  err: (text: string) => void,
+  options: LoopCommandOptions,
+  signal: AbortSignal,
+): Promise<number | undefined> {
+  if ((await pingOwner(socketPath, options.ownerPingTimeoutMs)) === loopId) return undefined;
+  const finalExit = await observeLoopStatus(
+    await readLoopStatus(statusPath),
+    observed,
+    home,
+    err,
+    options,
+    signal,
+  );
+  if (finalExit !== undefined) return finalExit;
+  if (signal.aborted) return 0;
+  err(
+    renderOperatorFailure(
+      {
+        summary: `the loop owner for ${loopId} is gone`,
+        code: "owner_gone",
+        help: `Resume the crashed loop with: loopfile resume ${loopId}`,
+      },
+      2,
+    ).stderr,
+  );
+  return 2;
+}
+
+async function reportRuns(
+  status: LoopStatus,
+  observed: Map<string, ObservedRun>,
+  home: string,
+  err: (text: string) => void,
+  options: LoopCommandOptions,
+  signal: AbortSignal,
+): Promise<void> {
+  for (const [position, runId] of status.runIds.entries()) {
+    if (signal.aborted) return;
+    let run = observed.get(runId);
+    if (run === undefined) {
+      run = { index: position + 1, runId, ended: false };
+      observed.set(runId, run);
+      err(`run: ${run.index} ${run.runId} started\n`);
+    }
+    if (run.ended) continue;
+    const state = await childEndState(
+      home,
+      runId,
+      status.state !== "running",
+      options.ownerPingTimeoutMs,
+    );
+    if (state === undefined || signal.aborted) continue;
+    run.ended = true;
+    err(`run: ${run.index} ${run.runId} ${state}\n`);
+  }
+}
+
+type LoopRunEndState = StatusProjection["state"] | "crashed";
+
+async function childEndState(
+  home: string,
+  runId: string,
+  loopEnded: boolean,
+  ownerPingTimeoutMs: number | undefined,
+): Promise<LoopRunEndState | undefined> {
+  const status = await readChildStatus(runPaths(home, runId).status);
+  if (status === undefined) return loopEnded ? "crashed" : undefined;
+  if (status.state !== "running") return status.state;
+  return (await pingOwner(runPaths(home, runId).socket, ownerPingTimeoutMs)) === runId
+    ? undefined
+    : "crashed";
+}
+
+async function readLoopStatus(path: string): Promise<LoopStatus | undefined> {
+  return await readFile(path, "utf8")
+    .then((text) => JSON.parse(text) as LoopStatus)
+    .catch(() => undefined);
+}
+
+async function readChildStatus(path: string): Promise<StatusProjection | undefined> {
+  return await readFile(path, "utf8")
+    .then((text) => parseStatusProjection(JSON.parse(text)))
+    .catch(() => undefined);
+}
+
+function reportLoopEnd(status: LoopStatus, err: (text: string) => void): number {
+  const reason = status.endReason ?? "unknown";
+  if (status.state === "completed") {
+    err(renderOperatorConfirmation({ ended: `${status.loopId} ${status.state} ${reason}` }));
+    return 0;
+  }
+  const detail = status.detail === null || status.detail === "" ? "" : ` (${status.detail})`;
+  err(
+    renderOperatorFailure(
+      {
+        summary: `loop ${status.loopId} ${status.state}: ${reason}${detail}`,
+        code: "operation_failed",
+        help: `See each run with: loopfile result ${status.loopId}`,
+      },
+      1,
+    ).stderr,
+  );
+  return 1;
+}
+
+async function sleepForLoop(ms: number, signal: AbortSignal): Promise<void> {
+  if (signal.aborted) return;
+  await new Promise<void>((resolve) => {
+    let timer: NodeJS.Timeout;
+    const onAbort = (): void => done();
+    const done = (): void => {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    };
+    timer = setTimeout(done, ms);
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
 }
 
 async function readInputList(
