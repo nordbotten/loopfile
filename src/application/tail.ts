@@ -104,7 +104,16 @@ export function endInLine(runId: string, line: string): RunEnd | undefined {
     result: event.result === "success" ? "success" : "failure",
     reason: endReasonOf(event.reason),
     stepId: typeof event.stepId === "string" ? event.stepId : undefined,
+    metrics: denialMetrics(event.metrics),
   });
+}
+
+function denialMetrics(value: unknown): { readonly permissionDenials: number | null } | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+  const permissionDenials = (value as Record<string, unknown>).permissionDenials;
+  return typeof permissionDenials === "number" || permissionDenials === null
+    ? { permissionDenials }
+    : undefined;
 }
 
 /** `line` read as a JSON object, or nothing when it is blank, not JSON or not an object. */

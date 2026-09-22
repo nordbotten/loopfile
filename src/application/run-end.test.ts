@@ -74,6 +74,26 @@ test("endedHelp names the reason, the last step and the commands to look further
   );
 });
 
+test("endedHelp tells the operator how to allow denied tools on a failed run", () => {
+  const ended = statusEnd({
+    state: "failed",
+    lastTransition: { from: "implement", to: "$failure", cause: "on", outcome: "blocked" },
+    metrics: { ...status().metrics, permissionDenials: 38 },
+  });
+  assert.match(
+    endedHelp(ended),
+    /38 tool calls were denied\. Allow them in the step: args: \[--settings, '\{"permissions":\{"allow":\["Bash\(npm \*\)"\]\}\}'\]\./,
+  );
+});
+
+test("endedHelp does not hint after a normal outcome", () => {
+  const ended = statusEnd({
+    state: "completed",
+    metrics: { ...status().metrics, permissionDenials: 38 },
+  });
+  assert.equal(endedHelp(ended), "");
+});
+
 test("endedHelp leaves out the step when the run made no transition", () => {
   const ended = statusEnd({ state: "cancelled", endReason: "cancelled", lastTransition: null });
   assert.match(endedHelp(ended), new RegExp(`^run ${RUN} cancelled: cancelled\n  see:`));
@@ -93,7 +113,12 @@ test("a run.ended success event is a completed run that exits 0", () => {
     result: "success",
     reason: "end_state",
   });
-  assert.deepEqual(end, { runId: RUN, state: "completed", endReason: "success", stepId: null });
+  assert.deepEqual(end, {
+    runId: RUN,
+    state: "completed",
+    endReason: "success",
+    stepId: null,
+  });
   assert.equal(endedExitCode(end), 0);
   assert.equal(endedHelp(end), "");
 });
@@ -126,7 +151,12 @@ test("a run.ended failure at an end state reads as failure, not end_state", () =
 
 test("a run.cancelled event is a cancelled run that exits 1", () => {
   const end = runEndFromEvent(RUN, { type: "run.cancelled" });
-  assert.deepEqual(end, { runId: RUN, state: "cancelled", endReason: "cancelled", stepId: null });
+  assert.deepEqual(end, {
+    runId: RUN,
+    state: "cancelled",
+    endReason: "cancelled",
+    stepId: null,
+  });
   assert.equal(endedExitCode(end), 1);
   assert.match(endedHelp(end), new RegExp(`^run ${RUN} cancelled: cancelled\n  see:`));
 });
