@@ -153,6 +153,7 @@ test("metrics keep null as null and 0 as 0", async () => {
     totalTokens: null,
     costUsd: 0,
     toolCalls: null,
+    permissionDenials: null,
   };
   const { started, seen } = await run(`console.log("m")`, {
     parseStdoutLine: () => [{ kind: "metrics", metrics }],

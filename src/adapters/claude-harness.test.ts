@@ -32,11 +32,12 @@ const recorded = {
   system: `{"type":"system","subtype":"thinking_tokens","estimated_tokens":50,"estimated_tokens_delta":50,"session_id":"eb9c6315-e713-41fc-a6ec-dd8c77a3abdf","uuid":"a5332046-7edd-4e2d-aa53-c763b5fa9c93"}`,
   thinking: `{"type":"assistant","message":{"model":"claude-haiku-4-5-20251001","id":"msg_011CfBPhmL6MkaNLS7N1Erbd","type":"message","role":"assistant","content":[{"type":"thinking","thinking":"","signature":"EqYICrIBCBEYAipA74Vm1ppx32jV0zkJ"}],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":10,"cache_creation_input_tokens":14713,"cache_read_input_tokens":13701,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":14713},"output_tokens":4,"service_tier":"standard","inference_geo":"not_available"},"input_transformations":[],"diagnostics":null,"context_management":null},"parent_tool_use_id":null,"session_id":"eb9c6315-e713-41fc-a6ec-dd8c77a3abdf","uuid":"e1446eb0-bc84-4b74-8e71-b2c046f14c9e","timestamp":"2026-09-18T18:39:07.801Z","request_id":"req_011CfBPhktYbeBHj8XXRatju"}`,
   bash: `{"type":"assistant","message":{"model":"claude-haiku-4-5-20251001","id":"msg_011CfBPhmL6MkaNLS7N1Erbd","type":"message","role":"assistant","content":[{"type":"tool_use","id":"toolu_01K85tZdfoaAVvi7anTPrfP9","name":"Bash","input":{"command":"echo hi","description":"Echo hi"},"caller":{"type":"direct"}}],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":10,"cache_creation_input_tokens":14713,"cache_read_input_tokens":13701,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":14713},"output_tokens":4,"service_tier":"standard","inference_geo":"not_available"},"input_transformations":[],"diagnostics":null,"context_management":null},"parent_tool_use_id":null,"session_id":"eb9c6315-e713-41fc-a6ec-dd8c77a3abdf","uuid":"137d3456-409c-43d6-8320-bbcf49157562","timestamp":"2026-09-18T18:39:08.222Z","request_id":"req_011CfBPhktYbeBHj8XXRatju","wire_tool_inputs":{"toolu_01K85tZdfoaAVvi7anTPrfP9":{"command":"echo hi","description":"Echo hi"}}}`,
+  denied: `{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_01K85tZdfoaAVvi7anTPrfP9","content":"Bash command requires approval","is_error":true}]}}`,
   user: `{"type":"user","message":{"role":"user","content":[{"tool_use_id":"toolu_01K85tZdfoaAVvi7anTPrfP9","type":"tool_result","content":"hi","is_error":false}]},"parent_tool_use_id":null,"session_id":"eb9c6315-e713-41fc-a6ec-dd8c77a3abdf","uuid":"c7b090ba-50d7-4f47-82e9-25d6fdbd8719","timestamp":"2026-09-18T18:39:08.451Z","tool_use_result":{"stdout":"hi","stderr":"","interrupted":false,"isImage":false,"noOutputExpected":false}}`,
   rateLimit: `{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","resetsAt":1789758600,"rateLimitType":"five_hour","overageStatus":"rejected","overageDisabledReason":"org_level_disabled","isUsingOverage":false,"unifiedWindows":{"five_hour":{"utilization":0.38,"resetsAt":1789758600},"seven_day":{"utilization":0.21,"resetsAt":1790244000}}},"uuid":"f63982a5-e34c-4853-8e02-2005f4156472","session_id":"eb9c6315-e713-41fc-a6ec-dd8c77a3abdf"}`,
   edit: `{"type":"assistant","message":{"model":"claude-haiku-4-5-20251001","id":"msg_011CfBPi5gerbqzrNuEZHgbt","type":"message","role":"assistant","content":[{"type":"tool_use","id":"toolu_01VQXMkppF6gUP1Rzwi7j4j8","name":"Edit","input":{"replace_all":false,"file_path":"/tmp/loopfile-24-rec-bd57d19b/ws/note.txt","old_string":"alpha","new_string":"beta"},"caller":{"type":"direct"}}],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":8,"cache_creation_input_tokens":963,"cache_read_input_tokens":28414,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":963},"output_tokens":1,"service_tier":"standard","inference_geo":"not_available"},"input_transformations":[],"diagnostics":null,"context_management":null},"parent_tool_use_id":null,"session_id":"eb9c6315-e713-41fc-a6ec-dd8c77a3abdf","uuid":"c8d889e7-e3ef-4727-a769-19646cbc75a8","timestamp":"2026-09-18T18:39:10.778Z","request_id":"req_011CfBPi5AtY7LVUGNeCENdC","wire_tool_inputs":{"toolu_01VQXMkppF6gUP1Rzwi7j4j8":{"file_path":"/tmp/loopfile-24-rec-bd57d19b/ws/note.txt","old_string":"alpha","new_string":"beta"}}}`,
   text: `{"type":"assistant","message":{"model":"claude-haiku-4-5-20251001","id":"msg_011CfBPiDPkE31QKvq91JvLn","type":"message","role":"assistant","content":[{"type":"text","text":"ok"}],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":8,"cache_creation_input_tokens":270,"cache_read_input_tokens":29377,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":270},"output_tokens":2,"service_tier":"standard","inference_geo":"not_available"},"input_transformations":[],"diagnostics":null,"context_management":null},"parent_tool_use_id":null,"session_id":"eb9c6315-e713-41fc-a6ec-dd8c77a3abdf","uuid":"fd6f1a6d-b590-449b-b917-03d04d0a99c8","timestamp":"2026-09-18T18:39:12.144Z","request_id":"req_011CfBPiCqkkTFV5v5Tv9Xfj"}`,
-  result: `{"duration_api_ms":7439,"stop_reason":"end_turn","session_id":"eb9c6315-e713-41fc-a6ec-dd8c77a3abdf","total_cost_usd":0.04195220000000001,"usage":{"input_tokens":26,"cache_creation_input_tokens":15946,"cache_read_input_tokens":71492,"output_tokens":577,"output_tokens_details":{"thinking_tokens":326},"server_tool_use":{"web_search_requests":0,"web_fetch_requests":0},"service_tier":"standard","cache_creation":{"ephemeral_1h_input_tokens":15946,"ephemeral_5m_input_tokens":0},"inference_geo":"not_available","iterations":[{"input_tokens":8,"output_tokens":71,"cache_read_input_tokens":29377,"cache_creation_input_tokens":270,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":270},"type":"message"}],"speed":"standard"},"modelUsage":{"claude-haiku-4-5-20251001":{"inputTokens":26,"outputTokens":577,"cacheReadInputTokens":71492,"cacheCreationInputTokens":15946,"webSearchRequests":0,"costUSD":0.04195220000000001,"contextWindow":200000,"maxOutputTokens":32000,"thinkingTokens":326,"canonicalModel":"claude-haiku-4-5","provider":"firstParty","costBasis":"list"}},"permission_denials":[],"terminal_reason":"completed","fast_mode_state":"off","fast_mode_disabled_reason":"sdk_opt_in_required","subagent_stats":{"spawned":0,"requested":{"background":0,"foreground":0,"unset":0},"started_in_background":0,"max_depth":0,"spawned_by_subagents":0,"completed":0,"failed":0,"killed":{"parent":0,"user":0,"system":0},"refused":{"depth_limit":0,"concurrency_limit":0,"budget":0},"by_type":{}},"is_error":false,"num_turns":4,"subtype":"success","api_error_status":null,"result":"ok","ttft_ms":3232,"type":"result","duration_ms":7633,"uuid":"e3848d49-3dc8-4255-a057-eae2328a39e0","ttft_stream_ms":887,"time_to_request_ms":140,"first_content_frame_ms":888,"queued_turn_count":0,"result_index":0}`,
+  result: `{"duration_api_ms":7439,"stop_reason":"end_turn","session_id":"eb9c6315-e713-41fc-a6ec-dd8c77a3abdf","total_cost_usd":0.04195220000000001,"usage":{"input_tokens":26,"cache_creation_input_tokens":15946,"cache_read_input_tokens":71492,"output_tokens":577,"output_tokens_details":{"thinking_tokens":326},"server_tool_use":{"web_search_requests":0,"web_fetch_requests":0},"service_tier":"standard","cache_creation":{"ephemeral_1h_input_tokens":15946,"ephemeral_5m_input_tokens":0},"inference_geo":"not_available","iterations":[{"input_tokens":8,"output_tokens":71,"cache_read_input_tokens":29377,"cache_creation_input_tokens":270,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":270},"type":"message"}],"speed":"standard"},"modelUsage":{"claude-haiku-4-5-20251001":{"inputTokens":26,"outputTokens":577,"cacheReadInputTokens":71492,"cacheCreationInputTokens":15946,"webSearchRequests":0,"costUSD":0.04195220000000001,"contextWindow":200000,"maxOutputTokens":32000,"thinkingTokens":326,"canonicalModel":"claude-haiku-4-5","provider":"firstParty","costBasis":"list"}},"permission_denials":[{"tool_name":"Bash","input":{"command":"echo hi"}}],"terminal_reason":"completed","fast_mode_state":"off","fast_mode_disabled_reason":"sdk_opt_in_required","subagent_stats":{"spawned":0,"requested":{"background":0,"foreground":0,"unset":0},"started_in_background":0,"max_depth":0,"spawned_by_subagents":0,"completed":0,"failed":0,"killed":{"parent":0,"user":0,"system":0},"refused":{"depth_limit":0,"concurrency_limit":0,"budget":0},"by_type":{}},"is_error":false,"num_turns":4,"subtype":"success","api_error_status":null,"result":"ok","ttft_ms":3232,"type":"result","duration_ms":7633,"uuid":"e3848d49-3dc8-4255-a057-eae2328a39e0","ttft_stream_ms":887,"time_to_request_ms":140,"first_content_frame_ms":888,"queued_turn_count":0,"result_index":0}`,
 };
 
 /** A short assistant line with the given content blocks. */
@@ -156,6 +157,14 @@ test("recorded lines give tool, progress, and nothing for the rest", () => {
   }
 });
 
+test("a recorded denied tool result becomes a denied activity", () => {
+  const { parseStdoutLine } = claudeAdapter.prepare(call);
+  parseStdoutLine(recorded.bash);
+  assert.deepEqual(parseStdoutLine(recorded.denied), [
+    { kind: "tool", tool: "Bash", target: "echo hi", denied: true },
+  ]);
+});
+
 test("the recorded result line gives the call's metrics, cached input included", () => {
   const { parseStdoutLine } = claudeAdapter.prepare(call);
   parseStdoutLine(recorded.bash);
@@ -170,6 +179,7 @@ test("the recorded result line gives the call's metrics, cached input included",
         totalTokens: 26 + 15946 + 71492 + 577,
         costUsd: 0.04195220000000001,
         toolCalls: 2,
+        permissionDenials: 1,
       },
     },
   ]);
@@ -187,9 +197,16 @@ test("a result with no usage and no cost gives null tokens and cost, and keeps t
         totalTokens: null,
         costUsd: null,
         toolCalls: 1,
+        permissionDenials: null,
       },
     },
   ]);
+});
+
+test("an empty denial list reports 0", () => {
+  const { parseStdoutLine } = claudeAdapter.prepare(call);
+  const [activity] = parseStdoutLine(result({ permission_denials: [] }));
+  assert.equal(activity?.kind === "metrics" ? activity.metrics.permissionDenials : undefined, 0);
 });
 
 test("a reported 0 stays 0", () => {
@@ -203,7 +220,14 @@ test("a reported 0 stays 0", () => {
   assert.deepEqual(parseStdoutLine(result({ usage, total_cost_usd: 0 })), [
     {
       kind: "metrics",
-      metrics: { inputTokens: 0, outputTokens: 0, totalTokens: 0, costUsd: 0, toolCalls: 0 },
+      metrics: {
+        inputTokens: 0,
+        outputTokens: 0,
+        totalTokens: 0,
+        costUsd: 0,
+        toolCalls: 0,
+        permissionDenials: null,
+      },
     },
   ]);
 });
@@ -222,6 +246,7 @@ test("input tokens are null when one of the 3 input counts is not a number", () 
           totalTokens: null,
           costUsd: null,
           toolCalls: 0,
+          permissionDenials: null,
         },
       },
     ]);
@@ -236,6 +261,7 @@ test("input tokens are null when one of the 3 input counts is not a number", () 
         totalTokens: null,
         costUsd: null,
         toolCalls: 0,
+        permissionDenials: null,
       },
     },
   ]);

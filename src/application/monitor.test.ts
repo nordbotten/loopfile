@@ -40,7 +40,14 @@ function status(overrides: Partial<StatusProjection> = {}): StatusProjection {
     lastTransition: { from: "plan", to: "build", cause: "on", outcome: "done" },
     transitions: 3,
     maxTransitions: 20,
-    metrics: { inputTokens: 100, outputTokens: 50, totalTokens: 150, costUsd: 1.5, toolCalls: 4 },
+    metrics: {
+      inputTokens: 100,
+      outputTokens: 50,
+      totalTokens: 150,
+      costUsd: 1.5,
+      toolCalls: 4,
+      permissionDenials: 0,
+    },
     ...overrides,
   } as StatusProjection;
 }
@@ -57,7 +64,7 @@ test("a live view shows every line in order", () => {
       "state     running · 1:05",
       "step      build (agent, claude) · attempt 2/3",
       "activity  0:05 ago · editing files",
-      "metrics   tokens 150 (in 100 / out 50) · cost $1.50 · tool calls 4",
+      "metrics   tokens 150 (in 100 / out 50) · cost $1.50 · tool calls 4 · permission denials 0",
       "route     plan → build (done) · transitions 3/20",
       "visited   plan ×1, build ×2",
       DETACH_HINT,
@@ -73,10 +80,18 @@ test("null metrics show unknown and 0 shows 0", () => {
     totalTokens: null,
     costUsd: null,
     toolCalls: null,
+    permissionDenials: null,
   };
   const text = render({ kind: "live", status: status({ metrics: nulls }) });
-  assert.equal(text.match(/unknown/g)?.length, 5);
-  const zeros = { inputTokens: 0, outputTokens: 0, totalTokens: 0, costUsd: 0, toolCalls: 0 };
+  assert.equal(text.match(/unknown/g)?.length, 6);
+  const zeros = {
+    inputTokens: 0,
+    outputTokens: 0,
+    totalTokens: 0,
+    costUsd: 0,
+    toolCalls: 0,
+    permissionDenials: 0,
+  };
   assert.match(
     render({ kind: "live", status: status({ metrics: zeros }) }),
     /tokens 0 \(in 0 \/ out 0\) · cost \$0\.00 · tool calls 0/,

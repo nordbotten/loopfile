@@ -394,7 +394,14 @@ test("lastActivityAt, lastProgress and metrics come from the harness data when i
   const harnessData: HarnessData = {
     lastActivityAt: at(4),
     lastProgress: "edit src/x.ts",
-    metrics: { inputTokens: 10, outputTokens: 5, totalTokens: 15, costUsd: 0.01, toolCalls: 1 },
+    metrics: {
+      inputTokens: 10,
+      outputTokens: 5,
+      totalTokens: 15,
+      costUsd: 0.01,
+      toolCalls: 1,
+      permissionDenials: 2,
+    },
   };
   const status = projectStatus(log, context(), harnessData);
 

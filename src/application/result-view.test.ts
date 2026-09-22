@@ -162,6 +162,25 @@ test("the newest outcome gets its step and a null message when none was given", 
   assert.equal(result.endedAt, "2026-09-21T14:01:00.000Z");
 });
 
+test("a terminal event carries its final metrics", () => {
+  const result = view({
+    seq: 2,
+    at: "2026-09-21T14:01:00.000Z",
+    type: "run.ended",
+    result: "success",
+    reason: "end_state",
+    metrics: {
+      inputTokens: null,
+      outputTokens: null,
+      totalTokens: null,
+      costUsd: null,
+      toolCalls: null,
+      permissionDenials: 3,
+    },
+  });
+  assert.equal(result.metrics.permissionDenials, 3);
+});
+
 test("a cancelled run ends at its cancel event", () => {
   const result = view({
     seq: 2,

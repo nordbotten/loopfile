@@ -41,7 +41,13 @@ export interface PreparedHarnessCall {
 }
 
 export type HarnessActivity =
-  | { readonly kind: "tool"; readonly tool: string; readonly target: string }
+  | {
+      readonly kind: "tool";
+      readonly tool: string;
+      readonly target: string;
+      /** The harness reported that this call was denied. */
+      readonly denied?: boolean;
+    }
   | { readonly kind: "progress"; readonly text: string }
   /** Totals for this call so far. A later report replaces an earlier one. `null` means unknown. */
   | { readonly kind: "metrics"; readonly metrics: StatusMetrics };

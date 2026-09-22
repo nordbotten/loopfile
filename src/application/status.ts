@@ -150,7 +150,14 @@ function checkLastTransition(value: unknown): void {
 
 function checkMetrics(value: unknown): void {
   const metrics = asRecord(value, "status.json metrics");
-  for (const field of ["inputTokens", "outputTokens", "totalTokens", "costUsd", "toolCalls"]) {
+  for (const field of [
+    "inputTokens",
+    "outputTokens",
+    "totalTokens",
+    "costUsd",
+    "toolCalls",
+    "permissionDenials",
+  ]) {
     requireNullOr(metrics, field, (v) => requireNumberValue(v, `metrics.${field}`));
   }
 }

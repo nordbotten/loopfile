@@ -24,6 +24,8 @@ export interface HarnessActivityRouterOptions {
   readonly status: StatusWriter;
   /** The run's events so far. */
   events(): readonly RunEvent[];
+  /** The latest data is needed by the run's terminal event. */
+  readonly onData?: (data: HarnessData) => void;
   /** Overridable for tests only. */
   readonly now?: () => Date;
 }
@@ -36,6 +38,7 @@ export function harnessActivityRouter(
   return (activity) => {
     const result = applyHarnessActivity(data, activity, now().toISOString(), options.secrets);
     data = result.data;
+    options.onData?.(data);
     options.status.onHarnessUpdate(options.events(), data);
     if (result.logText === null) return;
     // Losing a line never fails a call: the log is derived, not run state.

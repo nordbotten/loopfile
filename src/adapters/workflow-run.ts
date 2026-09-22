@@ -40,6 +40,7 @@ import {
   type RunEndedFields,
 } from "../application/run-limits.ts";
 import { parseStatusProjection } from "../application/status.ts";
+import { type HarnessData, NO_HARNESS_DATA } from "../application/status-projection.ts";
 import {
   type AttemptEndFields,
   endOfAttempt,
@@ -420,8 +421,9 @@ function refusal(check: LimitCheck): RunEndedFields | undefined {
 }
 
 async function end(tracked: Tracked, event: RunEndedFields): Promise<RunEndedFields> {
-  await tracked.log.append(event);
-  return event;
+  const ended = { ...event, metrics: tracked.harnessData.metrics };
+  await tracked.log.append(ended);
+  return ended;
 }
 
 /** Records a run-owner bug without hiding the bug or turning a failed write into success. */
@@ -437,7 +439,7 @@ export async function appendInternalError(
 }
 
 async function cancelRun(tracked: Tracked): Promise<{ readonly result: "cancelled" }> {
-  await tracked.log.append({ type: "run.cancelled" });
+  await tracked.log.append({ type: "run.cancelled", metrics: tracked.harnessData.metrics });
   return { result: "cancelled" };
 }
 
@@ -664,6 +666,9 @@ function activityFor(owner: RunOwner, tracked: Tracked, attemptId: string) {
         secrets: { attemptSecret: secret },
         status: tracked.status,
         events: () => tracked.history,
+        onData: (data) => {
+          tracked.harnessData = data;
+        },
       });
       routers.set(secret, router);
     }
@@ -746,6 +751,7 @@ interface Tracked {
   readonly log: EventLog;
   readonly history: RunEvent[];
   readonly status: StatusWriter;
+  harnessData: HarnessData;
 }
 
 /** An event log that also keeps every event it wrote, and tells the status writer about each. */
@@ -753,6 +759,7 @@ function tracking(log: EventLog, history: RunEvent[], status: StatusWriter): Tra
   return {
     history,
     status,
+    harnessData: NO_HARNESS_DATA,
     log: {
       async append(event) {
         const written = await log.append(event);

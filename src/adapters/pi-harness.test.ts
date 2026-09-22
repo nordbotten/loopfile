@@ -192,14 +192,28 @@ test("a later agent_end replaces an earlier one with the totals of both segments
   assert.deepEqual(parseStdoutLine(end), [
     {
       kind: "metrics",
-      metrics: { inputTokens: 8, outputTokens: 2, totalTokens: 10, costUsd: 0.5, toolCalls: 1 },
+      metrics: {
+        inputTokens: 8,
+        outputTokens: 2,
+        totalTokens: 10,
+        costUsd: 0.5,
+        toolCalls: 1,
+        permissionDenials: null,
+      },
     },
   ]);
   parseStdoutLine(msg(usage(10, 20, 30, 40, 0.25)));
   assert.deepEqual(parseStdoutLine(end), [
     {
       kind: "metrics",
-      metrics: { inputTokens: 88, outputTokens: 22, totalTokens: 110, costUsd: 0.75, toolCalls: 1 },
+      metrics: {
+        inputTokens: 88,
+        outputTokens: 22,
+        totalTokens: 110,
+        costUsd: 0.75,
+        toolCalls: 1,
+        permissionDenials: null,
+      },
     },
   ]);
 });
@@ -217,6 +231,7 @@ test("no usage gives null fields and keeps the tool count; a reported 0 stays 0"
         totalTokens: null,
         costUsd: null,
         toolCalls: 1,
+        permissionDenials: null,
       },
     },
   ]);
@@ -225,7 +240,14 @@ test("no usage gives null fields and keeps the tool count; a reported 0 stays 0"
   assert.deepEqual(zero(json({ type: "agent_end" })), [
     {
       kind: "metrics",
-      metrics: { inputTokens: 0, outputTokens: 0, totalTokens: 0, costUsd: 0, toolCalls: 0 },
+      metrics: {
+        inputTokens: 0,
+        outputTokens: 0,
+        totalTokens: 0,
+        costUsd: 0,
+        toolCalls: 0,
+        permissionDenials: null,
+      },
     },
   ]);
 });
@@ -247,6 +269,7 @@ test("each field goes null on its own", () => {
         totalTokens: null,
         costUsd: null,
         toolCalls: 0,
+        permissionDenials: null,
       },
     },
   ]);
@@ -260,7 +283,14 @@ test("two prepare calls share no counter or totals", () => {
   assert.deepEqual(b.parseStdoutLine(recorded.end), [
     {
       kind: "metrics",
-      metrics: { inputTokens: 0, outputTokens: 0, totalTokens: 0, costUsd: 0, toolCalls: 0 },
+      metrics: {
+        inputTokens: 0,
+        outputTokens: 0,
+        totalTokens: 0,
+        costUsd: 0,
+        toolCalls: 0,
+        permissionDenials: null,
+      },
     },
   ]);
 });

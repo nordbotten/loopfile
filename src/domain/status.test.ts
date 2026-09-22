@@ -51,6 +51,7 @@ export const runningExample: StatusProjection = {
     totalTokens: null,
     costUsd: null,
     toolCalls: null,
+    permissionDenials: null,
   },
 };
 
@@ -75,6 +76,7 @@ export const completedExample: StatusProjection = {
     totalTokens: 5100,
     costUsd: 0,
     toolCalls: 0,
+    permissionDenials: 0,
   },
 };
 

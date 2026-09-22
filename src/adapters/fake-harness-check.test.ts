@@ -115,6 +115,7 @@ test("activity reaches onActivity in order; null stays null and 0 stays 0", asyn
     totalTokens: null,
     costUsd: null,
     toolCalls: 1,
+    permissionDenials: null,
   };
   const { rig } = await runOne([
     { do: "activity", activity: { kind: "tool", tool: "edit", target: "a.ts" } },

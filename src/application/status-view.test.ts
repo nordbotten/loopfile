@@ -147,7 +147,7 @@ test("an active run shows state, identity, step, visited steps, transitions and 
   assert.match(text, /^ +2026-09-17T16:03:30.000Z {2}plan -> end \(next\)$/m);
   assert.match(
     text,
-    /^metrics +input tokens unknown · output tokens unknown · total tokens unknown · cost unknown · tool calls unknown$/m,
+    /^metrics +input tokens unknown · output tokens unknown · total tokens unknown · cost unknown · tool calls unknown · permission denials unknown$/m,
   );
   assert.doesNotMatch(text, /^outcome/m);
 });
@@ -158,7 +158,7 @@ test("an ended run shows its outcome and elapsed time, and a reported 0 is not u
       state: "completed",
       endReason: "success",
       endedAt: "2026-09-17T16:04:05.000Z",
-      metrics: { ...UNKNOWN_METRICS, toolCalls: 0, costUsd: 1.5 },
+      metrics: { ...UNKNOWN_METRICS, toolCalls: 0, costUsd: 1.5, permissionDenials: 2 },
     }),
     "completed",
     [],
@@ -168,7 +168,7 @@ test("an ended run shows its outcome and elapsed time, and a reported 0 is not u
   assert.match(text, /^elapsed +1:05$/m);
   assert.match(text, /^visited +none$/m);
   assert.match(text, /^recent +none$/m);
-  assert.match(text, /cost \$1.5 · tool calls 0$/m);
+  assert.match(text, /cost \$1.5 · tool calls 0 · permission denials 2$/m);
   assert.doesNotMatch(text, /^step/m);
 });
 

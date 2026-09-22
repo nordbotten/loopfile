@@ -1,9 +1,9 @@
 /** The operator's read-only result view over a run event log (#226). */
 
 import type { RunEvent } from "../domain/events.ts";
-import type { RunLifecycle, StatusEndReason } from "../domain/status.ts";
+import type { RunLifecycle, StatusEndReason, StatusMetrics } from "../domain/status.ts";
 import { replay } from "./replay.ts";
-import { lifecycleOf } from "./status-projection.ts";
+import { lifecycleOf, UNKNOWN_METRICS } from "./status-projection.ts";
 
 export const RESULT_FORMAT_VERSION = 1;
 
@@ -62,6 +62,7 @@ export interface ResultView {
   readonly repositoryPath: string;
   readonly branch: string;
   readonly baseCommit: string;
+  readonly metrics: StatusMetrics;
   readonly lastOutcome: LastOutcome | null;
   readonly inputs: Readonly<Record<string, ResultValue>>;
   readonly outputs: Readonly<Record<string, ResultValue>>;
@@ -74,6 +75,7 @@ export function buildResultView(
   events: readonly RunEvent[],
   loopfileName: string,
   values: ResultValues = EMPTY_VALUES,
+  metrics?: StatusMetrics,
 ): ResultView {
   const created = events[0];
   if (created?.type !== "run.created")
@@ -81,9 +83,7 @@ export function buildResultView(
 
   const state = replay(events);
   const lifecycle = lifecycleOf(state.result);
-  const ended = events.findLast(
-    (event) => event.type === "run.ended" || event.type === "run.cancelled",
-  );
+  const ended = events.findLast(isTerminal);
   const outcome = events.findLast((event) => event.type === "outcome.reported");
 
   return {
@@ -97,6 +97,7 @@ export function buildResultView(
     repositoryPath: created.repositoryPath,
     branch: created.branch,
     baseCommit: created.baseCommit,
+    metrics: resultMetrics(events, metrics),
     lastOutcome: outcome === undefined ? null : lastOutcome(events, outcome),
     inputs: values.inputs,
     outputs: values.outputs,
@@ -153,6 +154,19 @@ function valueText(value: ResultValue): string {
 
 function oneLine(value: string): string {
   return value.replace(/[\r\n\u2028\u2029]+/g, " ");
+}
+
+function isTerminal(
+  event: RunEvent,
+): event is Extract<RunEvent, { type: "run.ended" | "run.cancelled" }> {
+  return event.type === "run.ended" || event.type === "run.cancelled";
+}
+
+function resultMetrics(
+  events: readonly RunEvent[],
+  metrics: StatusMetrics | undefined,
+): StatusMetrics {
+  return events.findLast(isTerminal)?.metrics ?? metrics ?? UNKNOWN_METRICS;
 }
 
 function lastOutcome(

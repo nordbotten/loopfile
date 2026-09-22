@@ -107,6 +107,7 @@ function metricsText(metrics: StatusMetrics): string {
     `total tokens ${orUnknown(metrics.totalTokens)}`,
     `cost ${cost}`,
     `tool calls ${orUnknown(metrics.toolCalls)}`,
+    `permission denials ${orUnknown(metrics.permissionDenials)}`,
   ].join(" · ");
 }
 

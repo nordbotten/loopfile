@@ -4,7 +4,14 @@ import { applyHarnessActivity } from "./harness-activity.ts";
 import { NO_HARNESS_DATA } from "./status-projection.ts";
 
 const AT = "2026-01-01T00:00:05.000Z";
-const METRICS = { inputTokens: 5, outputTokens: 0, totalTokens: null, costUsd: null, toolCalls: 2 };
+const METRICS = {
+  inputTokens: 5,
+  outputTokens: 0,
+  totalTokens: null,
+  costUsd: null,
+  toolCalls: 2,
+  permissionDenials: null,
+};
 
 test("a tool call logs its name and target and sets the activity time", () => {
   const result = applyHarnessActivity(

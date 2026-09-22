@@ -95,7 +95,14 @@ for (const field of currentFields) {
 }
 
 /** Every field of `metrics` is required, `null` or a number, never missing. */
-const metricsFields = ["inputTokens", "outputTokens", "totalTokens", "costUsd", "toolCalls"];
+const metricsFields = [
+  "inputTokens",
+  "outputTokens",
+  "totalTokens",
+  "costUsd",
+  "toolCalls",
+  "permissionDenials",
+];
 
 for (const field of metricsFields) {
   test(`rejects a status.json missing metrics.${field}`, () => {

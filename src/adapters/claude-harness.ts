@@ -35,6 +35,7 @@ type JsonObject = Readonly<Record<string, unknown>>;
 export const claudeAdapter: HarnessAdapter = {
   prepare(call) {
     let toolCalls = 0;
+    const toolUses = new Map<string, { readonly tool: string; readonly target: string }>();
     const { args, userSettings } = takeSettings(call.args);
     return {
       command: "claude",
@@ -56,10 +57,11 @@ export const claudeAdapter: HarnessAdapter = {
       parseStdoutLine(line) {
         const event = parseObject(line);
         if (event?.type === "assistant") {
-          const found = assistantActivities(event, call.context.workspace);
+          const found = assistantActivities(event, call.context.workspace, toolUses);
           toolCalls += found.filter((activity) => activity.kind === "tool").length;
           return found;
         }
+        if (event?.type === "user") return deniedToolActivities(event, toolUses);
         if (event?.type !== "result") return [];
         return [{ kind: "metrics", metrics: metrics(event, toolCalls) }];
       },
@@ -143,19 +145,51 @@ function text(value: unknown): string {
 }
 
 /** Each `tool_use` block is a tool call and each `text` block is progress. Thinking is neither. */
-function assistantActivities(event: JsonObject, workspace: string): HarnessActivity[] {
+function assistantActivities(
+  event: JsonObject,
+  workspace: string,
+  toolUses: Map<string, { readonly tool: string; readonly target: string }>,
+): HarnessActivity[] {
   const content = asObject(event.message)?.content;
   if (!Array.isArray(content)) return [];
   const found: HarnessActivity[] = [];
   for (const block of content.map(asObject)) {
     if (block?.type === "tool_use") {
       const tool = text(block.name);
-      found.push({ kind: "tool", tool, target: target(tool, block.input, workspace) });
+      const toolTarget = target(tool, block.input, workspace);
+      const id = text(block.id);
+      if (id !== "") toolUses.set(id, { tool, target: toolTarget });
+      found.push({ kind: "tool", tool, target: toolTarget });
     } else if (block?.type === "text") {
       found.push({ kind: "progress", text: text(block.text) });
     }
   }
   return found;
+}
+
+/** A denied `tool_result` is the only stream event that can add a denied activity. */
+function deniedToolActivities(
+  event: JsonObject,
+  toolUses: ReadonlyMap<string, { readonly tool: string; readonly target: string }>,
+): HarnessActivity[] {
+  const content = asObject(event.message)?.content;
+  if (!Array.isArray(content)) return [];
+  const eventResult = event.tool_use_result;
+  return content.flatMap((value) => {
+    const block = asObject(value);
+    if (
+      block?.type !== "tool_result" ||
+      (!reportsDenial(block.content ?? block) && !reportsDenial(eventResult))
+    )
+      return [];
+    const use = toolUses.get(text(block.tool_use_id));
+    return use === undefined ? [] : [{ kind: "tool", ...use, denied: true }];
+  });
+}
+
+function reportsDenial(value: unknown): boolean {
+  const encoded = typeof value === "string" ? value : JSON.stringify(value);
+  return encoded !== undefined && /requires approval/i.test(encoded);
 }
 
 /** The input field that names what a tool acts on. `NotebookEdit` calls its path `notebook_path`. */
@@ -203,11 +237,16 @@ function metrics(event: JsonObject, toolCalls: number): StatusMetrics {
     totalTokens: plus(inputTokens, outputTokens),
     costUsd: count(event.total_cost_usd),
     toolCalls,
+    permissionDenials: denialCount(event.permission_denials),
   };
 }
 
 function count(value: unknown): number | null {
   return typeof value === "number" ? value : null;
+}
+
+function denialCount(value: unknown): number | null {
+  return Array.isArray(value) ? value.length : null;
 }
 
 /** Unknown plus anything is unknown. */

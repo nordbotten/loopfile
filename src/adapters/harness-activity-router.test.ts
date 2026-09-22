@@ -53,6 +53,14 @@ test("a tool call is one filtered log line and moves the activity time", async (
   assert.equal(updates[0]?.data.lastActivityAt, "2026-01-01T00:00:01.000Z");
 });
 
+test("a denied tool call is marked in the activity log", async () => {
+  const { activityPath, route } = fixture();
+  route({ kind: "tool", tool: "Bash", target: "pnpm test", denied: true });
+  await settle();
+
+  assert.match(await readFile(activityPath, "utf8"), /Bash pnpm test \(denied\)/);
+});
+
 test("a long multi-line progress text is cut to one line, without the secret", async () => {
   const { activityPath, updates, route } = fixture();
   route({ kind: "progress", text: `s3cret\n${"x".repeat(500)}` });
@@ -69,7 +77,14 @@ test("metrics reach the status writer and never the log", async () => {
   const { activityPath, updates, route } = fixture();
   route({
     kind: "metrics",
-    metrics: { inputTokens: 3, outputTokens: 0, totalTokens: null, costUsd: null, toolCalls: null },
+    metrics: {
+      inputTokens: 3,
+      outputTokens: 0,
+      totalTokens: null,
+      costUsd: null,
+      toolCalls: null,
+      permissionDenials: null,
+    },
   });
   await settle();
 
@@ -83,7 +98,14 @@ test("data accumulates across updates and the activity time advances", async () 
   route({ kind: "progress", text: "working" });
   route({
     kind: "metrics",
-    metrics: { inputTokens: 1, outputTokens: 2, totalTokens: 3, costUsd: 0.5, toolCalls: 1 },
+    metrics: {
+      inputTokens: 1,
+      outputTokens: 2,
+      totalTokens: 3,
+      costUsd: 0.5,
+      toolCalls: 1,
+      permissionDenials: null,
+    },
   });
   await settle();
 
