@@ -222,8 +222,6 @@ test("a bad --input is refused before launch", async () => {
     [["--input", "issue"], /<name>=<value>/],
     [["--input", "Issue=1"], /must match/],
     [["--input", "issue=1", "--input", "issue=2"], /more than once/],
-    [["--input", "issue=1", "--input", "other=2"], /not declared/],
-    [[], /missing --input for issue/],
   ];
   for (const [flags, message] of cases) {
     const s = session();
@@ -231,6 +229,47 @@ test("a bad --input is refused before launch", async () => {
     assert.equal(code, 2, flags.join(" "));
     assert.match(s.err(), message);
   }
+  await assert.rejects(stat(join(home, "runs")));
+});
+
+test("a launch reports each missing input on its own error line", async () => {
+  const { repo, source, home, env } = await setup(`formatVersion: 1
+inputs:
+  issue: the issue number
+  task: the issue number, title and body
+steps:
+  - id: work
+    kind: command
+    run: 'true'
+`);
+  const s = session();
+  assert.equal(await launchCommand([source], cli, s.io, env, { repository: repo }), 2);
+  assert.equal(
+    s.err(),
+    "error: missing --input issue: the issue number\n" +
+      "error: missing --input task: the issue number, title and body\n" +
+      "code: bad_argument\n" +
+      "help: Give each with --input <name>=<value>.\n",
+  );
+  await assert.rejects(stat(join(home, "runs")));
+});
+
+test("a launch reports each undeclared input on its own error line", async () => {
+  const { repo, source, home, env } = await setup();
+  const s = session();
+  assert.equal(
+    await launchCommand([source, "--input", "other=1", "--input", "another=2"], cli, s.io, env, {
+      repository: repo,
+    }),
+    2,
+  );
+  assert.equal(
+    s.err(),
+    "error: --input other is not declared by the Loopfile. Declared inputs: issue.\n" +
+      "error: --input another is not declared by the Loopfile. Declared inputs: issue.\n" +
+      "code: bad_argument\n" +
+      "help: Give each with --input <name>=<value>.\n",
+  );
   await assert.rejects(stat(join(home, "runs")));
 });
 
