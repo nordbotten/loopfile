@@ -27,6 +27,10 @@ import { lastOwnerStartedHost } from "./run-discovery.ts";
 import { pingOwner } from "./run-owner.ts";
 
 const DEFAULT_POLL_INTERVAL_MS = 500;
+// Auto-wrap is off while a frame is written: a line wider than the terminal is
+// cut at the edge, so each line takes one row and the redraw moves up the right count.
+const WRAP_OFF = "\x1b[?7l";
+const WRAP_ON = "\x1b[?7h";
 
 export interface MonitorIo {
   readonly input: Readable & { readonly isTTY?: boolean; setRawMode?(raw: boolean): unknown };
@@ -83,7 +87,7 @@ export async function attachMonitor(
     const frame = renderMonitor(view, now().toISOString());
     moveCursor(output, 0, -lastFrameLines);
     clearScreenDown(output);
-    output.write(frame);
+    output.write(`${WRAP_OFF}${frame}${WRAP_ON}`);
     lastFrameLines = frame.split("\n").length - 1;
   };
 

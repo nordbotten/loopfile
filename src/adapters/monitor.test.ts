@@ -56,6 +56,7 @@ function terminal(tty = true): {
   input: PassThrough;
   raw: boolean[];
   text(): string;
+  written(): string;
 } {
   const input = Object.assign(new PassThrough(), {
     isTTY: tty,
@@ -74,6 +75,7 @@ function terminal(tty = true): {
     input,
     raw: input.raw,
     text: () => stripVTControlCharacters(written),
+    written: () => written,
   };
 }
 
@@ -154,6 +156,19 @@ test("no status.json waits, then shows the live view", async () => {
   assert.match(t.text(), /d detach · run continues/);
   t.input.write("d");
   assert.equal(await result, 0);
+  await owner.close();
+});
+
+test("each frame is written with auto-wrap off, so a long line cannot push the redraw down", async () => {
+  const { runId, owner, env } = await setup(true, { lastProgress: "x".repeat(500) });
+  const t = terminal();
+  const result = attachMonitor(runId, t.io, env, OPTIONS);
+  await sleep(TICK * 3);
+  t.input.write("d");
+  assert.equal(await within(result, 500), 0);
+  const frames = t.written().split("\x1b[?7l").slice(1);
+  assert.ok(frames.length > 1);
+  for (const frame of frames) assert.match(frame, /d detach · run continues\n\x1b\[\?7h/);
   await owner.close();
 });
 
