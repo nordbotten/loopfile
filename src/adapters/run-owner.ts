@@ -195,6 +195,63 @@ export async function startRunOwner(options: StartRunOwnerOptions): Promise<RunO
   };
 }
 
+/** The control-socket half shared by run and loop owners. */
+export interface ControlOwner {
+  readonly ownerId: string;
+  readonly stopped: Promise<void>;
+  close(): Promise<void>;
+}
+
+export interface StartControlOwnerOptions {
+  readonly socketPath: string;
+  readonly ownerId: string;
+  readonly ownerKind: "run" | "loop";
+  /** Runs after the socket is bound and before ready is sent. */
+  readonly beforeReady: () => Promise<void>;
+  readonly probeTimeoutMs?: number;
+}
+
+/** Binds a background owner's control socket and greets once its setup is done. */
+export async function startControlOwner(options: StartControlOwnerOptions): Promise<ControlOwner> {
+  checkSocketPathLength(options.socketPath);
+  let greet: ((socket: Socket) => void) | undefined;
+  const waiting = new Set<Socket>();
+  const control = lineServer((socket) => {
+    if (greet) greet(socket);
+    else waiting.add(socket);
+    onLine(socket, (line) => {
+      socket.write(encodeMessage(controlReply(line, options.ownerId, false)));
+    });
+  });
+  await bindExclusive(
+    control,
+    options.socketPath,
+    options.ownerId,
+    options.probeTimeoutMs,
+    options.ownerKind,
+  ).catch(async (error: unknown) => {
+    await control.close();
+    throw error;
+  });
+
+  const close = async (): Promise<void> => {
+    await control.close();
+    await unlink(options.socketPath).catch(() => undefined);
+  };
+  try {
+    await options.beforeReady();
+  } catch (error) {
+    await close();
+    throw error;
+  }
+
+  greet = (socket: Socket) => socket.write(encodeMessage(readyMessage(options.ownerId)));
+  for (const socket of waiting) greet(socket);
+  waiting.clear();
+  const stopped = new Promise<void>((resolve) => control.server.once("close", resolve));
+  return { ownerId: options.ownerId, stopped, close };
+}
+
 /** A controller that also aborts when `outside` does. */
 function handleControlLine(
   socket: Socket,
@@ -310,6 +367,7 @@ async function bindExclusive(
   path: string,
   runId: string,
   probeTimeoutMs = PROBE_TIMEOUT_MS,
+  ownerKind = "run",
 ): Promise<void> {
   const inUse = await listen(served.server, path).then(
     () => false,
@@ -323,13 +381,13 @@ async function bindExclusive(
   const answer = await pingOwner(path, probeTimeoutMs);
   if (answer === runId) {
     throw new RunOwnerBusyError(
-      `another run owner is already running for this run: ${path}. ` +
+      `another ${ownerKind} owner is already running for this ${ownerKind}: ${path}. ` +
         "Use `loopfile cancel` to stop it, or wait for it to finish.",
     );
   }
   if (answer !== undefined) {
     throw new RunOwnerBusyError(
-      `something else is already listening on ${path}, and it answers for run ${answer}. ` +
+      `something else is already listening on ${path}, and it answers for ${ownerKind} ${answer}. ` +
         "Move it out of the way by hand: a socket another process is serving is never removed.",
     );
   }
