@@ -97,15 +97,20 @@ export type WorkspaceRemoval =
   | { readonly removed: false; readonly path: string; readonly reason: string };
 
 /**
- * Removes the worktree with `git worktree remove`, never with `--force`.
+ * Removes the worktree with `git worktree remove`, with `--force` only when asked.
  *
  * Git refuses to remove a worktree with uncommitted work, and that refusal is
  * the guard: the workspace is kept and the reason is returned, not thrown.
- * The run branch is never touched, so committed work survives.
+ * `force` skips the guard and deletes that work. The run branch is never
+ * touched, so committed work survives.
  */
-export async function removeWorkspace(workspace: Workspace): Promise<WorkspaceRemoval> {
+export async function removeWorkspace(
+  workspace: Workspace,
+  force = false,
+): Promise<WorkspaceRemoval> {
+  const flags = force ? ["--force"] : [];
   try {
-    await git(workspace.repositoryPath, "worktree", "remove", workspace.path);
+    await git(workspace.repositoryPath, "worktree", "remove", ...flags, workspace.path);
     return { removed: true };
   } catch (error) {
     return { removed: false, path: workspace.path, reason: gitMessage(error) };

@@ -1,4 +1,4 @@
-/** `loopfile remove <runid> [--kill-leftovers]`: discard one run, but keep its branch. */
+/** `loopfile remove <runid> [--kill-leftovers] [--force]`: discard one run, but keep its branch. */
 
 import { readFile, rm } from "node:fs/promises";
 import { parseArgs } from "node:util";
@@ -14,13 +14,14 @@ import { loopfileHome, pathExists, type RunPaths, runPaths } from "./run-directo
 import { pingOwner } from "./run-owner.ts";
 import { pruneWorktrees, removeWorkspace } from "./workspace.ts";
 
-const USAGE = "Usage: loopfile remove <runid> [--kill-leftovers]";
+const USAGE = "Usage: loopfile remove <runid> [--kill-leftovers] [--force]";
 const HELP = `${USAGE}
 
 Remove a run's workspace and folder, keeping its branch. A live run must be
 cancelled first. --kill-leftovers kills processes left by the run before
-removing it. Exit 0 means removal succeeded; invalid or refused work returns 2
-(or 1 for a removal operation failure).
+removing it. --force also deletes uncommitted work in the workspace. Exit 0
+means removal succeeded; invalid or refused work returns 2 (or 1 for a removal
+operation failure).
 `;
 
 export interface RemoveOptions {
@@ -30,6 +31,7 @@ export interface RemoveOptions {
 interface RemoveArgs {
   readonly runId?: string;
   readonly killLeftovers: boolean;
+  readonly force: boolean;
   readonly help: boolean;
 }
 
@@ -92,6 +94,7 @@ function parseRemoveArgs(argv: readonly string[]): RemoveArgs | undefined {
       options: {
         help: { type: "boolean", short: "h" },
         "kill-leftovers": { type: "boolean" },
+        force: { type: "boolean" },
       },
       allowPositionals: true,
     });
@@ -99,6 +102,7 @@ function parseRemoveArgs(argv: readonly string[]): RemoveArgs | undefined {
     return {
       ...(positionals[0] === undefined ? {} : { runId: positionals[0] }),
       killLeftovers: values["kill-leftovers"] === true,
+      force: values.force === true,
       help: values.help === true,
     };
   } catch {
@@ -112,7 +116,11 @@ export async function removeRun(
   runId: string,
   options: RemoveOptions = {},
 ): Promise<RemoveResult> {
-  return await removeRunWithArgs(home, { runId, killLeftovers: false, help: false }, options);
+  return await removeRunWithArgs(
+    home,
+    { runId, killLeftovers: false, force: false, help: false },
+    options,
+  );
 }
 
 async function removeRunWithArgs(
@@ -125,7 +133,8 @@ async function removeRunWithArgs(
   if (!checked.ok) return checked;
 
   const leftover = leftoverProcessGroup(checked.events);
-  if (leftover === 0 || !groupAlive(leftover)) return removeFiles(paths, checked.created);
+  if (leftover === 0 || !groupAlive(leftover))
+    return removeFiles(paths, checked.created, args.force);
   if (!args.killLeftovers) {
     return refused(
       `run ${args.runId} still has processes in process group ${leftover}`,
@@ -134,7 +143,7 @@ async function removeRunWithArgs(
     );
   }
   killGroup(leftover);
-  return removeFiles(paths, checked.created);
+  return removeFiles(paths, checked.created, args.force);
 }
 
 type CheckedRun =
@@ -200,6 +209,7 @@ async function readEvents(
 async function removeFiles(
   paths: RunPaths,
   created: Extract<RunEvent, { type: "run.created" }>,
+  force: boolean,
 ): Promise<RemoveResult> {
   try {
     if (!(await pathExists(created.repositoryPath))) {
@@ -214,17 +224,20 @@ async function removeFiles(
     if (!(await pathExists(paths.workspace))) {
       await pruneWorktrees(created.repositoryPath);
     } else {
-      const removed = await removeWorkspace({
-        path: paths.workspace,
-        repositoryPath: created.repositoryPath,
-        baseCommit: created.baseCommit,
-        branch: created.branch,
-      });
+      const removed = await removeWorkspace(
+        {
+          path: paths.workspace,
+          repositoryPath: created.repositoryPath,
+          baseCommit: created.baseCommit,
+          branch: created.branch,
+        },
+        force,
+      );
       if (!removed.removed) {
         return refused(
           `workspace of run ${created.runId} is dirty: ${removed.reason}`,
           "workspace_dirty",
-          `Commit or discard the workspace changes, then run \`loopfile remove ${created.runId}\` again.`,
+          `Commit or discard the workspace changes, or run \`loopfile remove ${created.runId} --force\` to delete them.`,
           1,
         );
       }
