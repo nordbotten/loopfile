@@ -1,4 +1,4 @@
-/** `loopfile loop <source> --times N | --list <file> -d` (#60, #62). */
+/** `loopfile loop <source> --times N | --list <file> | --next <command> -d` (#60, #62, #63). */
 
 import { createHash } from "node:crypto";
 import { readFile, rm } from "node:fs/promises";
@@ -7,6 +7,7 @@ import { basename } from "node:path";
 import { parseArgs } from "node:util";
 import {
   checkAgainstDeclared,
+  checkDeclaredInputs,
   inputHelp,
   type LaunchInputs,
   mergeInputSet,
@@ -43,11 +44,13 @@ import {
 
 const { version } = createRequire(import.meta.url)("../../package.json") as { version: string };
 
-const USAGE = "Usage: loopfile loop <source> (--times N | --list <file>) [--input k=v]... [-d]";
+const USAGE =
+  "Usage: loopfile loop <source> (--times N | --list <file> | --next <command>) [--input k=v]... [-d]";
 const HELP = `${USAGE}
 
 Run a Loopfile repeatedly in the background. Each non-empty JSON Lines input
-set in --list starts one run.
+set in --list starts one run. --next runs a command before each run; its stdout
+is one JSON input set, or whitespace to end the loop.
 `;
 const ATTACHED_HELP = "attached loops are not built yet: add -d";
 
@@ -92,6 +95,7 @@ interface ValidLoopArgs {
   readonly source: string;
   readonly count: number | undefined;
   readonly list: string | undefined;
+  readonly next: string | undefined;
   readonly inputs: readonly string[];
 }
 
@@ -102,15 +106,29 @@ function validateLoopArgs(args: LoopArgs, io: LoopIo): ValidLoopArgs | number {
     return refuse(io, "a loop needs one input source: --times, --list or --next");
   }
   if (sources > 1) return refuse(io, "a loop takes only one input source");
-  if (args.next.length > 0) return refuse(io, "that loop input source is not built yet");
   if (!args.detach) return refuse(io, "attached loops are not built yet", ATTACHED_HELP);
   if (args.times.length > 0) {
     const count = parseTimes(args.times[0] as string, io);
     return count === undefined
       ? 2
-      : { source: args.source, count, list: undefined, inputs: args.inputs };
+      : { source: args.source, count, list: undefined, next: undefined, inputs: args.inputs };
   }
-  return { source: args.source, count: undefined, list: args.list[0], inputs: args.inputs };
+  if (args.list.length > 0) {
+    return {
+      source: args.source,
+      count: undefined,
+      list: args.list[0],
+      next: undefined,
+      inputs: args.inputs,
+    };
+  }
+  return {
+    source: args.source,
+    count: undefined,
+    list: undefined,
+    next: args.next[0],
+    inputs: args.inputs,
+  };
 }
 
 async function startLoop(
@@ -125,23 +143,9 @@ async function startLoop(
   const fixed = parseInputFlags(args.inputs);
   if (!fixed.ok) return refuse(io, fixed.messages, inputHelp(loaded.workflow.inputDefaults));
 
-  let source: LoopSource;
-  let fixedInputs: LaunchInputs;
-  if (args.list !== undefined) {
-    const sets = await readInputList(args.list, fixed.inputs, loaded.workflow, io);
-    if (sets === undefined) return 2;
-    source = { kind: "list", sets };
-    fixedInputs = fixed.inputs;
-  } else {
-    const inputs = checkAgainstDeclared(
-      fixed.inputs,
-      loaded.workflow.inputs,
-      loaded.workflow.inputDefaults,
-    );
-    if (!inputs.ok) return refuse(io, inputs.messages, inputHelp(loaded.workflow.inputDefaults));
-    source = { kind: "times", count: args.count as number };
-    fixedInputs = inputs.inputs;
-  }
+  const inputs = await prepareLoopInputs(args, fixed.inputs, loaded.workflow, io);
+  if (inputs === undefined) return 2;
+  const { source, fixedInputs } = inputs;
 
   const program = await programIdentity(cli).catch((error: Error) => {
     refuse(io, `cannot read the CLI entry file: ${error.message}`, USAGE, 1, "operation_failed");
@@ -159,6 +163,37 @@ async function startLoop(
     options,
     loaded,
   );
+}
+
+interface PreparedLoopInputs {
+  readonly source: LoopSource;
+  readonly fixedInputs: LaunchInputs;
+}
+
+async function prepareLoopInputs(
+  args: ValidLoopArgs,
+  fixed: LaunchInputs,
+  workflow: Workflow,
+  io: LoopIo,
+): Promise<PreparedLoopInputs | undefined> {
+  if (args.next !== undefined) {
+    const inputs = checkDeclaredInputs(fixed, workflow.inputs);
+    if (!inputs.ok) {
+      refuse(io, inputs.messages, inputHelp(workflow.inputDefaults));
+      return undefined;
+    }
+    return { source: { kind: "next", command: args.next }, fixedInputs: fixed };
+  }
+  if (args.list !== undefined) {
+    const sets = await readInputList(args.list, fixed, workflow, io);
+    return sets === undefined ? undefined : { source: { kind: "list", sets }, fixedInputs: fixed };
+  }
+  const inputs = checkAgainstDeclared(fixed, workflow.inputs, workflow.inputDefaults);
+  if (!inputs.ok) {
+    refuse(io, inputs.messages, inputHelp(workflow.inputDefaults));
+    return undefined;
+  }
+  return { source: { kind: "times", count: args.count as number }, fixedInputs: inputs.inputs };
 }
 
 async function createAndStartLoop(
