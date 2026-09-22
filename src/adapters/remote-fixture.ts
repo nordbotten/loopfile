@@ -24,7 +24,7 @@ export async function makeGitFixture(
   files: Readonly<Record<string, string | Uint8Array>>,
   source = "acme/loops",
 ): Promise<GitFixture> {
-  const root = await mkdtemp(join(tmpdir(), "loopfile-remote-fixture-"));
+  const root = await mkdtemp(join(tmpdir(), "loopfile-git-fixture-"));
   const repository = join(root, ...source.split("/"));
   const env = { ...process.env, ...gitIdentity };
   try {
