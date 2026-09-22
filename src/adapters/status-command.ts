@@ -1,14 +1,14 @@
 /**
- * `loopfile status [<runid> [--json]]` (#36).
+ * `loopfile status [<runid>] [--monitor | --json]` (#36).
  *
  * Read-only. It reads `status.json` and `events.jsonl`, and pings
  * `owner.sock` (ADR 0008), through the same `discoverRun` and `discoverRuns`
  * that `list` uses, so the two never disagree about crashed or unknown. It
  * never writes a run file.
  *
- * Bare `status` needs a terminal: it lists the runs, asks for a number, and
- * attaches the monitor (#49) to the pick. `--json` output is one JSON line
- * with no ANSI.
+ * Bare `status` needs a terminal: it lists the runs and asks for a number.
+ * Then, with or without a run ID, it prints the run once, or attaches the
+ * monitor (#49) with `--monitor`. `--json` output is one JSON line with no ANSI.
  */
 
 import { createInterface } from "node:readline/promises";
@@ -25,7 +25,8 @@ import {
   unreadableStatusMessage,
 } from "../application/status-view.ts";
 import { unknownRunMessage } from "../application/tail.ts";
-import { attachMonitor, type MonitorIo, type MonitorOptions } from "./monitor.ts";
+import { notTerminalMessage } from "../application/monitor.ts";
+import { attachMonitor, hasTerminal, type MonitorIo, type MonitorOptions } from "./monitor.ts";
 import { loopfileHome, pathExists, runPaths } from "./run-directory.ts";
 import {
   type DiscoverRunsOptions,
@@ -40,12 +41,13 @@ type Out = (text: string) => void;
 type Err = (text: string) => void;
 type Discovered = Awaited<ReturnType<typeof discoverRun>>;
 
-const HELP = `Usage: loopfile status [<runid> [--json]]
+const HELP = `Usage: loopfile status [<runid>] [--monitor | --json]
 
-Show one run. With no run ID, a terminal lists runs and lets you attach the
-live monitor; without a terminal use loopfile list, then status <runid>. Use
---json with a run ID for one structured answer. Status describes a run and
-returns 0 for a readable result or 2 for a bad or unreadable call.
+Show one run. With no run ID, a terminal lists runs and lets you pick one;
+without a terminal use loopfile list, then status <runid>. Use --monitor to
+attach the live monitor instead of printing once, and --json with a run ID for
+one structured answer. Status describes a run and returns 0 for a readable
+result or 2 for a bad or unreadable call.
 `;
 
 type ReadStatus = {
@@ -80,17 +82,33 @@ export async function statusCommand(
       help: "Use `loopfile status <runid>` or `loopfile list`.",
     });
   const processEnv = env as NodeJS.ProcessEnv;
+  const io = options.io ?? { input: process.stdin, output: process.stdout };
 
-  if (args.runId === undefined) {
-    const io = options.io ?? { input: process.stdin, output: process.stdout };
-    return await pickAndAttach(io, processEnv, err, options);
+  let runId = args.runId;
+  if (runId === undefined) {
+    const picked = await pickRun(io, processEnv, err, options);
+    if (typeof picked === "number") return picked;
+    runId = picked;
   }
 
-  const read = await readStatusForCommand(args.runId, processEnv, options);
+  if (args.monitor) return await monitorRun(runId, io, processEnv, err, options);
+  return await printRun(runId, args.json, out, err, processEnv, options);
+}
+
+/** Prints the run once, as text or as one JSON line. */
+async function printRun(
+  runId: string,
+  json: boolean,
+  out: Out,
+  err: Err,
+  env: NodeJS.ProcessEnv,
+  options: StatusOptions,
+): Promise<number> {
+  const read = await readStatusForCommand(runId, env, options);
   if ("code" in read) return fail(err, read);
 
   const view = buildStatusView(read.status, read.entry.state, recentTransitions(read.events));
-  out(args.json ? `${JSON.stringify(view)}\n` : renderStatusView(view));
+  out(json ? `${JSON.stringify(view)}\n` : renderStatusView(view));
   return 0;
 }
 
@@ -125,13 +143,14 @@ async function readStatusForCommand(
   return { entry: discovered.entry, status: discovered.status, events };
 }
 
-async function pickAndAttach(
+/** The picked run ID, or the exit code when there is nothing to pick. */
+async function pickRun(
   io: MonitorIo,
   env: NodeJS.ProcessEnv,
   err: Err,
   options: StatusOptions,
-): Promise<number> {
-  if (io.input.isTTY !== true || io.output.isTTY !== true) {
+): Promise<string | number> {
+  if (!hasTerminal(io)) {
     return fail(err, {
       summary: notTerminalStatusMessage(),
       code: "no_terminal",
@@ -155,7 +174,23 @@ async function pickAndAttach(
     io,
     entries.map((entry) => entry.runId),
   );
-  if (runId === undefined) return 0;
+  return runId ?? 0;
+}
+
+async function monitorRun(
+  runId: string,
+  io: MonitorIo,
+  env: NodeJS.ProcessEnv,
+  err: Err,
+  options: StatusOptions,
+): Promise<number> {
+  if (!hasTerminal(io)) {
+    return fail(err, {
+      summary: notTerminalMessage(runId),
+      code: "no_terminal",
+      help: `Drop --monitor: \`loopfile status ${runId}\` prints the run once.`,
+    });
+  }
   let readFailed = false;
   await attachMonitor(runId, io, env, {
     ...options.monitor,

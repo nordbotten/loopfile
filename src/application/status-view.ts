@@ -13,25 +13,42 @@ import { formatElapsed, renderRunList } from "./run-list.ts";
 /** How many transitions `status` shows. */
 export const RECENT_TRANSITION_COUNT = 5;
 
-const USAGE = "Usage: loopfile status [<runid> [--json]]";
+const USAGE = "Usage: loopfile status [<runid>] [--monitor | --json]";
 
 export type StatusArgs =
-  | { readonly ok: true; readonly runId: string | undefined; readonly json: boolean }
+  | {
+      readonly ok: true;
+      readonly runId: string | undefined;
+      readonly json: boolean;
+      readonly monitor: boolean;
+    }
   | { readonly ok: false; readonly message: string };
 
 export function parseStatusArgs(argv: readonly string[]): StatusArgs {
   let runId: string | undefined;
   let json = false;
+  let monitor = false;
   for (const token of argv.slice(1)) {
     if (token === "--json") json = true;
+    else if (token === "--monitor") monitor = true;
     else if (token.startsWith("--") || runId !== undefined) {
       return { ok: false, message: `unknown argument: ${token}\n${USAGE}` };
     } else runId = token;
   }
-  if (json && runId === undefined) {
-    return { ok: false, message: `\`status --json\` needs a run ID.\n${USAGE}` };
-  }
-  return { ok: true, runId, json };
+  const conflict = jsonConflict(json, runId, monitor);
+  if (conflict !== undefined) return { ok: false, message: `${conflict}\n${USAGE}` };
+  return { ok: true, runId, json, monitor };
+}
+
+/** Why `--json` cannot be used with these arguments, or `undefined`. */
+function jsonConflict(
+  json: boolean,
+  runId: string | undefined,
+  monitor: boolean,
+): string | undefined {
+  if (!json) return undefined;
+  if (runId === undefined) return "`status --json` needs a run ID.";
+  return monitor ? "`status` takes --monitor or --json, not both." : undefined;
 }
 
 export function notTerminalStatusMessage(): string {

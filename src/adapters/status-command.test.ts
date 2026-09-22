@@ -313,13 +313,12 @@ async function pickerHome(
   return { LOOPFILE_HOME: dir };
 }
 
-test("bare status in a terminal attaches the monitor to the picked run", async () => {
+test("bare status in a terminal prints the picked run once", async () => {
   const t = terminal(true);
   const r = runner();
   const result = statusCommand(["status"], r.out, r.err, await pickerHome(), {
     io: t.io,
     pingTimeoutMs: 100,
-    monitor: { ownerPingTimeoutMs: 100, pollIntervalMs: 20 },
   });
   // Ask for a bad number first, then a valid one: the picker asks again.
   await waitFor(() => t.text().includes("Pick a run"));
@@ -332,17 +331,79 @@ test("bare status in a terminal attaches the monitor to the picked run", async (
   assert.match(text, /1\) /);
   assert.match(text, /review-loop/);
   assert.equal(code, 0);
-  assert.match(text, /^state +completed \(success\)$/m);
+  assert.match(r.output, /^run +20260917-160300-pppp · review-loop$/m);
+  assert.match(r.output, /^state +completed$/m);
+  assert.doesNotMatch(text, /^state +completed \(success\)$/m);
 });
 
-test("bare status reports a monitor read failure after the pick", async () => {
+test("bare status --monitor attaches the monitor to the picked run", async () => {
+  const t = terminal(true);
+  const r = runner();
+  const result = statusCommand(["status", "--monitor"], r.out, r.err, await pickerHome(), {
+    io: t.io,
+    pingTimeoutMs: 100,
+    monitor: { ownerPingTimeoutMs: 100, pollIntervalMs: 20 },
+  });
+  await waitFor(() => t.text().includes("Pick a run"));
+  t.input.write("1\n");
+  assert.equal(await result, 0);
+  assert.equal(r.output, "");
+  assert.match(t.text(), /^state +completed \(success\)$/m);
+});
+
+test("status <runid> --monitor attaches the monitor without a picker", async () => {
+  const t = terminal(true);
+  const r = runner();
+  const home = await pickerHome();
+  const result = statusCommand(
+    ["status", "20260917-160300-pppp", "--monitor"],
+    r.out,
+    r.err,
+    home,
+    {
+      io: t.io,
+      monitor: { ownerPingTimeoutMs: 100, pollIntervalMs: 20 },
+    },
+  );
+  assert.equal(await result, 0);
+  assert.doesNotMatch(t.text(), /Pick a run/);
+  assert.match(t.text(), /^state +completed \(success\)$/m);
+});
+
+test("status <runid> --monitor with no terminal fails and says to drop --monitor", async () => {
+  const t = terminal(false);
+  const r = runner();
+  const home = await pickerHome();
+  const code = await statusCommand(
+    ["status", "20260917-160300-pppp", "--monitor"],
+    r.out,
+    r.err,
+    home,
+    { io: t.io },
+  );
+  assert.equal(code, 2);
+  assert.equal(t.text(), "");
+  assert.match(r.errors, /the monitor needs a terminal/);
+  assert.match(r.errors, /\ncode: no_terminal\n/);
+  assert.match(r.errors, /Drop --monitor/);
+});
+
+test("bare status --monitor reports a monitor read failure after the pick", async () => {
   const t = terminal(true);
   const r = runner();
   const runId = "20260917-160309-iiii";
   const dir = await mkdtemp(join(tmpdir(), "loopfile-status-monitor-"));
   after(() => rm(dir, { recursive: true, force: true }));
   const paths = await makeRun(runId, {}, undefined, dir);
-  const result = statusCommand(["status"], r.out, r.err, { LOOPFILE_HOME: dir }, { io: t.io });
+  const result = statusCommand(
+    ["status", "--monitor"],
+    r.out,
+    r.err,
+    { LOOPFILE_HOME: dir },
+    {
+      io: t.io,
+    },
+  );
   await waitFor(() => t.text().includes("Pick a run"));
   await writeFile(paths.status, "not json");
   t.input.write("1\n");
@@ -356,7 +417,7 @@ test("bare status reports a monitor read failure after the pick", async () => {
 test("a crashed run that status read successfully exits 0 from the picker", async () => {
   const t = terminal(true);
   const r = runner();
-  const result = statusCommand(["status"], r.out, r.err, await pickerHome(RUNNING), {
+  const result = statusCommand(["status", "--monitor"], r.out, r.err, await pickerHome(RUNNING), {
     io: t.io,
     pingTimeoutMs: 100,
     monitor: { ownerPingTimeoutMs: 100, pollIntervalMs: 20 },
@@ -372,7 +433,7 @@ test("a failed run that status read successfully exits 0 from the picker", async
   const t = terminal(true);
   const r = runner();
   const result = statusCommand(
-    ["status"],
+    ["status", "--monitor"],
     r.out,
     r.err,
     await pickerHome({ state: "failed", endReason: "failure" }),
