@@ -39,6 +39,8 @@ export function parseStatusProjection(value: unknown): StatusProjection {
   requireString(record, "updatedAt");
   requireString(record, "runId");
   requireString(record, "loopfileName");
+  const loopId = optionalString(record, "loopId");
+  const loopIndex = optionalLoopIndex(record);
   requireEnum(record, "state", RUN_LIFECYCLE_STATES);
   requireNullOr(record, "endReason", (v) => requireStringValue(v, "endReason"));
   requireString(record, "startedAt");
@@ -51,10 +53,14 @@ export function parseStatusProjection(value: unknown): StatusProjection {
   requireNumber(record, "transitions");
   requireNullOr(record, "maxTransitions", (v) => requireNumberValue(v, "maxTransitions"));
   const metrics = checkMetrics(record.metrics);
-  if (!("permissionDenials" in metrics)) {
-    return { ...record, metrics: { ...metrics, permissionDenials: null } } as StatusProjection;
-  }
-  return value as StatusProjection;
+  return {
+    ...record,
+    loopId,
+    loopIndex,
+    ...(!("permissionDenials" in metrics)
+      ? { metrics: { ...metrics, permissionDenials: null } }
+      : {}),
+  } as StatusProjection;
 }
 
 function asRecord(value: unknown, label: string): Record<string, unknown> {
@@ -86,6 +92,23 @@ function requireNumberValue(value: unknown, field: string): void {
       `status.json ${field} must be a number, got ${JSON.stringify(value)}`,
     );
   }
+}
+
+function optionalString(record: Record<string, unknown>, field: string): string | null {
+  if (!(field in record) || record[field] === null) return null;
+  requireString(record, field);
+  return record[field] as string;
+}
+
+function optionalLoopIndex(record: Record<string, unknown>): number | null {
+  if (!("loopIndex" in record) || record.loopIndex === null) return null;
+  requireNumber(record, "loopIndex");
+  if (!Number.isInteger(record.loopIndex) || (record.loopIndex as number) < 1) {
+    throw new InvalidStatusProjectionError(
+      `status.json loopIndex must be an integer of 1 or more, got ${JSON.stringify(record.loopIndex)}`,
+    );
+  }
+  return record.loopIndex as number;
 }
 
 function requireEnum(

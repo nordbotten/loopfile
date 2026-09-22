@@ -23,6 +23,8 @@ function status(overrides: Partial<StatusProjection> = {}): StatusProjection {
     updatedAt: "2026-09-17T16:04:00.000Z",
     runId: RUN_ID,
     loopfileName: "review-loop",
+    loopId: null,
+    loopIndex: null,
     state: "running",
     endReason: null,
     startedAt: "2026-09-17T16:03:44.000Z",

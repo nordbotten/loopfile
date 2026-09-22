@@ -172,6 +172,9 @@ export interface StatusProjection {
   readonly updatedAt: Timestamp;
   readonly runId: RunId;
   readonly loopfileName: string;
+  /** The loop that started this run, or `null` for a plain run. */
+  readonly loopId: string | null;
+  readonly loopIndex: number | null;
   readonly state: RunLifecycle;
   readonly endReason: StatusEndReason | null;
   readonly startedAt: Timestamp;

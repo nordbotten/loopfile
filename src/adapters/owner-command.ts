@@ -108,6 +108,8 @@ async function runLaunched(
     sourceKind: launch.kind,
     sourceText: launch.sourceText,
     inputs: launch.inputs,
+    loopId: launch.loopId,
+    loopIndex: launch.loopIndex,
     repository: launch.repository,
     executor: localExecutor(stepEnv),
     cancelSignal,

@@ -107,6 +107,13 @@ test("a fresh run with only run.created is running, with no current attempt", ()
   assert.deepEqual(status.metrics, UNKNOWN_METRICS);
 });
 
+test("a run in a loop carries its link into status", () => {
+  const status = projectStatus(events({ ...created, loopId: "loop-1", loopIndex: 2 }), context());
+
+  assert.equal(status.loopId, "loop-1");
+  assert.equal(status.loopIndex, 2);
+});
+
 test("an open attempt on an agent step fills current from the workflow", () => {
   const log = events(created, {
     type: "attempt.started",

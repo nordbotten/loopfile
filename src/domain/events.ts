@@ -58,6 +58,8 @@ export interface RunCreated extends EventBase {
   /** `loopfile/<runid>`. */
   readonly branch: string;
   readonly inputs: readonly LaunchInputRecord[];
+  readonly loopId?: string;
+  readonly loopIndex?: number;
 }
 
 /** A run owner took the run: at launch, and again on every resume (ADR 0008). */

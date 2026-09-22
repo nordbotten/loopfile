@@ -16,6 +16,7 @@ import { parseArgs } from "node:util";
 import {
   checkAgainstDeclared,
   encodeLaunch,
+  optionalLoopFields,
   type InputsCheck,
   inputHelp,
   LAUNCH_ENV,
@@ -81,6 +82,9 @@ export interface LaunchOptions {
   readonly readyTimeoutMs?: number;
   /** The target repository. Left out means the current directory. */
   readonly repository?: string;
+  /** Set by an in-process loop owner; there is no CLI flag. */
+  readonly loopId?: string;
+  readonly loopIndex?: number;
   /** How `loopfile -` supplies the manifest in tests and the CLI. */
   readonly readStdin?: () => Promise<Buffer>;
 }
@@ -118,6 +122,7 @@ export async function launchCommand(
     sourceText: source.text,
     repository: options.repository ?? process.cwd(),
     inputs: inputs.inputs,
+    ...optionalLoopFields(options.loopId, options.loopIndex),
   };
   return await start(args.detach, request, source.workflow, cli, io, env, options);
 }

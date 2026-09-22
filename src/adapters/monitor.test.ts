@@ -86,6 +86,8 @@ function status(runId: string, overrides: Partial<StatusProjection> = {}): Statu
     updatedAt: "2026-09-18T10:00:00.000Z",
     runId,
     loopfileName: "demo",
+    loopId: null,
+    loopIndex: null,
     state: "running",
     endReason: null,
     startedAt: "2026-09-18T10:00:00.000Z",

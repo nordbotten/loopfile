@@ -55,6 +55,8 @@ export interface ResultView {
   readonly formatVersion: typeof RESULT_FORMAT_VERSION;
   readonly runId: string;
   readonly loopfileName: string;
+  readonly loopId: string | null;
+  readonly loopIndex: number | null;
   readonly state: RunLifecycle;
   readonly endReason: StatusEndReason | null;
   readonly startedAt: string;
@@ -90,6 +92,8 @@ export function buildResultView(
     formatVersion: RESULT_FORMAT_VERSION,
     runId: created.runId,
     loopfileName,
+    loopId: created.loopId ?? null,
+    loopIndex: created.loopIndex ?? null,
     state: lifecycle.state,
     endReason: lifecycle.endReason,
     startedAt: created.at,
@@ -112,8 +116,11 @@ function resultLine(label: string, text: string): string {
 
 /** Renders the compact human form; every result value occupies one line. */
 export function renderResultView(view: ResultView): string {
-  const lines = [
-    resultLine("run", `${view.runId} · ${view.loopfileName}`),
+  const lines = [resultLine("run", `${view.runId} · ${view.loopfileName}`)];
+  if (view.loopId !== null && view.loopIndex !== null) {
+    lines.push(`loop: ${view.loopId} (run ${view.loopIndex})`);
+  }
+  lines.push(
     resultLine("state", view.state),
     resultLine("started", view.startedAt),
     resultLine(
@@ -126,7 +133,7 @@ export function renderResultView(view: ResultView): string {
     resultLine("last outcome", outcomeText(view.lastOutcome)),
     ...valueLines("input", view.inputs),
     ...valueLines("output", view.outputs),
-  ];
+  );
   return `${lines.join("\n")}\n`;
 }
 

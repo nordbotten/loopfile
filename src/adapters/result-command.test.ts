@@ -142,6 +142,8 @@ test("a finished run prints all operator facts as JSON and exits 0", async () =>
     formatVersion: 1,
     runId,
     loopfileName: "review-loop",
+    loopId: null,
+    loopIndex: null,
     state: "completed",
     endReason: "success",
     startedAt: "2026-09-21T14:00:00.000Z",

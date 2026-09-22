@@ -19,11 +19,27 @@ test("parses a completed example with every metric reported, including 0", () =>
   assert.equal(parsed.metrics.toolCalls, 0);
 });
 
+test("reads a status.json without loop fields as a plain run", () => {
+  const value = roundTrip(runningExample) as Record<string, unknown>;
+  delete value.loopId;
+  delete value.loopIndex;
+  const parsed = parseStatusProjection(value);
+  assert.equal(parsed.loopId, null);
+  assert.equal(parsed.loopIndex, null);
+});
+
 test("reads a status.json without permissionDenials as unknown", () => {
   const value = roundTrip(runningExample) as Record<string, unknown>;
   delete (value.metrics as Record<string, unknown>).permissionDenials;
   const parsed = parseStatusProjection(value);
   assert.equal(parsed.metrics.permissionDenials, null);
+});
+
+test("rejects a loop index that is not a positive integer", () => {
+  for (const loopIndex of [0, 1.5, "2"]) {
+    const value = { ...(roundTrip(runningExample) as Record<string, unknown>), loopIndex };
+    assert.throws(() => parseStatusProjection(value), InvalidStatusProjectionError);
+  }
 });
 
 test("rejects a value that is not an object", () => {

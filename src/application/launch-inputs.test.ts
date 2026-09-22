@@ -83,6 +83,8 @@ test("a launch request survives the environment variable", () => {
     sourceText: "formatVersion: 1",
     repository: "/r",
     inputs: { a: "1" },
+    loopId: "loop-20260922-105306-qfn3",
+    loopIndex: 3,
   };
   assert.deepEqual(decodeLaunch(encodeLaunch(request)), request);
 });
@@ -101,6 +103,9 @@ test("a launch request that is not one decodes to nothing", () => {
     JSON.stringify({ ...good, inputs: null }),
     JSON.stringify({ ...good, inputs: [] }),
     JSON.stringify({ ...good, inputs: { a: 1 } }),
+    JSON.stringify({ ...good, loopId: 1 }),
+    JSON.stringify({ ...good, loopIndex: 0 }),
+    JSON.stringify({ ...good, loopIndex: 1.5 }),
   ];
   for (const text of bad) assert.equal(decodeLaunch(text), undefined, text);
   assert.notEqual(decodeLaunch(JSON.stringify(good)), undefined);
