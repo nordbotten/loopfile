@@ -166,7 +166,8 @@ test("each frame is written with auto-wrap off, so a long line cannot push the r
   const { runId, owner, env } = await setup(true, { lastProgress: "x".repeat(500) });
   const t = terminal();
   const result = attachMonitor(runId, t.io, env, OPTIONS);
-  await sleep(TICK * 3);
+  // Under load a redraw can take longer than a tick: wait for two frames, not for a fixed time.
+  for (let i = 0; i < 250 && t.written().split("\x1b[?7l").length < 3; i += 1) await sleep(TICK);
   t.input.write("d");
   assert.equal(await within(result, 500), 0);
   const frames = t.written().split("\x1b[?7l").slice(1);
@@ -342,26 +343,37 @@ test("a run that ends while the ping waits shows ended, not crashed", async () =
   await mkdir(paths.root, { recursive: true });
   await writeFile(paths.events, `${JSON.stringify({ type: "run.created", seq: 1, at: "x" })}\n`);
   await writeFile(paths.status, JSON.stringify(status(runId)));
-  // A socket that accepts and never answers: the ping waits out its timeout.
-  const silent: Server = createServer(() => undefined);
-  await new Promise<void>((resolve) => silent.listen(paths.socket, () => resolve()));
-  owners.push({ close: () => new Promise((resolve) => silent.close(() => resolve())) });
+  // An owner that ends while the ping waits: it never answers, writes its final
+  // status, then closes the connection, as a real owner closes its socket last.
+  const ending: Server = createServer(async (socket) => {
+    const endingStatus = `${paths.status}.tmp`;
+    await writeFile(
+      endingStatus,
+      JSON.stringify(
+        status(runId, {
+          state: "completed",
+          endReason: "success",
+          endedAt: "2026-09-18T10:00:09.000Z",
+        }),
+      ),
+    );
+    await rename(endingStatus, paths.status);
+    socket.destroy();
+  });
+  await new Promise<void>((resolve) => ending.listen(paths.socket, () => resolve()));
+  owners.push({ close: () => new Promise((resolve) => ending.close(() => resolve())) });
 
   const t = terminal();
-  const result = attachMonitor(runId, t.io, { LOOPFILE_HOME: home }, OPTIONS);
-  await sleep(TICK * 2);
-  const endingStatus = `${paths.status}.tmp`;
-  await writeFile(
-    endingStatus,
-    JSON.stringify(
-      status(runId, {
-        state: "completed",
-        endReason: "success",
-        endedAt: "2026-09-18T10:00:09.000Z",
-      }),
-    ),
+  // The ping ends when the owner closes the connection, not by its timeout.
+  const result = attachMonitor(
+    runId,
+    t.io,
+    { LOOPFILE_HOME: home },
+    {
+      ...OPTIONS,
+      ownerPingTimeoutMs: 30_000,
+    },
   );
-  await rename(endingStatus, paths.status);
   assert.equal(await within(result, 2000), 0);
   assert.match(t.text(), /completed \(success\)/);
   assert.doesNotMatch(t.text(), /crashed/);

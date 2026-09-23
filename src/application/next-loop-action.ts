@@ -26,7 +26,14 @@ export type LoopAction =
       readonly retryOf?: string;
     }
   | { readonly kind: "wait" }
+  | { readonly kind: "pause"; readonly until: string }
   | { readonly kind: "end"; readonly reason: LoopEndReason; readonly detail?: string };
+
+/** Options needed to decide whether the gap before the next run needs a pause. */
+export interface NextLoopActionOptions {
+  readonly pauseMs?: number | null;
+  readonly now?: Date;
+}
 
 /** The parsed stdout result of one `--next` command. */
 export type NextSourceResult =
@@ -41,19 +48,21 @@ export function nextLoopAction(
   nextResult?: NextSourceResult,
   workflow?: Pick<Workflow, "inputs" | "inputDefaults">,
   history: readonly LoopEvent[] = [],
+  options: NextLoopActionOptions = {},
 ): LoopAction {
   if (lastChild.state === "running") return { kind: "wait" };
-  const failed = failedChildAction(status, lastChild, history);
+  const failed = failedChildAction(status, lastChild, history, options);
   if (failed !== undefined) return failed;
   const childEnd = childEndAction(lastChild);
   if (childEnd !== undefined) return childEnd;
-  return uncappedSourceAction(status, source, nextResult, workflow);
+  return uncappedSourceAction(status, source, nextResult, workflow, options);
 }
 
 function failedChildAction(
   status: LoopStatus,
   child: LastChild,
   history: readonly LoopEvent[],
+  options: NextLoopActionOptions,
 ): LoopAction | undefined {
   if (child.state !== "failed") return undefined;
   const details = retryDetails(child.runId, history);
@@ -61,12 +70,16 @@ function failedChildAction(
     return { kind: "end", reason: "run_failed", detail: `run ${child.runId} failed` };
   }
   if (atRunCap(status)) return { kind: "end", reason: "max_runs" };
-  return {
-    kind: "start",
-    inputSet: details.run.inputSet,
-    sourceIndex: details.run.sourceIndex,
-    retryOf: child.runId,
-  };
+  return withPause(
+    status,
+    {
+      kind: "start",
+      inputSet: details.run.inputSet,
+      sourceIndex: details.run.sourceIndex,
+      retryOf: child.runId,
+    },
+    options,
+  );
 }
 
 type RetryDetails = { readonly run: LoopRunStarted; readonly retriesSoFar: number };
@@ -93,10 +106,12 @@ function uncappedSourceAction(
   source: LoopSource | undefined,
   nextResult: NextSourceResult | undefined,
   workflow: Pick<Workflow, "inputs" | "inputDefaults"> | undefined,
+  options: NextLoopActionOptions,
 ): LoopAction {
   if (atRunCap(status)) return { kind: "end", reason: "max_runs" };
-  if (source?.kind === "next") return nextCommandAction(status, nextResult, workflow);
-  return source?.kind === "list" ? nextListAction(status, source) : nextTimesAction(status);
+  if (source?.kind === "next") return nextCommandAction(status, nextResult, workflow, options);
+  const action = source?.kind === "list" ? nextListAction(status, source) : nextTimesAction(status);
+  return withPause(status, action, options);
 }
 
 function atRunCap(status: LoopStatus): boolean {
@@ -117,10 +132,32 @@ function nextCommandAction(
   status: LoopStatus,
   result: NextSourceResult | undefined,
   workflow: Pick<Workflow, "inputs" | "inputDefaults"> | undefined,
+  options: NextLoopActionOptions,
 ): LoopAction {
   if (result === undefined) {
-    return { kind: "end", reason: "source_failed", detail: "--next did not produce a result" };
+    return (
+      pauseAction(status, options) ??
+      ({ kind: "end", reason: "source_failed", detail: "--next did not produce a result" } as const)
+    );
   }
+  const checked = checkNextCommand(result, status, workflow);
+  if (checked.kind === "end") return checked;
+  return withPause(
+    status,
+    { kind: "start", inputSet: checked.inputSet, sourceIndex: null },
+    options,
+  );
+}
+
+type NextCommandCheck =
+  | { readonly kind: "input"; readonly inputSet: InputSet }
+  | Extract<LoopAction, { readonly kind: "end" }>;
+
+function checkNextCommand(
+  result: NextSourceResult,
+  status: LoopStatus,
+  workflow: Pick<Workflow, "inputs" | "inputDefaults"> | undefined,
+): NextCommandCheck {
   if (result.kind === "empty") return { kind: "end", reason: "source_empty" };
   if (!result.result.ok) {
     return { kind: "end", reason: "source_failed", detail: result.result.messages.join("; ") };
@@ -137,7 +174,7 @@ function nextCommandAction(
   if (!checked.ok) {
     return { kind: "end", reason: "source_failed", detail: checked.messages.join("; ") };
   }
-  return { kind: "start", inputSet: checked.inputs, sourceIndex: null };
+  return { kind: "input", inputSet: checked.inputs };
 }
 
 function nextListAction(
@@ -163,4 +200,21 @@ function nextTimesAction(status: LoopStatus): LoopAction {
     };
   }
   return { kind: "end", reason: "source_empty" };
+}
+
+function withPause(
+  status: LoopStatus,
+  action: LoopAction,
+  options: NextLoopActionOptions,
+): LoopAction {
+  return action.kind === "start" ? (pauseAction(status, options) ?? action) : action;
+}
+
+function pauseAction(status: LoopStatus, options: NextLoopActionOptions): LoopAction | undefined {
+  const pauseMs = options.pauseMs ?? null;
+  if (status.runs === 0 || pauseMs === null || pauseMs <= 0 || status.pausedUntil !== null) {
+    return undefined;
+  }
+  const now = options.now ?? new Date();
+  return { kind: "pause", until: new Date(now.getTime() + pauseMs).toISOString() };
 }

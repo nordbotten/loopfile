@@ -4,6 +4,8 @@ import type { LoopEvent } from "../domain/events.ts";
 import type { LoopStatus } from "../domain/status.ts";
 import { type LastChild, nextLoopAction } from "./next-loop-action.ts";
 
+const pauseOptions = { pauseMs: 1000, now: new Date("2026-09-22T10:00:00.000Z") };
+
 const status: LoopStatus = {
   formatVersion: 1,
   seq: 4,
@@ -61,12 +63,44 @@ test("starts the first run with fixed inputs", () => {
   const first = nextLoopAction(
     { ...status, place: 0, runs: 0, runIds: [], currentRunId: null },
     { state: "none" },
+    undefined,
+    undefined,
+    undefined,
+    [],
+    pauseOptions,
   );
   assert.deepEqual(first, {
     kind: "start",
     inputSet: { project: "loopfile" },
     sourceIndex: 1,
   });
+});
+
+test("pauses before the second and later runs", () => {
+  assert.deepEqual(
+    nextLoopAction(
+      status,
+      { state: "completed", runId: "run-one" },
+      undefined,
+      undefined,
+      undefined,
+      [],
+      pauseOptions,
+    ),
+    { kind: "pause", until: "2026-09-22T10:00:01.000Z" },
+  );
+  assert.deepEqual(
+    nextLoopAction(
+      { ...status, place: 2, runs: 2, pausedUntil: "2026-09-22T10:00:01.000Z" },
+      { state: "completed", runId: "run-two" },
+      undefined,
+      undefined,
+      undefined,
+      [],
+      pauseOptions,
+    ),
+    { kind: "start", inputSet: { project: "loopfile" }, sourceIndex: 3 },
+  );
 });
 
 test("starts the next run after a completed child", () => {
@@ -79,7 +113,15 @@ test("starts the next run after a completed child", () => {
 
 test("ends well instead of starting when max runs is reached", () => {
   assert.deepEqual(
-    nextLoopAction({ ...status, runs: 2, maxRuns: 2 }, { state: "completed", runId: "run-one" }),
+    nextLoopAction(
+      { ...status, runs: 2, maxRuns: 2 },
+      { state: "completed", runId: "run-one" },
+      undefined,
+      undefined,
+      undefined,
+      [],
+      pauseOptions,
+    ),
     { kind: "end", reason: "max_runs" },
   );
 });
@@ -93,6 +135,21 @@ test("does not need a next command result when max runs is reached", () => {
       { kind: "output", result: { ok: true, inputs: { issue: "41" } } },
     ),
     { kind: "end", reason: "max_runs" },
+  );
+});
+
+test("pauses before a retry", () => {
+  assert.deepEqual(
+    nextLoopAction(
+      { ...status, retry: 1, lastRetryCount: 0 },
+      { state: "failed", runId: "run-one" },
+      undefined,
+      undefined,
+      undefined,
+      [started("run-one", { project: "loopfile" }, 1)],
+      pauseOptions,
+    ),
+    { kind: "pause", until: "2026-09-22T10:00:01.000Z" },
   );
 });
 
@@ -239,6 +296,26 @@ test("starts next runs from the command result and resolves defaults", () => {
   );
 });
 
+test("pauses before asking --next for another input set", () => {
+  const next: LoopStatus = {
+    ...status,
+    source: { kind: "next", command: "next-input" },
+    place: null,
+  };
+  assert.deepEqual(
+    nextLoopAction(
+      next,
+      { state: "completed", runId: "run-one" },
+      { kind: "next", command: "next-input" },
+      undefined,
+      undefined,
+      [],
+      pauseOptions,
+    ),
+    { kind: "pause", until: "2026-09-22T10:00:01.000Z" },
+  );
+});
+
 test("ends a next loop when its command result is bad", () => {
   const next: LoopStatus = {
     ...status,
@@ -263,6 +340,38 @@ test("ends a next loop when its command result is bad", () => {
   assert.deepEqual(
     nextLoopAction(next, { state: "none" }, source, { kind: "empty" }, { inputs: {} }),
     { kind: "end", reason: "source_empty" },
+  );
+  assert.deepEqual(
+    nextLoopAction(next, { state: "none" }, source, undefined, undefined, [], { pauseMs: null }),
+    { kind: "end", reason: "source_failed", detail: "--next did not produce a result" },
+  );
+  assert.deepEqual(
+    nextLoopAction(
+      next,
+      { state: "none" },
+      source,
+      { kind: "output", result: { ok: true, inputs: { project: "other" } } },
+      { inputs: { project: "The project" } },
+    ),
+    {
+      kind: "end",
+      reason: "source_failed",
+      detail: 'input "project" is given by both --input and the input source',
+    },
+  );
+  assert.deepEqual(
+    nextLoopAction(
+      { ...next, fixedInputs: {} },
+      { state: "none" },
+      source,
+      { kind: "output", result: { ok: true, inputs: { extra: "value" } } },
+      { inputs: { issue: "The issue number" } },
+    ),
+    {
+      kind: "end",
+      reason: "source_failed",
+      detail: "--input extra is not declared by the Loopfile. Declared inputs: issue.",
+    },
   );
 });
 
@@ -296,7 +405,15 @@ test("starts list runs with the source set merged into fixed inputs", () => {
 
 test("ends when the source is empty", () => {
   assert.deepEqual(
-    nextLoopAction({ ...status, place: 3 }, { state: "completed", runId: "run-three" }),
+    nextLoopAction(
+      { ...status, place: 3 },
+      { state: "completed", runId: "run-three" },
+      undefined,
+      undefined,
+      undefined,
+      [],
+      pauseOptions,
+    ),
     { kind: "end", reason: "source_empty" },
   );
   assert.deepEqual(nextLoopAction({ ...status, place: 3 }, { state: "none" }), {

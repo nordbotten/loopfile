@@ -6,6 +6,7 @@ import { parseInputSet } from "../application/launch-inputs.ts";
 import { loopStatus } from "../application/loop-status.ts";
 import {
   type LastChild,
+  type NextLoopActionOptions,
   type NextSourceResult,
   nextLoopAction,
 } from "../application/next-loop-action.ts";
@@ -117,10 +118,18 @@ async function driveLoop(
       loopId,
       workflow,
       history,
+      created.pauseMs,
     );
 
     if (action.kind === "wait") {
-      await waitForChild(home, status.currentRunId ?? status.runIds.at(-1) ?? "", deps.pollMs);
+      await waitForChild(home, currentRunId(status), deps.pollMs);
+      continue;
+    }
+    if (action.kind === "pause") {
+      await appendLoopEvent(log, history, statusPath, {
+        type: "loop.paused",
+        until: action.until,
+      });
       continue;
     }
     if (action.kind === "end") return await appendEnd(log, history, statusPath, action);
@@ -212,12 +221,18 @@ async function nextAction(
   loopId: string,
   workflow: Workflow | undefined,
   history: readonly LoopEvent[],
+  pauseMs: number | null,
 ): Promise<ReturnType<typeof nextLoopAction>> {
+  const options: NextLoopActionOptions = { pauseMs };
   if (status.maxRuns !== null && status.runs >= status.maxRuns) {
-    return nextLoopAction(status, child, source, undefined, workflow, history);
+    return nextLoopAction(status, child, source, undefined, workflow, history, options);
+  }
+  const action = nextLoopAction(status, child, source, undefined, workflow, history, options);
+  if (source.kind !== "next" || action.kind !== "end" || action.reason !== "source_failed") {
+    return action;
   }
   const nextResult = await nextResultFor(source, child, repositoryPath, ownerEnv, loopId);
-  return nextLoopAction(status, child, source, nextResult, workflow, history);
+  return nextLoopAction(status, child, source, nextResult, workflow, history, options);
 }
 
 async function nextResultFor(
@@ -285,6 +300,10 @@ async function waitForPause(until: string | null): Promise<void> {
   if (delay > 0) await new Promise((resolve) => setTimeout(resolve, delay));
 }
 
+function currentRunId(status: LoopStatus): string {
+  return status.currentRunId ?? status.runIds.at(-1) ?? "";
+}
+
 async function lastChild(home: string, status: LoopStatus): Promise<LastChild> {
   const runId = status.currentRunId ?? status.runIds.at(-1);
   if (runId === undefined) return { state: "none" };
@@ -298,8 +317,13 @@ async function childState(home: string, runId: string): Promise<LastChild> {
   if (childStatus !== undefined && childStatus.state !== "running") {
     return { state: childStatus.state, runId };
   }
-  const alive = (await pingOwner(paths.socket)) === runId;
-  return { state: alive ? "running" : "crashed", runId };
+  if ((await pingOwner(paths.socket)) === runId) return { state: "running", runId };
+  // The run may have ended while the ping waited: its owner writes the final
+  // status before it closes the socket, so read the status again before
+  // calling the run crashed.
+  const final = await readChildStatus(paths.status);
+  if (final !== undefined && final.state !== "running") return { state: final.state, runId };
+  return { state: "crashed", runId };
 }
 
 async function waitForChild(home: string, runId: string, pollMs = CHILD_POLL_MS): Promise<void> {
