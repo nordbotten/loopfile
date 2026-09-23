@@ -43,7 +43,7 @@ import { ownerGoneMessage } from "../application/tail.ts";
 import { matchesTrust, parseTrustList } from "../application/trust.ts";
 import { renderTrustPrompt } from "../application/trust-prompt.ts";
 import { selectWorkspaceMode } from "../application/workspace-mode.ts";
-import type { Workflow } from "../domain/model.ts";
+import type { Workflow, WorkspaceMode } from "../domain/model.ts";
 import { loadDirectory, loadInput, loadThinText } from "./directory-loader.ts";
 import { classifyInput, type InputKind, readStdin } from "./input.ts";
 import {
@@ -702,10 +702,7 @@ export async function startRun(options: StartRunOptions): Promise<StartRunResult
   let paths: RunPaths;
   let targetFolder: string;
   try {
-    targetFolder =
-      workspaceMode === "here"
-        ? resolve(options.repository)
-        : await targetRepository(options.repository);
+    targetFolder = await targetFolderForRun(options.repository, workspaceMode);
     paths = await createRunDirectory({
       home,
       runId: options.runId,
@@ -739,6 +736,10 @@ export async function startRun(options: StartRunOptions): Promise<StartRunResult
     ownerKind: "run",
     readyTimeoutMs: options.readyTimeoutMs ?? READY_TIMEOUT_MS,
   });
+}
+
+async function targetFolderForRun(repository: string, mode: WorkspaceMode): Promise<string> {
+  return mode === "here" ? resolve(repository) : targetRepository(repository);
 }
 
 async function workflowForStart(
