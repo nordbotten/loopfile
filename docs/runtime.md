@@ -4,7 +4,8 @@ This page is for Loopfile authors. It says what the runtime does with a
 [manifest](manifest-v1.md) once a run starts. The manifest page lists every field.
 The [format page](loopfile-format.md) covers the source directory, `.loop` files
 and upgrade. This page does not repeat them. The terms are in
-[`CONTEXT.md`](../CONTEXT.md).
+[`CONTEXT.md`](../CONTEXT.md). For remote sources and trust, see
+[Remote Loopfiles](remote-loopfiles.md).
 
 Every example on this page loads with the real loader.
 
