@@ -104,7 +104,9 @@ directory. It has no version of its own: the version is in `manifest.yaml`.
 
 ### Make and open one
 
-`loopfile pack <directory> [-o <path>] [--force]` writes a packed `.loop`.
+`loopfile pack <directory> [-o <path>] [--force]` writes a packed `.loop`. Pack
+a Loopfile to share it as one file. You do not need to pack it to keep a run
+the same: every run already works from its own copy.
 
 - The directory is loaded first. A manifest that is not valid, or is older than
   this tool reads, stops the command and no file is written. For an older

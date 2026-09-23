@@ -253,7 +253,9 @@ outputs: { feedback: [changes_requested] }   # required only for these outcomes
 Every outcome in the map form must be a key of `on`. A step with no `on` can use
 only the list form. A missing output fails the attempt and takes `onFailure`;
 only a put by this attempt counts, and a value from an earlier attempt does not.
-A step may put keys under its own ID that `outputs` does not name. The model
+A step may put keys under its own ID that `outputs` does not name, so leave out
+a key that the step puts only sometimes. `key: []` in the map form does not
+make a key optional: it requires the key on every clean exit. The model
 normalizes both forms to a map, where an empty outcome list means every clean
 exit. v1 has no output schema, and no step-level field limiting which keys a step
 may read. The top-level `inputs` block is a different thing: it says what the
