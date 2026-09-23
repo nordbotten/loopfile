@@ -9,6 +9,21 @@ import { makeGitFixture } from "./remote-fixture.ts";
 
 const run = promisify(execFile);
 
+test("fetchRemote reports when Git is missing", async () => {
+  await assert.rejects(
+    fetchRemote(
+      {
+        kind: "remote",
+        host: "github.com",
+        repo: "acme/loops",
+        url: "https://github.com/acme/loops",
+      },
+      { ...process.env, PATH: "" },
+    ),
+    /spawn git ENOENT/,
+  );
+});
+
 test("fetchRemote checks out the default branch at its full SHA", async () => {
   const fixture = await makeGitFixture({ "manifest.yaml": "formatVersion: 1\nsteps: []\n" });
   let fetched: Awaited<ReturnType<typeof fetchRemote>> | undefined;
