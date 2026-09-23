@@ -5,6 +5,7 @@ import { hostname } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import { promisify } from "node:util";
+import { pruneCommand } from "./prune-command.ts";
 import { removeCommand } from "./remove-command.ts";
 import { runPaths } from "./run-directory.ts";
 import { startRunOwner } from "./run-owner.ts";
@@ -26,7 +27,7 @@ async function setup() {
   const base = join(root, String(number));
   const repo = join(base, "repo");
   const home = join(base, "home");
-  const runId = `20260921-120000-${String(number).padStart(4, "0")}`;
+  const runId = "20260921-120000-aaaa";
   const paths = runPaths(home, runId);
   await mkdir(repo, { recursive: true });
   await run("git", ["init", "-q", "-b", "main"], { cwd: repo, env: gitEnv });
@@ -48,6 +49,9 @@ async function setup() {
         eventFormatVersion: 1,
         modelDigest: "digest",
         targetFolder: repo,
+        workspacePath: paths.workspace,
+        workspaceMode: "isolate",
+        isolateKind: "worktree",
         baseCommit: "0".repeat(40),
         branch: `loopfile/${runId}`,
         inputs: [],
@@ -90,11 +94,13 @@ test("removes a clean workspace and keeps the run branch", async () => {
 test("removes a copy without Git and does not report a branch", async () => {
   const run = await setup();
   await rm(run.paths.workspace, { recursive: true, force: true });
-  await mkdir(run.paths.workspace);
-  await writeFile(join(run.paths.workspace, "output.txt"), "keep until explicit removal\n");
+  const workspacePath = join(run.home, "recorded-copy");
+  await mkdir(workspacePath);
+  await writeFile(join(workspacePath, "output.txt"), "keep until explicit removal\n");
   const lines = (await readFile(run.paths.events, "utf8")).trimEnd().split("\n");
   const created = JSON.parse(lines[0] ?? "{}") as Record<string, unknown>;
-  created.workspacePath = run.paths.workspace;
+  created.workspacePath = workspacePath;
+  created.targetFolder = join(run.home, "missing-target");
   created.workspaceMode = "isolate";
   created.isolateKind = "copy";
   delete created.branch;
@@ -106,6 +112,8 @@ test("removes a copy without Git and does not report a branch", async () => {
   assert.equal(result.code, 0, result.err);
   assert.equal(result.err, `removed: ${run.runId}\n`);
   await assert.rejects(stat(run.paths.root));
+  await assert.rejects(stat(workspacePath));
+  await assert.rejects(stat(run.paths.workspace));
 });
 
 test("removes an empty workspace without a recorded Target folder or Git", async () => {
@@ -126,7 +134,36 @@ test("removes an empty workspace without a recorded Target folder or Git", async
   assert.equal(result.code, 0, result.err);
   assert.equal(result.err, `removed: ${run.runId}\n`);
   await assert.rejects(stat(run.paths.root));
+  await assert.rejects(stat(run.paths.workspace));
   assert.equal((await stat(run.repo)).isDirectory(), true);
+});
+
+test("accepts --force for copy and empty workspaces", async () => {
+  for (const mode of ["copy", "empty"] as const) {
+    const run = await setup();
+    await runGit(run.repo, "worktree", "remove", "--force", run.paths.workspace);
+    await mkdir(run.paths.workspace);
+    await writeFile(join(run.paths.workspace, "uncommitted.txt"), "discard\n");
+    const lines = (await readFile(run.paths.events, "utf8")).trimEnd().split("\n");
+    const created = JSON.parse(lines[0] ?? "{}") as Record<string, unknown>;
+    created.workspacePath = run.paths.workspace;
+    created.workspaceMode = mode === "empty" ? "empty" : "isolate";
+    if (mode === "copy") {
+      created.isolateKind = "copy";
+    } else {
+      delete created.targetFolder;
+      delete created.isolateKind;
+    }
+    delete created.branch;
+    delete created.baseCommit;
+    lines[0] = JSON.stringify(created);
+    await writeFile(run.paths.events, `${lines.join("\n")}\n`);
+
+    const result = await remove({ ...run.env, PATH: "" }, run.runId, "--force");
+    assert.equal(result.code, 0, result.err);
+    assert.equal(result.err, `removed: ${run.runId}\n`);
+    await assert.rejects(stat(run.paths.root));
+  }
 });
 
 test("removing a here run preserves the target folder without Git", async () => {
@@ -144,7 +181,7 @@ test("removing a here run preserves the target folder without Git", async () => 
   lines[0] = JSON.stringify(created);
   await writeFile(run.paths.events, `${lines.join("\n")}\n`);
 
-  const result = await remove({ ...run.env, PATH: "" }, run.runId);
+  const result = await remove({ ...run.env, PATH: "" }, run.runId, "--force");
   assert.equal(result.code, 0, result.err);
   assert.equal(result.err, `removed: ${run.runId}\n`);
   assert.equal(await readFile(userFile, "utf8"), "keep me\n");
@@ -191,20 +228,105 @@ test("prunes a missing workspace before removing the run folder", async () => {
   await rm(run.paths.workspace, { recursive: true });
   const result = await remove(run.env, run.runId);
   assert.equal(result.code, 0, result.err);
-  assert.match(result.err, /^removed: /);
+  assert.equal((result.err.match(/^warning:/gm) ?? []).length, 1);
+  assert.match(result.err, /^warning: workspace is gone/);
+  assert.match(result.err, new RegExp(`removed: ${run.runId}`));
   assert.doesNotMatch(await runGit(run.repo, "worktree", "list"), new RegExp(run.paths.workspace));
   assert.match(await runGit(run.repo, "branch", "--list", `loopfile/${run.runId}`), /loopfile/);
 });
 
-test("removes a run with a missing repository and warns once", async () => {
+test("warns once and removes a run whose recorded workspace is already gone", async () => {
   const run = await setup();
-  await rm(run.repo, { recursive: true });
+  await rm(run.paths.workspace, { recursive: true });
   const result = await remove(run.env, run.runId);
   assert.equal(result.code, 0, result.err);
   assert.equal((result.err.match(/^warning:/gm) ?? []).length, 1);
-  assert.match(result.err, /warning: target folder is gone/);
+  assert.match(result.err, /warning: workspace is gone/);
   assert.match(result.err, new RegExp(`removed: ${run.runId}`));
   await assert.rejects(stat(run.paths.root));
+});
+
+test("here removal does not inspect a missing user folder", async () => {
+  const run = await setup();
+  await runGit(run.repo, "worktree", "remove", "--force", run.paths.workspace);
+  const lines = (await readFile(run.paths.events, "utf8")).trimEnd().split("\n");
+  const created = JSON.parse(lines[0] ?? "{}") as Record<string, unknown>;
+  created.workspacePath = run.repo;
+  created.workspaceMode = "here";
+  delete created.isolateKind;
+  delete created.branch;
+  delete created.baseCommit;
+  lines[0] = JSON.stringify(created);
+  await writeFile(run.paths.events, `${lines.join("\n")}\n`);
+  await rm(run.repo, { recursive: true });
+
+  const result = await remove({ ...run.env, PATH: "" }, run.runId);
+  assert.equal(result.code, 0, result.err);
+  assert.equal(result.err, `removed: ${run.runId}\n`);
+  await assert.rejects(stat(run.paths.root));
+});
+
+test("prune removes mixed workspace modes and skips only a dirty worktree", async () => {
+  const worktree = await setup();
+  await writeFile(join(worktree.paths.workspace, "uncommitted.txt"), "keep\n");
+  const runIds = ["20260921-120001-aaaa", "20260921-120001-bbbb", "20260921-120001-cccc"];
+  const [copyId, emptyId, hereId] = runIds;
+  assert.ok(copyId && emptyId && hereId);
+  const userFile = join(worktree.repo, "user.txt");
+  await writeFile(userFile, "preserve\n");
+  const at = new Date().toISOString();
+
+  for (const [runId, mode] of [
+    [copyId, "isolate"],
+    [emptyId, "empty"],
+    [hereId, "here"],
+  ] as const) {
+    const paths = runPaths(worktree.home, runId);
+    await mkdir(paths.root, { recursive: true });
+    const workspacePath = mode === "here" ? worktree.repo : paths.workspace;
+    if (mode !== "here") {
+      await mkdir(workspacePath);
+      await writeFile(join(workspacePath, "uncommitted.txt"), "discard\n");
+      if (mode === "isolate") await rm(workspacePath, { recursive: true });
+    }
+    await writeFile(
+      paths.events,
+      [
+        {
+          seq: 1,
+          at,
+          type: "run.created",
+          runId,
+          eventFormatVersion: 1,
+          modelDigest: "digest",
+          workspacePath,
+          workspaceMode: mode,
+          ...(mode === "isolate" ? { targetFolder: worktree.repo, isolateKind: "copy" } : {}),
+          ...(mode === "here" ? { targetFolder: worktree.repo } : {}),
+          inputs: [],
+        },
+        { seq: 2, at, type: "run.ended", result: "success", reason: "end_state" },
+      ]
+        .map((event) => `${JSON.stringify(event)}\n`)
+        .join(""),
+    );
+  }
+
+  let report = "";
+  const code = await pruneCommand(
+    ["prune"],
+    () => undefined,
+    (text) => (report += text),
+    worktree.env,
+  );
+  assert.equal(code, 1, report);
+  assert.match(report, /removed: 3/);
+  assert.match(report, /skipped: 1/);
+  assert.equal((report.match(/^warning:/gm) ?? []).length, 1);
+  assert.equal((await stat(worktree.paths.root)).isDirectory(), true);
+  for (const runId of runIds)
+    await assert.rejects(stat(runPaths(worktree.home, runId).root), runId);
+  assert.equal(await readFile(userFile, "utf8"), "preserve\n");
 });
 
 test("refuses leftover processes unless asked to kill them", async () => {

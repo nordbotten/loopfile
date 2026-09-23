@@ -99,7 +99,7 @@ async function pruneAt(
     return 0;
   }
 
-  const result = await removeRuns(home, runIds);
+  const result = await removeRuns(home, runIds, err);
   err(
     `removed: ${result.removed}\nskipped: ${result.skipped.length}\n${result.skipped.join("\n")}${result.skipped.length === 0 ? "" : "\n"}freed: ${formatBytes(result.freed)}\n`,
   );
@@ -112,7 +112,11 @@ interface PruneResult {
   readonly freed: number;
 }
 
-async function removeRuns(home: string, runIds: readonly string[]): Promise<PruneResult> {
+async function removeRuns(
+  home: string,
+  runIds: readonly string[],
+  warn: (text: string) => void,
+): Promise<PruneResult> {
   const skipped: string[] = [];
   let removed = 0;
   let freed = 0;
@@ -123,6 +127,7 @@ async function removeRuns(home: string, runIds: readonly string[]): Promise<Prun
     if (result.ok) {
       removed += 1;
       freed += bytes;
+      if (result.warning !== undefined) warn(result.warning);
     } else {
       skipped.push(`skipped: ${runId} ${result.failure.code} ${paths.workspace}`);
     }
