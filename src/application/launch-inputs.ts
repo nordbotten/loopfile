@@ -6,7 +6,7 @@
  * key `input.<name>` before the first step starts.
  */
 
-import { NAME_PATTERN } from "../domain/model.ts";
+import { NAME_PATTERN, type WorkspaceMode } from "../domain/model.ts";
 
 export type LaunchInputs = Readonly<Record<string, string>>;
 
@@ -144,6 +144,8 @@ export interface LaunchRequest {
   readonly sourceText?: string;
   readonly repository: string;
   readonly inputs: LaunchInputs;
+  /** Resolved mode for a launch, or the loop's CLI override for child runs. */
+  readonly workspaceMode?: WorkspaceMode;
   /** Overrides the basename of the source in status and prompt facts. */
   readonly loopfileName?: string;
   /** Set by an in-process loop owner, never by a CLI flag. */
@@ -176,6 +178,7 @@ function launchRequest(value: unknown): LaunchRequest | undefined {
     kind: value.kind,
     repository: value.repository,
     inputs: value.inputs,
+    ...(value.workspaceMode === undefined ? {} : { workspaceMode: value.workspaceMode }),
     loopfileName: value.loopfileName,
     ...optionalLoopFields(value.loopId, value.loopIndex),
   };
@@ -183,12 +186,23 @@ function launchRequest(value: unknown): LaunchRequest | undefined {
 
 function isLaunchRequest(value: unknown): value is LaunchRequest {
   if (!isRecord(value)) return false;
-  const { source, sourceText, kind, repository, inputs, loopfileName, loopId, loopIndex } = value;
+  const {
+    source,
+    sourceText,
+    kind,
+    repository,
+    inputs,
+    workspaceMode,
+    loopfileName,
+    loopId,
+    loopIndex,
+  } = value;
   return (
     typeof source === "string" &&
     typeof repository === "string" &&
     isKind(kind) &&
     isInputs(inputs) &&
+    validWorkspaceMode(workspaceMode) &&
     validSourceText(sourceText, kind) &&
     validLoopfileName(loopfileName) &&
     validLoopId(loopId) &&
@@ -212,6 +226,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function validSourceText(value: unknown, kind: LaunchRequest["kind"]): value is string | undefined {
   return value === undefined || (kind === "thin" && typeof value === "string");
+}
+
+function validWorkspaceMode(value: unknown): boolean {
+  return value === undefined || value === "isolate";
 }
 
 function isKind(value: unknown): value is LaunchRequest["kind"] {

@@ -322,8 +322,9 @@ step for each cause, `new` also marks values that another step has already
 handled. Test `$run.previous.data.<step>.<output>` to find the value that sent
 the run here, and `newest` to find it in the history. `$history.input.<name>` has one entry
 with empty `attemptId` and `outcome`. `$run` gives `runId`, `loopfileName`,
-`startedAt`, `targetFolder`, `branch`, `baseCommit`, `transitions`,
-`maxTransitions`, and `runTimeout`; its two limits are `""` when omitted.
+`startedAt`, `targetFolder`, `workspace`, `workspaceMode`, `branch`, `baseCommit`,
+`transitions`, `maxTransitions`, and
+`runTimeout`; its two limits are `""` when omitted.
 `$run.attempts` lists every earlier attempt, oldest first, without the running
 one. Its entries have `stepId`, `attemptId`, `number` (the visit number for its
 step), `result`, `reason`, `outcome`, `message`, `startedAt`, `index` (from 1),
@@ -386,13 +387,19 @@ loopfile ./fix.loop --input issue=42
 
 ## Workspace lifecycle
 
-A run has one workspace, and all steps work in it. It is a Git worktree of the
-target repository, the Git repository that holds the current directory when you
-launch.
+A run has one workspace, and all steps work in it. The optional top-level
+`workspace` field selects its mode; `--workspace <mode>` on launch or `loop`
+overrides it. `isolate` is the only accepted mode in this version and is the
+default. `loopfile check` validates the mode word without inspecting Git or the
+target folder.
+
+An isolated workspace is a Git worktree of the target repository, the Git
+repository that holds the current directory when you launch.
 
 1. The run owner creates the workspace at `runs/<runid>/workspace`. It starts from
    the `HEAD` of the target repository, on a new branch `loopfile/<runid>`.
-   This is the run branch.
+   This is the run branch. The launch confirmation names the selected workspace
+   (`workspace: <mode> · <path>`) and branch.
 2. Uncommitted changes in the target repository are not carried across. Launch
    prints one warning with the count of changed files and goes on.
 3. When the run ends in success, the run owner removes the workspace with
@@ -401,6 +408,11 @@ launch.
 4. A run that ends in failure, is cancelled, or crashes keeps its workspace.
 5. Loopfile never deletes the run branch. Commit inside the workspace, in a step,
    if you want the work to survive on the branch.
+
+`run.created` records the target folder, workspace path and mode, plus
+`isolateKind: worktree`, branch and base commit. `loopfile result <runid>`
+shows target, workspace, branch and base commit; `loopfile result <runid> --json`
+adds `workspace` and `workspaceMode` without changing its format version.
 
 ## Operator commands
 

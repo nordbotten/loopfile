@@ -271,6 +271,7 @@ async function startNextChild(
     sourceKind: "directory",
     repository: driver.created.repositoryPath,
     inputs: action.inputSet,
+    workspaceMode: driver.created.workspaceMode,
     runId,
     loopId: driver.loopId,
     loopIndex: index,

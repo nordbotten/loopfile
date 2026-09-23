@@ -30,6 +30,7 @@ import {
 import type { LoadError, LoadResult } from "../application/load-workflow.ts";
 import {
   type OperatorErrorCode,
+  renderLaunchConfirmation,
   renderOperatorConfirmation,
   renderOperatorFailure,
   renderOperatorFailureLines,
@@ -39,6 +40,7 @@ import { endedHelp, runEndFromStatus } from "../application/run-end.ts";
 import { parseSource, type RemoteSource, SourceParseError } from "../application/source.ts";
 import { ownerGoneMessage } from "../application/tail.ts";
 import { matchesTrust, parseTrustList } from "../application/trust.ts";
+import { selectWorkspaceMode } from "../application/workspace-mode.ts";
 import type { Workflow } from "../domain/model.ts";
 import { loadDirectory, loadInput, loadThinText } from "./directory-loader.ts";
 import { classifyInput, type InputKind, readStdin } from "./input.ts";
@@ -51,7 +53,13 @@ import {
 } from "./monitor.ts";
 import { ownerLogHelp } from "./owner-log.ts";
 import { type FetchedRemote, fetchRemote, RemoteFetchError } from "./remote-fetch.ts";
-import { createRunDirectory, loopfileHome, newRunId, type RunPaths } from "./run-directory.ts";
+import {
+  createRunDirectory,
+  loopfileHome,
+  newRunId,
+  type RunPaths,
+  runPaths,
+} from "./run-directory.ts";
 import type { TrustIo } from "./trust-prompt.ts";
 import {
   checkManifestVersion,
@@ -63,7 +71,7 @@ type Out = (text: string) => void;
 type CheckIo = Pick<LaunchIo, "err" | "upgrade">;
 
 const USAGE =
-  "Usage: loopfile <directory|file.loop|github:owner/repo[/path][@ref]|git+https://…|git+ssh://…|-> [-d | --detach] [--trust] [--input <name>=<value>]...";
+  "Usage: loopfile <directory|file.loop|github:owner/repo[/path][@ref]|git+https://…|git+ssh://…|-> [-d | --detach] [--trust] [--workspace <mode>] [--input <name>=<value>]...";
 const HELP = `${USAGE}
 
 Run a Loopfile in the background. The source may be a directory, a thin file,
@@ -167,6 +175,9 @@ async function launchSource(
   const source = await prepareLaunchSource(sourceName, io, options.readStdin ?? readStdin);
   if (!source.ok) return source.exitCode;
 
+  const workspace = selectWorkspaceMode(args.workspace, source.workflow.workspaceMode);
+  if (!workspace.ok) return refuse(io, workspace.message, 2);
+
   const inputs = resolveInputs(args.inputs, source.workflow);
   if (!inputs.ok) {
     return refuse(io, inputs.messages, 2, "bad_argument", inputHelp(source.workflow.inputDefaults));
@@ -187,6 +198,7 @@ async function launchSource(
     sourceText: source.text,
     repository: options.repository ?? process.cwd(),
     inputs: inputs.inputs,
+    workspaceMode: workspace.mode,
     loopfileName,
     ...optionalLoopFields(options.loopId, options.loopIndex),
   };
@@ -447,6 +459,7 @@ interface LaunchArgs {
   readonly source: string | undefined;
   readonly detach: boolean;
   readonly inputs: readonly string[];
+  readonly workspace: string | undefined;
   readonly help: boolean;
   readonly trust: boolean;
 }
@@ -459,6 +472,7 @@ function parseLaunchArgs(argv: readonly string[]): LaunchArgs | undefined {
         detach: { type: "boolean", short: "d" },
         help: { type: "boolean", short: "h" },
         input: { type: "string", multiple: true },
+        workspace: { type: "string" },
         trust: { type: "boolean" },
       },
       allowPositionals: true,
@@ -470,6 +484,7 @@ function parseLaunchArgs(argv: readonly string[]): LaunchArgs | undefined {
       source,
       detach: values.detach === true,
       inputs: values.input ?? [],
+      workspace: values.workspace,
       help: values.help === true,
       trust: values.trust === true,
     };
@@ -551,6 +566,7 @@ async function start(
     workflow,
     repository: request.repository,
     inputs: request.inputs,
+    workspaceMode: request.workspaceMode,
     runId: newRunId(),
     loopId: request.loopId,
     loopIndex: request.loopIndex,
@@ -560,7 +576,19 @@ async function start(
     readyTimeoutMs: options.readyTimeoutMs,
   });
   if (!started.ok) return refuseStart(io, started.failure);
-  return await continueAfterReady(started.runId, detach, "started", io, env, options);
+  return await continueAfterReady(
+    started.runId,
+    detach,
+    "started",
+    io,
+    env,
+    options,
+    renderLaunchConfirmation(
+      started.runId,
+      request.workspaceMode ?? "isolate",
+      runPaths(loopfileHome(env as NodeJS.ProcessEnv), started.runId).workspace,
+    ),
+  );
 }
 
 /** The detached start seam used by `loopfile <source>` and loop owners. */
@@ -572,6 +600,7 @@ export interface StartRunOptions {
   readonly workflow?: Workflow;
   readonly repository: string;
   readonly inputs: LaunchInputs;
+  readonly workspaceMode?: LaunchRequest["workspaceMode"];
   readonly runId: string;
   readonly loopId?: string;
   readonly loopIndex?: number;
@@ -638,6 +667,7 @@ export async function startRun(options: StartRunOptions): Promise<StartRunResult
     ...(options.sourceText === undefined ? {} : { sourceText: options.sourceText }),
     repository: options.repository,
     inputs: inputs.inputs,
+    workspaceMode: options.workspaceMode,
     loopfileName: options.loopfileName,
     ...optionalLoopFields(options.loopId, options.loopIndex),
   };
@@ -825,9 +855,10 @@ async function continueAfterReady(
   io: Pick<LaunchIo, "out" | "err" | "monitor">,
   env: Record<string, string | undefined>,
   options: LaunchOptions,
+  confirmationText?: string,
 ): Promise<number> {
   io.out(`${runId}\n`);
-  io.err(renderOperatorConfirmation({ [confirmation]: runId }));
+  io.err(confirmationText ?? renderOperatorConfirmation({ [confirmation]: runId }));
 
   if (detach) return 0;
   if (hasTerminal(io.monitor)) return await attachMonitor(runId, io.monitor, env, options.monitor);

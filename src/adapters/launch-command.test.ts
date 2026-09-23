@@ -1381,6 +1381,49 @@ test("a directory, a thin .loop and a packed .loop run the same and give input.i
   assert.deepEqual(shapes[2], shapes[0]);
 });
 
+test("--workspace selects the run mode and confirms its workspace and branch", async () => {
+  const manifest = MANIFEST.replace("formatVersion: 1", "formatVersion: 1\nworkspace: isolate");
+  const { repo, source, home, env } = await setup(manifest);
+  const s = session();
+  assert.equal(
+    await launchCommand(
+      [source, "--workspace", "isolate", "--input", "issue=42", "-d"],
+      cli,
+      s.io,
+      env,
+      { repository: repo },
+    ),
+    0,
+    s.err(),
+  );
+  const runId = s.out().trim();
+  const paths = runPaths(home, runId);
+  assert.equal(
+    s.err(),
+    `started: ${runId}\nworkspace: isolate · ${paths.workspace}\nbranch: loopfile/${runId}\n`,
+  );
+  const created = (await waitForEnd(home, runId)).find((event) => event.type === "run.created");
+  assert.deepEqual(
+    created?.type === "run.created"
+      ? [created.workspacePath, created.workspaceMode, created.isolateKind]
+      : undefined,
+    [paths.workspace, "isolate", "worktree"],
+  );
+});
+
+test("launch rejects unsupported workspace modes before making a run", async () => {
+  const { repo, source, home, env } = await setup();
+  const s = session();
+  assert.equal(
+    await launchCommand([source, "--workspace", "here", "-d"], cli, s.io, env, {
+      repository: repo,
+    }),
+    2,
+  );
+  assert.match(s.err(), /--workspace must be one of: isolate/);
+  await assert.rejects(stat(join(home, "runs")));
+});
+
 test("a validation error stops before any run folder is made", async () => {
   const { repo, source, home, env } = await setup("formatVersion: 1\nsteps: []\n");
   const s = session();

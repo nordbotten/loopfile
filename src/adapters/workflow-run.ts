@@ -53,6 +53,7 @@ import {
   modelDigest,
   START_FAILED_END,
 } from "../application/workflow-run.ts";
+import { selectWorkspaceMode } from "../application/workspace-mode.ts";
 import {
   EVENT_FORMAT_VERSION,
   type LaunchInputRecord,
@@ -67,6 +68,7 @@ import {
   type Step,
   type StepId,
   type Workflow,
+  type WorkspaceMode,
 } from "../domain/model.ts";
 import { startAgentStep } from "./agent-step.ts";
 import { type AttemptPaths, createAttemptDirectory } from "./attempt-directory.ts";
@@ -95,6 +97,7 @@ import {
   keptWorkspaceMessage,
   removeWorkspace,
   type Workspace,
+  workspaceFromCreated,
 } from "./workspace.ts";
 
 /** Thrown when a run cannot go from start to end. The message says why. */
@@ -119,6 +122,8 @@ export interface ExecuteRunOptions {
   /** The loop that started the run, when this is a loop child. */
   readonly loopId?: string;
   readonly loopIndex?: number;
+  /** The mode selected by the launch flag, when one was passed. */
+  readonly workspaceMode?: WorkspaceMode;
   /** Overrides the source basename in status and prompt facts. */
   readonly loopfileName?: string;
   /** The target repository the workspace is made from. */
@@ -226,12 +231,7 @@ export async function resumeRun(options: ResumeRunOptions): Promise<ExecutedRun>
   });
   try {
     const created = (await readEvents(paths))[0] as RunCreated;
-    const workspace: Workspace = {
-      path: paths.workspace,
-      repositoryPath: created.targetFolder,
-      baseCommit: created.baseCommit,
-      branch: created.branch,
-    };
+    const workspace = workspaceFromCreated(created, paths.workspace);
     const run = { ...options, source: paths.loopfile, repository: created.targetFolder };
     return await runSteps(run, owner, { workflow, workspace }, await loopfileNameOf(paths), (t) =>
       resumeFrom(workflow, t),
@@ -256,12 +256,7 @@ export async function continueRun(options: ContinueRunOptions): Promise<Executed
   });
   try {
     const created = history[0] as RunCreated;
-    const workspace: Workspace = {
-      path: paths.workspace,
-      repositoryPath: created.targetFolder,
-      baseCommit: created.baseCommit,
-      branch: created.branch,
-    };
+    const workspace = workspaceFromCreated(created, paths.workspace);
     const run = { ...options, source: paths.loopfile, repository: created.targetFolder };
     return await runSteps(
       run,
@@ -347,6 +342,8 @@ async function prepare(
   paths: RunPaths,
 ): Promise<{ readonly prepared: Prepared; readonly created: NewEvent }> {
   const workflow = await loadRunWorkflow(options, paths);
+  const selectedMode = selectWorkspaceMode(options.workspaceMode, workflow.workspaceMode);
+  if (!selectedMode.ok) throw new WorkflowRunError(selectedMode.message);
   const inputs = await writeInputs(options.inputs ?? {}, paths.inputs);
   const workspace = await createWorkspace({
     repository: options.repository,
@@ -361,6 +358,9 @@ async function prepare(
       eventFormatVersion: EVENT_FORMAT_VERSION,
       modelDigest: modelDigest(workflow),
       targetFolder: workspace.repositoryPath,
+      workspacePath: workspace.path,
+      workspaceMode: selectedMode.mode,
+      isolateKind: "worktree",
       baseCommit: workspace.baseCommit,
       branch: workspace.branch,
       inputs,

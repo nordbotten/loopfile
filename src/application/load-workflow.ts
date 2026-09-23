@@ -24,6 +24,7 @@ import {
   type StepId,
   type Target,
   type Workflow,
+  type WorkspaceMode,
 } from "../domain/model.ts";
 import { durationMillis } from "./duration.ts";
 import { checkPrompt, EACH_ITEM_SCOPE, HISTORY_ROOT, type PromptRead } from "./prompt-check.ts";
@@ -66,7 +67,14 @@ export function inlinePromptFile(stepId: StepId): string {
   return `../prompts/${stepId}.md`;
 }
 
-const TOP_FIELDS = ["formatVersion", "steps", "inputs", "maxTransitions", "runTimeout"];
+const TOP_FIELDS = [
+  "formatVersion",
+  "steps",
+  "inputs",
+  "maxTransitions",
+  "runTimeout",
+  "workspace",
+];
 const COMMON_FIELDS = ["id", "kind", "on", "onFailure", "outputs", "maxAttempts", "timeout"];
 const HARNESS_FIELDS = ["harness", "prompt", "promptFile", "model", "effort", "args"];
 const KIND_FIELDS: Readonly<Record<string, readonly string[]>> = {
@@ -150,6 +158,7 @@ function buildWorkflow(
     if (!TOP_FIELDS.includes(key)) report(key, `unknown field \`${key}\``);
   }
   const inputs = readInputs(manifest.inputs, report);
+  const workspaceMode = readWorkspaceMode(manifest, report);
   const limits = readLimits(manifest, report);
   const rawSteps = manifest.steps;
   if (!Array.isArray(rawSteps) || rawSteps.length === 0) {
@@ -164,21 +173,30 @@ function buildWorkflow(
   if (built.length !== steps.length || ctx.stepIds.size !== built.length) return undefined;
   checkPlaceholders(ctx.prompts, built, inputs.descriptions, report);
   checkReachable(built, report);
-  return workflowModel(inputs, limits, built);
+  return workflowModel(inputs, limits, built, workspaceMode);
 }
 
 function workflowModel(
   inputs: InputDeclarations,
   limits: { maxTransitions?: number; runTimeoutMs?: Millis; declaredRunTimeout?: string },
   steps: readonly Step[],
+  workspaceMode: WorkspaceMode | undefined,
 ): Workflow {
   return {
     formatVersion: FORMAT_VERSION,
+    ...(workspaceMode === undefined ? {} : { workspaceMode }),
     inputs: inputs.descriptions,
     ...optionalInputDefaults(inputs.defaults),
     ...limits,
     steps,
   };
+}
+
+function readWorkspaceMode(manifest: Raw, report: Report): WorkspaceMode | undefined {
+  if (!Object.hasOwn(manifest, "workspace")) return undefined;
+  if (manifest.workspace === "isolate") return "isolate";
+  report("workspace", "workspace must be one of: isolate");
+  return undefined;
 }
 
 function optionalInputDefaults(defaults: Readonly<Record<string, string>>): {
@@ -666,6 +684,8 @@ const RUN_FIELDS = new Set([
   "loopfileName",
   "startedAt",
   "targetFolder",
+  "workspace",
+  "workspaceMode",
   "branch",
   "baseCommit",
   "transitions",

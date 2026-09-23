@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   type OperatorErrorCode,
+  renderLaunchConfirmation,
   renderOperatorConfirmation,
   renderOperatorFailure,
   renderOperatorFailureLines,
@@ -62,6 +63,13 @@ test("operator failure values escape and quote non-plain values", () => {
         'error: "  path  "\nerror: "path\\\\name\\""\ncode: invalid_manifest\nhelp: " Fix it "\n',
       exitCode: 1,
     },
+  );
+});
+
+test("launch confirmation renders workspace and branch facts", () => {
+  assert.equal(
+    renderLaunchConfirmation("run-1", "isolate", "/runs/run-1/workspace"),
+    "started: run-1\nworkspace: isolate · /runs/run-1/workspace\nbranch: loopfile/run-1\n",
   );
 });
 

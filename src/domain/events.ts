@@ -15,7 +15,15 @@
  * owner's append path (#28).
  */
 
-import type { InputName, LoopId, Outcome, OutputName, StepId, Target } from "./model.ts";
+import type {
+  InputName,
+  LoopId,
+  Outcome,
+  OutputName,
+  StepId,
+  Target,
+  WorkspaceMode,
+} from "./model.ts";
 import type { StatusMetrics } from "./status.ts";
 
 /** The event format version this tool writes (ADR 0006). */
@@ -54,9 +62,13 @@ export interface RunCreated extends EventBase {
   readonly eventFormatVersion: number;
   readonly modelDigest: string;
   readonly targetFolder: string;
-  readonly baseCommit: string;
-  /** `loopfile/<runid>`. */
-  readonly branch: string;
+  /** Older run logs omit workspace fields; future non-Git modes omit branch facts. */
+  readonly workspacePath?: string;
+  readonly workspaceMode?: WorkspaceMode;
+  readonly isolateKind?: "worktree";
+  readonly baseCommit?: string;
+  /** `loopfile/<runid>` for modes that create a branch. */
+  readonly branch?: string;
   readonly inputs: readonly LaunchInputRecord[];
   readonly loopId?: string;
   readonly loopIndex?: number;
@@ -301,6 +313,8 @@ export interface LoopCreated extends EventBase {
   readonly loopId: LoopId;
   readonly eventFormatVersion: typeof LOOP_EVENT_FORMAT_VERSION;
   readonly repositoryPath: string;
+  /** A CLI override carried to every child run. */
+  readonly workspaceMode?: WorkspaceMode;
   readonly loopfileName: string;
   readonly source: LoopSource;
   readonly fixedInputs: InputSet;

@@ -18,6 +18,7 @@
 import { execFile } from "node:child_process";
 import { dirname } from "node:path";
 import { promisify } from "node:util";
+import type { RunCreated } from "../domain/events.ts";
 
 const run = promisify(execFile);
 
@@ -33,6 +34,15 @@ export interface Workspace {
   readonly baseCommit: string;
   /** `loopfile/<runid>`. Loopfile never deletes it. */
   readonly branch: string;
+}
+
+export function workspaceFromCreated(created: RunCreated, fallbackPath: string): Workspace {
+  return {
+    path: created.workspacePath ?? fallbackPath,
+    repositoryPath: created.targetFolder,
+    baseCommit: created.baseCommit ?? "",
+    branch: created.branch ?? "",
+  };
 }
 
 export interface CreateWorkspaceOptions {
