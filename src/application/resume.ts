@@ -15,7 +15,7 @@ import {
   type RunEvent,
 } from "../domain/events.ts";
 import { type EndState, isEndState, type StepId, type Workflow } from "../domain/model.ts";
-import { type RunState, replay } from "./replay.ts";
+import { isCompleted, isInternalError, type RunResult, type RunState, replay } from "./replay.ts";
 import type { AttemptEndFields } from "./workflow-run.ts";
 
 /** Where a resumed run goes on from. */
@@ -56,9 +56,18 @@ export function resumeRefusal(
   modelDigest: string,
 ): string | undefined {
   const state = replay(events);
-  const created = events[0] as RunCreated;
   const ended = endedRefusal(state, events);
   if (ended !== undefined) return ended;
+  return runModelRefusal(events, modelDigest);
+}
+
+/** The shared ADR 0006 check used before resume or continue. */
+export function runModelRefusal(
+  events: readonly RunEvent[],
+  modelDigest: string,
+): string | undefined {
+  const state = replay(events);
+  const created = events[0] as RunCreated;
   if (created.eventFormatVersion !== EVENT_FORMAT_VERSION) {
     return (
       `run ${state.runId} has event format version ${created.eventFormatVersion}, ` +
@@ -77,17 +86,19 @@ export function resumeRefusal(
 
 /** Refuse every terminal result except an `internal_error` not repeated without an attempt. */
 function endedRefusal(state: RunState, events: readonly RunEvent[]): string | undefined {
-  const { result } = state;
+  const { result, runId } = state;
   if (result === undefined) return undefined;
-  if (
-    result.result !== "cancelled" &&
-    result.reason === "internal_error" &&
-    !secondInternalErrorWithoutAttempt(events)
-  ) {
-    return undefined;
-  }
+  if (!isInternalError(result)) return terminalRefusal(runId, result);
+  return secondInternalErrorWithoutAttempt(events)
+    ? `run ${runId} has ended (internal_error). Resume is only for a crashed run.`
+    : undefined;
+}
+
+/** Why a run that ended any way but `internal_error` is not resumed, and what to use instead. */
+function terminalRefusal(runId: string, result: RunResult): string {
+  if (isCompleted(result)) return `run ${runId} completed. Resume is only for a crashed run.`;
   const how = result.result === "cancelled" ? "was cancelled" : `has ended (${result.result})`;
-  return `run ${state.runId} ${how}. Resume is only for a crashed run: start a new run instead.`;
+  return `run ${runId} ${how}. Continue it with \`loopfile continue ${runId}\`.`;
 }
 
 /** True when an `internal_error` ended two owners without an attempt between them. */

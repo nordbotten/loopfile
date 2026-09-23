@@ -287,6 +287,14 @@ attempt and ends the run with `run_timeout`. A step `timeout` is different: it
 fails one attempt and takes `onFailure`. v1 has no `onExhausted` and no
 `onTimeout` route.
 
+`loopfile continue <runid> [-d]` continues an ended run other than a completed
+or `internal_error` run. It reuses the run's Materialized Loopfile and workspace,
+starts a new attempt of the stopped step without writing a transition, and
+resets `maxAttempts`, `maxTransitions` and `runTimeout` counting from that
+continue. Use `loopfile resume` for a crashed or `internal_error` run, and
+`loopfile interrupt` to replace an attempt while the run is still running.
+Loop child runs cannot be continued individually.
+
 ## Reference manifest
 
 [`examples/implement-review/manifest.yaml`](../examples/implement-review/manifest.yaml)

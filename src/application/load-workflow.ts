@@ -803,6 +803,20 @@ function promptDisplayKey(read: PromptRead, key: string): string {
   return read.scope.includes(EACH_ITEM_SCOPE) ? read.name : key;
 }
 
+/** The steps a step can move to: its routes, its `onFailure`, and the next step when it has no routes. */
+function successors(
+  steps: readonly Step[],
+  index: number,
+  byId: ReadonlyMap<string, number>,
+): number[] {
+  const step = steps[index] as Step;
+  const routed = [...Object.values(step.on), step.onFailure].flatMap(
+    (target) => byId.get(target) ?? [],
+  );
+  const fallsThrough = Object.keys(step.on).length === 0 && index + 1 < steps.length;
+  return fallsThrough ? [...routed, index + 1] : routed;
+}
+
 function checkReachable(steps: readonly Step[], report: Report): void {
   const byId = new Map(steps.map((step, index) => [step.id, index]));
   const reached = new Set<number>();
@@ -810,12 +824,7 @@ function checkReachable(steps: readonly Step[], report: Report): void {
   for (let index = queue.pop(); index !== undefined; index = queue.pop()) {
     if (reached.has(index)) continue;
     reached.add(index);
-    const step = steps[index] as Step;
-    for (const target of [...Object.values(step.on), step.onFailure]) {
-      const next = byId.get(target);
-      if (next !== undefined) queue.push(next);
-    }
-    if (Object.keys(step.on).length === 0 && index + 1 < steps.length) queue.push(index + 1);
+    queue.push(...successors(steps, index, byId));
   }
   steps.forEach((step, index) => {
     if (!reached.has(index)) {

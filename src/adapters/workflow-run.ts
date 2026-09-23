@@ -19,6 +19,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { parseDocument } from "yaml";
 import { checkAttemptLimit } from "../application/attempt-limit.ts";
+import { type ContinueNext, continuePlan, continueRefusal } from "../application/continue.ts";
 import { sha256 } from "../application/data-store.ts";
 import {
   CANCEL_GRACE_MS,
@@ -64,6 +65,7 @@ import {
   isEndState,
   type RalphStep,
   type Step,
+  type StepId,
   type Workflow,
 } from "../domain/model.ts";
 import { startAgentStep } from "./agent-step.ts";
@@ -197,6 +199,9 @@ export interface ResumeRunOptions {
   readonly cancelSignal?: AbortSignal;
 }
 
+/** What continuing an ended run needs. Everything else is read from its run folder. */
+export type ContinueRunOptions = ResumeRunOptions;
+
 /**
  * Starts a new run owner for a crashed run and runs it to its end (#64).
  *
@@ -230,6 +235,40 @@ export async function resumeRun(options: ResumeRunOptions): Promise<ExecutedRun>
     const run = { ...options, source: paths.loopfile, repository: created.repositoryPath };
     return await runSteps(run, owner, { workflow, workspace }, await loopfileNameOf(paths), (t) =>
       resumeFrom(workflow, t),
+    );
+  } finally {
+    await owner.close();
+  }
+}
+
+/** Starts a new owner and continues the stopped step in the same run and workspace (#85). */
+export async function continueRun(options: ContinueRunOptions): Promise<ExecutedRun> {
+  const paths = runPaths(options.home, options.runId);
+  const workflow = await loadMaterialized(paths);
+  const history = await readEvents(paths);
+  const refused = continueRefusal(history, modelDigest(workflow));
+  if (refused !== undefined) throw new WorkflowRunError(refused);
+
+  const owner = await startRunOwner({
+    home: options.home,
+    runId: options.runId,
+    ...cancelSignalOf(options),
+  });
+  try {
+    const created = history[0] as RunCreated;
+    const workspace: Workspace = {
+      path: paths.workspace,
+      repositoryPath: created.repositoryPath,
+      baseCommit: created.baseCommit,
+      branch: created.branch,
+    };
+    const run = { ...options, source: paths.loopfile, repository: created.repositoryPath };
+    return await runSteps(
+      run,
+      owner,
+      { workflow, workspace },
+      await loopfileNameOf(paths),
+      (tracked) => continueFrom(workflow, tracked),
     );
   } finally {
     await owner.close();
@@ -272,8 +311,18 @@ async function resumeFrom(workflow: Workflow, tracked: Tracked): Promise<Moved> 
     await tracked.log.append({ type: "attempt.interrupted", attemptId: interrupted.attemptId });
   }
   if (next.kind === "end") return { event: endStateEvent(next.state) };
-  const step = workflow.steps.find((candidate) => candidate.id === next.stepId);
-  if (step === undefined) throw new WorkflowRunError(`no step ${next.stepId}`);
+  return await takeNext(workflow, next, tracked);
+}
+
+/** Adds the limit reset and either retries a step or takes its previously refused move. */
+async function continueFrom(workflow: Workflow, tracked: Tracked): Promise<Moved> {
+  await tracked.log.append({ type: "run.continued" });
+  return await takeNext(workflow, continuePlan(workflow, tracked.history), tracked);
+}
+
+/** Starts a new attempt of the step, or takes the move its ended attempt was refused. */
+async function takeNext(workflow: Workflow, next: ContinueNext, tracked: Tracked): Promise<Moved> {
+  const step = stepNamed(workflow, next.stepId);
   if (next.kind === "route") {
     return await move(
       workflow,
@@ -284,6 +333,12 @@ async function resumeFrom(workflow: Workflow, tracked: Tracked): Promise<Moved> 
   }
   const attempts = checkAttemptLimit(step, replay(tracked.history));
   return attempts.allowed ? { to: step.id } : { event: attempts.event };
+}
+
+function stepNamed(workflow: Workflow, stepId: StepId): Step {
+  const step = workflow.steps.find((candidate) => candidate.id === stepId);
+  if (step === undefined) throw new WorkflowRunError(`no step ${stepId}`);
+  return step;
 }
 
 /** Loads the Loopfile, makes the workspace, and builds the `run.created` that records both. */
@@ -380,8 +435,7 @@ async function walk(
   let target = begun.to;
   while (!isEndState(target)) {
     if (owner.cancelled.aborted) return await cancelRun(tracked);
-    const step = workflow.steps.find((candidate) => candidate.id === target);
-    if (step === undefined) throw new WorkflowRunError(`no step ${target}`);
+    const step = stepNamed(workflow, target);
     const visited = await visit(options, owner, workflow, step, tracked, workspace, loopfileName);
     if (visited.kind === "interrupted") {
       const ended = await interruptedStep(step, visited, tracked);
@@ -407,8 +461,8 @@ async function move(
   const { to, cause } = route(workflow, step.id, visited.end);
   const state = replay(tracked.history);
   const refused =
-    refusal(checkTransitionLimit(workflow, state.transitions.length)) ??
-    refusal(checkRunTimeout(workflow, state.ownerTimeMs));
+    refusal(checkTransitionLimit(workflow, state.transitionsSinceContinue.length)) ??
+    refusal(checkRunTimeout(workflow, state.ownerTimeSinceContinueMs));
   if (refused !== undefined) return { event: refused };
 
   await tracked.log.append({
@@ -903,7 +957,10 @@ function runTimeoutTimer(
   fire: () => void,
 ): NodeJS.Timeout | undefined {
   if (workflow.runTimeoutMs === undefined) return undefined;
-  return setTimeout(fire, Math.max(0, workflow.runTimeoutMs - replay(history).ownerTimeMs));
+  return setTimeout(
+    fire,
+    Math.max(0, workflow.runTimeoutMs - replay(history).ownerTimeSinceContinueMs),
+  );
 }
 
 /** How much longer than the SIGKILL grace `groupsGone` waits for the kernel. */
