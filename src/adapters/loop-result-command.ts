@@ -173,5 +173,5 @@ function oneLine(value: string): string {
 }
 
 function errorMessage(error: unknown): string {
-  return error instanceof Error && error.message ? `: ${error.message}` : "";
+  return error instanceof Error ? `: ${error.message}`.replace(/^: $/, "") : "";
 }

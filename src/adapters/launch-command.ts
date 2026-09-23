@@ -563,32 +563,39 @@ async function workflowForStart(
   try {
     const loaded = await loadDirectory(options.source);
     if (loaded.status === "loaded") return { ok: true, workflow: loaded.workflow };
-    if (loaded.status === "older") {
-      return {
-        ok: false,
-        failure: startFailure(
-          `manifest formatVersion ${loaded.formatVersion} is outdated`,
-          "operation_failed",
-          `Run: loopfile upgrade ${options.source}`,
-          2,
-        ),
-      };
-    }
-    return {
-      ok: false,
-      failure: startFailure(
-        manifestErrorMessages(loaded.errors),
-        "invalid_manifest",
-        "Fix the manifest before launching.",
-        1,
-      ),
-    };
+    return workflowLoadFailure(loaded, options.source);
   } catch (error) {
     return {
       ok: false,
       failure: startFailure((error as Error).message, "operation_failed", USAGE, 1),
     };
   }
+}
+
+function workflowLoadFailure(
+  loaded: Exclude<LoadResult, { readonly status: "loaded" }>,
+  source: string,
+): { readonly ok: false; readonly failure: StartRunFailure } {
+  if (loaded.status === "older") {
+    return {
+      ok: false,
+      failure: startFailure(
+        `manifest formatVersion ${loaded.formatVersion} is outdated`,
+        "operation_failed",
+        `Run: loopfile upgrade ${source}`,
+        2,
+      ),
+    };
+  }
+  return {
+    ok: false,
+    failure: startFailure(
+      manifestErrorMessages(loaded.errors),
+      "invalid_manifest",
+      "Fix the manifest before launching.",
+      1,
+    ),
+  };
 }
 
 function manifestErrorMessages(errors: readonly LoadError[]): readonly string[] {

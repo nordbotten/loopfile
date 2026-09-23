@@ -2,17 +2,16 @@
  * Coverage bars per zone, and a CRAP score per function (ADR 0009).
  *
  * One run of the suite answers both questions, so they live in one check.
- * Coverage asks whether the code runs under test. CRAP asks a sharper version
- * of the same question: a function that is both complicated and thinly covered
- * scores badly, and the only ways down are more tests or less branching.
+ * Coverage asks whether the code runs under test. CRAP combines that coverage
+ * with complexity counted from the source.
  *
  *   CRAP = complexity^2 * (1 - coverage)^3 + complexity
  *
  * `EXEMPT` is not measured. `TESTS` is not measured. The bars live in
  * `quality-ratchet.json` and nowhere else.
  *
- * Coverage comes from c8 in Istanbul format rather than V8's own, because CRAP
- * needs per-function statement data that only the Istanbul report carries.
+ * Coverage comes from c8 in Istanbul format. TypeScript supplies source-based
+ * complexity, matched to c8's functions by their start positions.
  *
  * Run directly to check the working tree.
  */
@@ -20,6 +19,7 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join, relative } from "node:path";
+import ts from "typescript";
 import { REPO_ROOT, zoneOf } from "./quality-zones.mjs";
 
 /** Zones that have coverage bars. Every other zone is not measured. */
@@ -116,16 +116,149 @@ function owningFunction(point, functions) {
   return owner;
 }
 
+/** c8 starts at the runtime function token, not erased TypeScript modifiers. */
+function functionStart(node, sourceFile) {
+  const modifiers = ts.canHaveModifiers(node) ? (ts.getModifiers(node) ?? []) : [];
+  const async = modifiers.find((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword);
+  if (async !== undefined) return async.getStart(sourceFile);
+  if (ts.isFunctionDeclaration(node) || ts.isFunctionExpression(node)) {
+    return (
+      node
+        .getChildren(sourceFile)
+        .find((child) => child.kind === ts.SyntaxKind.FunctionKeyword)
+        ?.getStart(sourceFile) ?? node.getStart(sourceFile)
+    );
+  }
+  if (ts.isMethodDeclaration(node)) {
+    return node.asteriskToken?.getStart(sourceFile) ?? node.name.getStart(sourceFile);
+  }
+  if (ts.isConstructorDeclaration(node)) {
+    return (
+      node
+        .getChildren(sourceFile)
+        .find((child) => child.kind === ts.SyntaxKind.ConstructorKeyword)
+        ?.getStart(sourceFile) ?? node.getStart(sourceFile)
+    );
+  }
+  if (ts.isGetAccessorDeclaration(node) || ts.isSetAccessorDeclaration(node)) {
+    const keyword = ts.isGetAccessorDeclaration(node)
+      ? ts.SyntaxKind.GetKeyword
+      : ts.SyntaxKind.SetKeyword;
+    return (
+      node
+        .getChildren(sourceFile)
+        .find((child) => child.kind === keyword)
+        ?.getStart(sourceFile) ?? node.getStart(sourceFile)
+    );
+  }
+  return node.getStart(sourceFile);
+}
+
+/** Complexity of each parsed function, keyed by its source start position. */
+function sourceComplexities(source, fileName) {
+  const sourceFile = ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, true);
+  const complexities = new Map();
+  const logicalDecisions = new Set([
+    ts.SyntaxKind.AmpersandAmpersandToken,
+    ts.SyntaxKind.BarBarToken,
+    ts.SyntaxKind.QuestionQuestionToken,
+    ts.SyntaxKind.AmpersandAmpersandEqualsToken,
+    ts.SyntaxKind.BarBarEqualsToken,
+    ts.SyntaxKind.QuestionQuestionEqualsToken,
+  ]);
+
+  function complexityOf(roots, owner = null) {
+    let complexity = 1;
+    function visit(node) {
+      if (node !== owner && ts.isFunctionLike(node)) return;
+      if (node !== owner && ts.isPropertyDeclaration(node)) {
+        if (ts.isComputedPropertyName(node.name)) visit(node.name.expression);
+        return;
+      }
+      if (
+        ts.isIfStatement(node) ||
+        ts.isConditionalExpression(node) ||
+        ts.isCaseClause(node) ||
+        ts.isForStatement(node) ||
+        ts.isForOfStatement(node) ||
+        ts.isForInStatement(node) ||
+        ts.isWhileStatement(node) ||
+        ts.isDoStatement(node) ||
+        ts.isCatchClause(node) ||
+        (ts.isBinaryExpression(node) && logicalDecisions.has(node.operatorToken.kind))
+      ) {
+        complexity += 1;
+      }
+      ts.forEachChild(node, visit);
+    }
+    for (const root of roots) visit(root);
+    return complexity;
+  }
+
+  function visit(node) {
+    if (ts.isFunctionLike(node) && node.body !== undefined) {
+      const { line, character } = sourceFile.getLineAndCharacterOfPosition(
+        functionStart(node, sourceFile),
+      );
+      complexities.set(`${line + 1}:${character}`, complexityOf([node], node));
+    }
+    if (ts.isClassLike(node)) {
+      for (const isStatic of [false, true]) {
+        const members = node.members.filter((member) => {
+          if (ts.isClassStaticBlockDeclaration(member)) return isStatic;
+          if (!ts.isPropertyDeclaration(member)) return false;
+          const memberIsStatic =
+            ts
+              .getModifiers(member)
+              ?.some((modifier) => modifier.kind === ts.SyntaxKind.StaticKeyword) ?? false;
+          return memberIsStatic === isStatic;
+        });
+        const first = members[0];
+        if (first === undefined) continue;
+        const staticToken =
+          isStatic && ts.isPropertyDeclaration(first)
+            ? ts
+                .getModifiers(first)
+                ?.find((modifier) => modifier.kind === ts.SyntaxKind.StaticKeyword)
+            : undefined;
+        const start = isStatic
+          ? (staticToken?.getStart(sourceFile) ?? first.getStart(sourceFile))
+          : first.name.getStart(sourceFile);
+        const { line, character } = sourceFile.getLineAndCharacterOfPosition(start);
+        const roots = members.flatMap((member) =>
+          ts.isPropertyDeclaration(member)
+            ? member.initializer
+              ? [member.initializer]
+              : []
+            : [member.body],
+        );
+        complexities.set(`${line + 1}:${character}`, complexityOf(roots));
+      }
+    }
+    ts.forEachChild(node, visit);
+  }
+  visit(sourceFile);
+  return complexities;
+}
+
 /**
- * The CRAP score of every function in one file's report.
- *
- * Complexity is read from the branches the function owns, which is what an
- * Istanbul report can tell us: one path beyond the first is one more way
- * through. Coverage is the share of the statements it owns that ran.
+ * The CRAP score of every function in one file's report. Complexity comes from
+ * the source; coverage is the share of the function's statements that ran.
  */
-export function crapScores(report) {
-  const functions = Object.entries(report.fnMap).map(([id, fn]) => ({ id, ...fn }));
-  const owned = new Map(functions.map((fn) => [fn.id, { covered: 0, total: 0, complexity: 1 }]));
+export function crapScores(report, source, fileName = "source.ts") {
+  const complexities = sourceComplexities(source, fileName);
+  const reportedFunctions = Object.entries(report.fnMap).filter(
+    ([, fn]) => fn.name !== "(empty-report)",
+  );
+  const functions = reportedFunctions.map(([id, fn]) => {
+    const key = `${fn.loc.start.line}:${fn.loc.start.column}`;
+    const complexity = complexities.get(key);
+    if (complexity === undefined) {
+      throw new Error(`No parsed function at c8 function start ${fileName}:${key}`);
+    }
+    return { id, ...fn, complexity };
+  });
+  const owned = new Map(functions.map((fn) => [fn.id, { covered: 0, total: 0 }]));
 
   for (const [statementId, location] of Object.entries(report.statementMap)) {
     const owner = owningFunction(location.start, functions);
@@ -135,23 +268,9 @@ export function crapScores(report) {
     if (report.s[statementId] > 0) counts.covered += 1;
   }
 
-  // c8 reports one entry per branch *path*, not one per decision. Two of those
-  // paths are not decisions: a `column: -1` entry stands for the else an `if`
-  // never wrote, and each function carries one entry at its own start. Dropping
-  // both leaves one entry per decision, which is what complexity counts.
-  const functionStarts = new Set(
-    functions.map((fn) => `${fn.loc.start.line}:${fn.loc.start.column}`),
-  );
-  for (const branch of Object.values(report.branchMap)) {
-    const { line, column } = branch.loc.start;
-    if (column === -1 || functionStarts.has(`${line}:${column}`)) continue;
-    const owner = owningFunction(branch.loc.start, functions);
-    if (owner === null) continue;
-    owned.get(owner.id).complexity += 1;
-  }
-
   return functions.map((fn) => {
-    const { covered, total, complexity } = owned.get(fn.id);
+    const { covered, total } = owned.get(fn.id);
+    const { complexity } = fn;
     const coverage = total === 0 ? 1 : covered / total;
     const crap = complexity ** 2 * (1 - coverage) ** 3 + complexity;
     return { name: fn.name, line: fn.decl.start.line, complexity, coverage, crap };
@@ -183,7 +302,8 @@ export function main(write) {
     if (!zoneCounts.has(zone)) continue;
     zoneCounts.get(zone).push(tally(fileReport));
 
-    for (const score of crapScores(fileReport)) {
+    const source = readFileSync(join(REPO_ROOT, file), "utf8");
+    for (const score of crapScores(fileReport, source, file)) {
       if (score.crap > worstCrap.crap) worstCrap = { ...score, file };
       if (score.crap > bars.crap.max) crapFailures.push({ ...score, file });
     }
