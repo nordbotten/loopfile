@@ -63,7 +63,7 @@ Commands:
   cancel <runid|loopid> [--now|--after-run]
   interrupt <runid>
   continue <runid> [-d]
-  resume [<runid>] [-d] [--kill-leftovers]
+  resume [<runid|loopid>] [-d] [--kill-leftovers]
   remove <runid> [--kill-leftovers] [--force]
   prune [--older-than <age>] [--dry-run]
   logs <runid> [<attempt>] [--stdout | --stderr] [--iteration <n>]

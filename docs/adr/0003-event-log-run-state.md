@@ -4,7 +4,7 @@ The source of truth for a run is `events.jsonl`: an append-only file with one JS
 
 ## Loops
 
-A loop has its own append-only `events.jsonl` under `loops/<loopid>/`, separate from every child run. The loop owner is its one writer; readers derive loop status by folding that log, and the same append path writes each event with `fsync`.
+A loop has its own append-only `events.jsonl` under `loops/<loopid>/`, separate from every child run. The loop owner is its one writer; readers derive loop status by folding that log, and the same append path writes each event with `fsync`. `loopfile resume <loopid>` takes over a crashed loop by appending a new `owner.started` and replaying the log. The fold restores the input-source place, run count and retry chain. A still-running child is waited for, a completed child advances the source, and a logged child with no run folder is started with its recorded run ID and input set. Other child states keep #59's existing handling until #78 defines additional resume behavior.
 
 ## Decisions
 

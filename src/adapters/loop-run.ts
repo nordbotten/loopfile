@@ -12,14 +12,14 @@ import {
 } from "../application/next-loop-action.ts";
 import { parseEventLog } from "../application/replay.ts";
 import { parseStatusProjection } from "../application/status.ts";
-import type { LoopCancelMode, LoopEvent, LoopSource } from "../domain/events.ts";
+import type { LoopCancelMode, LoopEvent, LoopRunStarted, LoopSource } from "../domain/events.ts";
 import type { Workflow } from "../domain/model.ts";
 import type { LoopStatus } from "../domain/status.ts";
 import { loadDirectory } from "./directory-loader.ts";
 import { type EventLog, type NewEvent, openEventLog } from "./event-log.ts";
 import { type StartRunOptions, type StartRunResult, startRun } from "./launch-command.ts";
 import { programIdentity } from "./program-identity.ts";
-import { loopPaths, newRunId, runPaths } from "./run-directory.ts";
+import { loopPaths, newRunId, pathExists, runPaths } from "./run-directory.ts";
 import { pingOwner, requestCancel } from "./run-owner.ts";
 
 /** Inputs the in-process loop driver needs from its caller. */
@@ -34,6 +34,8 @@ export interface RunLoopDeps {
   readonly pollMs?: number;
   /** Requests made on the loop owner's control socket. */
   readonly cancelRequests?: LoopCancelRequests;
+  /** Test seam, called after the run-start event and before its child folder exists. */
+  readonly afterRunStarted?: (event: LoopRunStarted) => Promise<void>;
 }
 
 export interface LoopCancelRequests {
@@ -235,6 +237,7 @@ async function performLoopAction(
   if (action.kind === "end") {
     return await appendEnd(driver.log, driver.history, driver.statusPath, action);
   }
+  if (action.kind === "start_pending") return await startPendingChild(action.run, driver);
   return await startNextChild(action, status, driver);
 }
 
@@ -243,18 +246,9 @@ async function startNextChild(
   status: LoopStatus,
   driver: LoopDriver,
 ): Promise<LoopStatus | undefined> {
-  const currentProgram = await programIdentity(driver.deps.cli);
+  const programEnd = await checkProgram(driver);
+  if (programEnd !== undefined) return programEnd;
   if (driver.deps.cancelRequests?.hasPending()) return undefined;
-  if (
-    currentProgram.version !== driver.created.program.version ||
-    currentProgram.digest !== driver.created.program.digest
-  ) {
-    return await appendEnd(driver.log, driver.history, driver.statusPath, {
-      kind: "end",
-      reason: "program_changed",
-      detail: `loopfile changed from ${driver.created.program.version} to ${currentProgram.version}`,
-    });
-  }
 
   const runId = newRunId();
   const index = status.runs + 1;
@@ -266,15 +260,50 @@ async function startNextChild(
     sourceIndex: action.sourceIndex,
     retryOf: action.retryOf ?? null,
   });
+  const event = driver.history.at(-1);
+  if (event?.type !== "loop.run_started") throw new Error("loop.run_started was not recorded");
+  await driver.deps.afterRunStarted?.(event);
+  return await launchStartedChild(event, driver);
+}
+
+async function startPendingChild(
+  event: LoopRunStarted,
+  driver: LoopDriver,
+): Promise<LoopStatus | undefined> {
+  const programEnd = await checkProgram(driver);
+  if (programEnd !== undefined) return programEnd;
+  return await launchStartedChild(event, driver);
+}
+
+async function checkProgram(driver: LoopDriver): Promise<LoopStatus | undefined> {
+  const current = await programIdentity(driver.deps.cli);
+  if (
+    current.version === driver.created.program.version &&
+    current.digest === driver.created.program.digest
+  ) {
+    return undefined;
+  }
+  return await appendEnd(driver.log, driver.history, driver.statusPath, {
+    kind: "end",
+    reason: "program_changed",
+    detail: `loopfile changed from ${driver.created.program.version} to ${current.version}`,
+  });
+}
+
+async function launchStartedChild(
+  event: LoopRunStarted,
+  driver: LoopDriver,
+): Promise<LoopStatus | undefined> {
+  if (driver.deps.cancelRequests?.hasPending()) return undefined;
   const started = await startChildRun(driver.deps, {
     source: driver.loopfilePath,
     sourceKind: "directory",
     repository: driver.created.repositoryPath,
-    inputs: action.inputSet,
+    inputs: event.inputSet,
     workspaceMode: driver.created.workspaceMode,
-    runId,
+    runId: event.runId,
     loopId: driver.loopId,
-    loopIndex: index,
+    loopIndex: event.index,
     cli: driver.deps.cli,
     env: driver.deps.env,
   });
@@ -285,7 +314,7 @@ async function startNextChild(
       detail: started.failure.messages.join("; "),
     });
   }
-  await waitForChild(driver.home, runId, driver.deps.pollMs, driver.deps.cancelRequests);
+  await waitForChild(driver.home, event.runId, driver.deps.pollMs, driver.deps.cancelRequests);
   return undefined;
 }
 
@@ -445,6 +474,7 @@ async function lastChild(home: string, status: LoopStatus): Promise<LastChild> {
 
 async function childState(home: string, runId: string): Promise<LastChild> {
   const paths = runPaths(home, runId);
+  if (!(await pathExists(paths.root))) return { state: "not_started", runId };
   const childStatus = await readChildStatus(paths.status);
   if (childStatus !== undefined && childStatus.state !== "running") {
     return { state: childStatus.state, runId };

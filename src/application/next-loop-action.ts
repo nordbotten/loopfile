@@ -11,7 +11,14 @@ import type { LoopStatus } from "../domain/status.ts";
 import { checkAgainstDeclared, type InputsCheck, mergeInputSet } from "./launch-inputs.ts";
 
 /** The state a loop driver can observe for its latest child. */
-export type LastChildState = "none" | "running" | "completed" | "failed" | "cancelled" | "crashed";
+export type LastChildState =
+  | "none"
+  | "running"
+  | "not_started"
+  | "completed"
+  | "failed"
+  | "cancelled"
+  | "crashed";
 
 /** The latest child run, or the absence of one. */
 export type LastChild =
@@ -27,6 +34,7 @@ export type LoopAction =
       readonly retryOf?: string;
     }
   | { readonly kind: "wait" }
+  | { readonly kind: "start_pending"; readonly run: LoopRunStarted }
   | { readonly kind: "pause"; readonly until: string }
   | {
       readonly kind: "end";
@@ -59,6 +67,19 @@ export function nextLoopAction(
   if (lastChild.state === "running") return { kind: "wait" };
   if (status.cancelRequested !== null) {
     return { kind: "end", reason: "cancelled", cancelMode: status.cancelRequested };
+  }
+  if (lastChild.state === "not_started") {
+    const run = history.findLast(
+      (event): event is LoopRunStarted =>
+        event.type === "loop.run_started" && event.runId === lastChild.runId,
+    );
+    return run === undefined
+      ? {
+          kind: "end",
+          reason: "internal_error",
+          detail: `missing loop.run_started for ${lastChild.runId}`,
+        }
+      : { kind: "start_pending", run };
   }
   const failed = failedChildAction(status, lastChild, history, options);
   if (failed !== undefined) return failed;
