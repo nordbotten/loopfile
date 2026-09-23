@@ -131,6 +131,48 @@ test("loop resume help describes the loop command", async () => {
   assert.equal(captured.err(), "");
 });
 
+test("resume waits only for the remainder of a recorded loop pause", async () => {
+  const setupResult = await setup(`formatVersion: 1
+steps:
+  - id: work
+    kind: command
+    run: 'true'
+`);
+  const { loopId } = await startLoop(setupResult, ["--times", "2", "--pause", "3s", "-d"]);
+  const pause = await until(async () => {
+    const event = (await events(setupResult.home, loopId)).find(
+      (item) => item.type === "loop.paused",
+    );
+    return event?.type === "loop.paused" ? event : undefined;
+  }, "loop to pause");
+  await new Promise((resolve) => setTimeout(resolve, 1000));
+
+  const owner = (await events(setupResult.home, loopId)).findLast(
+    (event) => event.type === "owner.started",
+  );
+  if (owner?.type !== "owner.started") throw new Error("loop owner did not start");
+  process.kill(owner.pid, "SIGKILL");
+
+  const resumedAt = Date.now();
+  const resumed = await resume([loopId, "-d"], setupResult.env);
+  assert.equal(resumed.code, 0, resumed.err);
+  const nextRun = await until(async () => {
+    const event = (await events(setupResult.home, loopId)).find(
+      (item) => item.type === "loop.run_started" && item.index === 2,
+    );
+    return event?.type === "loop.run_started" ? event : undefined;
+  }, "next run to start");
+  const delay = Date.parse(nextRun.at) - resumedAt;
+  const remaining = Date.parse(pause.until) - resumedAt;
+  assert.ok(remaining >= 1500 && remaining < 2400, `pause had ${remaining}ms left`);
+  assert.ok(delay >= 1500 && delay < 2800, `next run started after ${delay}ms`);
+  assert.equal(
+    (await waitForEnd(setupResult.home, loopId)).filter((event) => event.type === "loop.paused")
+      .length,
+    1,
+  );
+});
+
 test("resume restarts a child whose owner crashed and then continues the loop", async () => {
   const marker = join(root, "resume-child-running");
   const counter = join(root, "resume-child-count");

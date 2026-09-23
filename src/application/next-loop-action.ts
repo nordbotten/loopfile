@@ -90,11 +90,12 @@ export function nextLoopAction(
   ) {
     return { kind: "resume_child", runId: lastChild.runId };
   }
-  const failed = failedChildAction(status, lastChild, history, options);
+  const actionOptions = optionsAfterRecordedPause(options, history);
+  const failed = failedChildAction(status, lastChild, history, actionOptions);
   if (failed !== undefined) return failed;
   const childEnd = childEndAction(lastChild);
   if (childEnd !== undefined) return childEnd;
-  return uncappedSourceAction(status, source, nextResult, workflow, options);
+  return uncappedSourceAction(status, source, nextResult, workflow, actionOptions);
 }
 
 function failedChildAction(
@@ -247,6 +248,16 @@ function withPause(
   options: NextLoopActionOptions,
 ): LoopAction {
   return action.kind === "start" ? (pauseAction(status, options) ?? action) : action;
+}
+
+function optionsAfterRecordedPause(
+  options: NextLoopActionOptions,
+  history: readonly LoopEvent[],
+): NextLoopActionOptions {
+  const lastPauseOrRun = history.findLast(
+    (event) => event.type === "loop.paused" || event.type === "loop.run_started",
+  );
+  return lastPauseOrRun?.type === "loop.paused" ? { ...options, pauseMs: null } : options;
 }
 
 function pauseAction(status: LoopStatus, options: NextLoopActionOptions): LoopAction | undefined {
