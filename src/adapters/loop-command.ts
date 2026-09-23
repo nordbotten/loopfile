@@ -46,6 +46,7 @@ import {
   runPaths,
 } from "./run-directory.ts";
 import { pingOwner } from "./run-owner.ts";
+import { statusCommand } from "./status-command.ts";
 
 const USAGE =
   "Usage: loopfile loop <source> (--times N | --list <file> | --next <command>) [--input k=v]... [--retry N] [--max-runs N] [--pause <duration>] [-d]";
@@ -321,7 +322,7 @@ async function observeLoopStatus(
   if (status === undefined) return undefined;
   await reportRuns(status, observed, home, err, options, signal);
   if (signal.aborted) return 0;
-  return status.state === "running" ? undefined : reportLoopEnd(status, err);
+  return status.state === "running" ? undefined : await reportLoopEnd(status, home, err);
 }
 
 async function observeLoopOwner(
@@ -420,7 +421,26 @@ async function readChildStatus(path: string): Promise<StatusProjection | undefin
     .catch(() => undefined);
 }
 
-function reportLoopEnd(status: LoopStatus, err: (text: string) => void): number {
+async function reportLoopEnd(
+  status: LoopStatus,
+  home: string,
+  err: (text: string) => void,
+): Promise<number> {
+  let summary = "";
+  try {
+    const code = await statusCommand(
+      ["status", status.loopId],
+      (text) => {
+        summary += text;
+      },
+      () => undefined,
+      { LOOPFILE_HOME: home },
+    );
+    if (code === 0) err(summary);
+  } catch {
+    // Keep the loop's established end code if status rendering is unavailable.
+  }
+
   const reason = status.endReason ?? "unknown";
   if (status.state === "completed") {
     err(renderOperatorConfirmation({ ended: `${status.loopId} ${status.state} ${reason}` }));
