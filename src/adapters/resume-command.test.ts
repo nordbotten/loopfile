@@ -9,6 +9,7 @@ import {
   realpath,
   rm,
   stat,
+  symlink,
   writeFile,
 } from "node:fs/promises";
 import { hostname, tmpdir } from "node:os";
@@ -18,11 +19,13 @@ import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { parseEventLog } from "../application/replay.ts";
+import { parseStatusProjection } from "../application/status.ts";
 import { modelDigest } from "../application/workflow-run.ts";
 import type { RunEvent } from "../domain/events.ts";
 import { type LaunchIo, launchCommand } from "./launch-command.ts";
 import type { MonitorIo } from "./monitor.ts";
 import { removeAfterOwnersExit } from "./owner-cleanup.test.ts";
+import { makeGitFixture } from "./remote-fixture.ts";
 import { resumeCommand } from "./resume-command.ts";
 import { type RunPaths, runPaths } from "./run-directory.ts";
 import { pingOwner } from "./run-owner.ts";
@@ -104,6 +107,75 @@ async function files(dir: string): Promise<Map<string, string>> {
   }
   return found;
 }
+
+test("a remote run resumes without Git on PATH", async () => {
+  const { base: dir, home, env } = await base();
+  const repository = join(dir, "target");
+  await mkdir(repository);
+  await run("git", ["init", "-q", "-b", "main"], { cwd: repository, env });
+  await run("git", ["commit", "-q", "--allow-empty", "-m", "target"], {
+    cwd: repository,
+    env,
+  });
+  const fixture = await makeGitFixture({
+    "manifest.yaml": `formatVersion: 1
+steps:
+  - id: mark
+    kind: command
+    run: 'if test -f resumed.marker; then exit 0; fi; : > resumed.marker; sleep 30'
+`,
+  });
+  const bin = join(dir, "without-git");
+  await mkdir(bin);
+  await symlink((await run("which", ["sh"])).stdout.trim(), join(bin, "sh"));
+  await symlink((await run("which", ["sleep"])).stdout.trim(), join(bin, "sleep"));
+  assert.deepEqual((await readdir(bin)).sort(), ["sh", "sleep"]);
+  try {
+    const launched = session();
+    assert.equal(
+      await launchCommand(
+        ["github:acme/loops", "--trust", "-d"],
+        cli,
+        launched.io,
+        { ...env, ...fixture.env },
+        { repository },
+      ),
+      0,
+      launched.err(),
+    );
+    const runId = launched.out().trim();
+    const paths = runPaths(home, runId);
+    const attempt = await until(
+      async () => (await events(paths)).find((event) => event.type === "attempt.started"),
+      "the remote attempt to start",
+    );
+    const owner = (await events(paths)).find((event) => event.type === "owner.started");
+    assert.ok(attempt?.type === "attempt.started");
+    assert.ok(owner?.type === "owner.started");
+    process.kill(owner.pid, "SIGKILL");
+    process.kill(-attempt.processGroupId, "SIGKILL");
+    await until(
+      async () => ((await pingOwner(paths.socket, 200)) === undefined ? true : undefined),
+      "the remote owner to die",
+    );
+
+    const resumed = await resume([runId], { ...env, ...fixture.env, PATH: bin });
+    assert.equal(resumed.code, 0, resumed.err);
+    const all = await events(paths);
+    assert.equal(all.filter((event) => event.type === "owner.started").length, 2);
+    const last = all.at(-1);
+    assert.ok(last?.type === "run.ended");
+    assert.equal(last.result, "success");
+    const created = all[0];
+    assert.ok(created?.type === "run.created");
+    assert.equal(created.remote?.repo, "acme/loops");
+    const status = parseStatusProjection(JSON.parse(await readFile(paths.status, "utf8")));
+    assert.equal(status.state, "completed");
+    assert.deepEqual(status.remote, created.remote);
+  } finally {
+    await fixture.cleanup();
+  }
+});
 
 test("a run killed during attempt 002 resumes with a new attempt 003 and ends as if it never crashed", async () => {
   const { base: dir, home, env } = await base();

@@ -57,6 +57,7 @@ import { selectWorkspaceMode } from "../application/workspace-mode.ts";
 import {
   EVENT_FORMAT_VERSION,
   type LaunchInputRecord,
+  type RemoteRecord,
   type RunCreated,
   type RunEvent,
 } from "../domain/events.ts";
@@ -126,6 +127,7 @@ export interface ExecuteRunOptions {
   readonly workspaceMode?: WorkspaceMode;
   /** Overrides the source basename in status and prompt facts. */
   readonly loopfileName?: string;
+  readonly remote?: RemoteRecord;
   /** The target repository the workspace is made from. */
   readonly repository: string;
   readonly executor: Executor;
@@ -365,6 +367,7 @@ async function prepare(
       ...(workspace.isolateKind === "worktree"
         ? { baseCommit: workspace.baseCommit, branch: workspace.branch }
         : {}),
+      ...(options.remote === undefined ? {} : { remote: options.remote }),
       inputs,
       ...(options.loopId === undefined ? {} : { loopId: options.loopId }),
       ...(options.loopIndex === undefined ? {} : { loopIndex: options.loopIndex }),

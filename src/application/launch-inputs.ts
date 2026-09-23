@@ -6,6 +6,7 @@
  * key `input.<name>` before the first step starts.
  */
 
+import { isRemoteRecord, type RemoteRecord } from "../domain/events.ts";
 import { NAME_PATTERN, type WorkspaceMode } from "../domain/model.ts";
 
 export type LaunchInputs = Readonly<Record<string, string>>;
@@ -148,6 +149,7 @@ export interface LaunchRequest {
   readonly workspaceMode?: WorkspaceMode;
   /** Overrides the basename of the source in status and prompt facts. */
   readonly loopfileName?: string;
+  readonly remote?: RemoteRecord;
   /** Set by an in-process loop owner, never by a CLI flag. */
   readonly loopId?: string;
   /** One-based position in the loop. */
@@ -180,23 +182,14 @@ function launchRequest(value: unknown): LaunchRequest | undefined {
     inputs: value.inputs,
     ...(value.workspaceMode === undefined ? {} : { workspaceMode: value.workspaceMode }),
     loopfileName: value.loopfileName,
+    ...(value.remote === undefined ? {} : { remote: value.remote }),
     ...optionalLoopFields(value.loopId, value.loopIndex),
   };
 }
 
 function isLaunchRequest(value: unknown): value is LaunchRequest {
   if (!isRecord(value)) return false;
-  const {
-    source,
-    sourceText,
-    kind,
-    repository,
-    inputs,
-    workspaceMode,
-    loopfileName,
-    loopId,
-    loopIndex,
-  } = value;
+  const { source, sourceText, kind, repository, inputs, workspaceMode } = value;
   return (
     typeof source === "string" &&
     typeof repository === "string" &&
@@ -204,9 +197,16 @@ function isLaunchRequest(value: unknown): value is LaunchRequest {
     isInputs(inputs) &&
     validWorkspaceMode(workspaceMode) &&
     validSourceText(sourceText, kind) &&
-    validLoopfileName(loopfileName) &&
-    validLoopId(loopId) &&
-    validLoopIndex(loopIndex)
+    validLaunchMetadata(value)
+  );
+}
+
+function validLaunchMetadata(value: Record<string, unknown>): boolean {
+  return (
+    validLoopfileName(value.loopfileName) &&
+    (value.remote === undefined || isRemoteRecord(value.remote)) &&
+    validLoopId(value.loopId) &&
+    validLoopIndex(value.loopIndex)
   );
 }
 

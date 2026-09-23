@@ -121,6 +121,13 @@ test("a launch request survives the environment variable", () => {
     inputs: { a: "1" },
     workspaceMode: "here",
     loopfileName: "loops",
+    remote: {
+      host: "github.com",
+      repo: "acme/group/loops",
+      path: "packages/loop",
+      ref: "feature/ref",
+      sha: "a".repeat(40),
+    },
     loopId: "loop-20260922-105306-qfn3",
     loopIndex: 3,
   };
@@ -142,6 +149,7 @@ test("a launch request that is not one decodes to nothing", () => {
     JSON.stringify({ ...good, inputs: [] }),
     JSON.stringify({ ...good, inputs: { a: 1 } }),
     JSON.stringify({ ...good, loopfileName: 1 }),
+    JSON.stringify({ ...good, remote: { host: "github.com", repo: "acme/loops", sha: "bad" } }),
     JSON.stringify({ ...good, loopId: 1 }),
     JSON.stringify({ ...good, loopIndex: 0 }),
     JSON.stringify({ ...good, loopIndex: 1.5 }),

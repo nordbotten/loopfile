@@ -2,13 +2,15 @@
  * Validating a parsed `status.json` against the v1 status projection shape
  * (`src/domain/status.ts`, ADR 0007).
  *
- * Every field of `StatusProjection` is always present, so a consumer that
- * skips this check would otherwise have to treat "missing" and "`null`" as
+ * Every required field of `StatusProjection` is always present (the optional
+ * `remote` field is absent on local runs), so a consumer that skips this check
+ * would otherwise have to treat "missing" and "`null`" as
  * the same thing everywhere it reads the file. This throws instead, the same
  * way `parseEventLog` (`src/application/replay.ts`) throws on a broken event
  * log rather than hand a caller a partial one.
  */
 
+import { isRemoteRecord } from "../domain/events.ts";
 import {
   RUN_LIFECYCLE_STATES,
   STATUS_FORMAT_VERSION,
@@ -41,6 +43,7 @@ export function parseStatusProjection(value: unknown): StatusProjection {
   requireString(record, "loopfileName");
   const loopId = optionalString(record, "loopId");
   const loopIndex = optionalLoopIndex(record);
+  const remote = optionalRemote(record);
   requireEnum(record, "state", RUN_LIFECYCLE_STATES);
   requireNullOr(record, "endReason", (v) => requireStringValue(v, "endReason"));
   requireString(record, "startedAt");
@@ -57,6 +60,7 @@ export function parseStatusProjection(value: unknown): StatusProjection {
     ...record,
     loopId,
     loopIndex,
+    ...(remote === undefined ? {} : { remote }),
     ...(!("permissionDenials" in metrics)
       ? { metrics: { ...metrics, permissionDenials: null } }
       : {}),
@@ -98,6 +102,14 @@ function optionalString(record: Record<string, unknown>, field: string): string 
   if (!(field in record) || record[field] === null) return null;
   requireString(record, field);
   return record[field] as string;
+}
+
+function optionalRemote(record: Record<string, unknown>): StatusProjection["remote"] {
+  if (!("remote" in record)) return undefined;
+  if (!isRemoteRecord(record.remote)) {
+    throw new InvalidStatusProjectionError("status.json remote must be a remote run record");
+  }
+  return record.remote;
 }
 
 function optionalLoopIndex(record: Record<string, unknown>): number | null {

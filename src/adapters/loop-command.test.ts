@@ -912,6 +912,36 @@ test("SIGINT detaches from an attached loop without stopping its owner", async (
   }
 });
 
+test("SIGINT during the started notification detaches without waiting for the loop", async () => {
+  const setupResult = await setup(
+    "formatVersion: 1\nsteps:\n  - id: work\n    kind: command\n    run: sleep 1\n",
+  );
+  let loopId: string | undefined;
+  try {
+    const captured = io((text) => {
+      const started = text.match(/^started: ([^\n]+)$/m);
+      if (started?.[1] !== undefined) {
+        loopId = started[1];
+        process.emit("SIGINT");
+      }
+    });
+    const code = await loopCommand(
+      ["loop", setupResult.source, "--times", "2"],
+      cli,
+      captured.value,
+      setupResult.env,
+      { repository: setupResult.repo, pollMs: 10, ownerPingTimeoutMs: LIVE_PING_MS },
+    );
+    assert.equal(code, 0, captured.errors());
+    assert.ok(loopId);
+    assert.equal(await pingOwner(loopPaths(setupResult.home, loopId).socket, 200), loopId);
+    await waitForEnd(setupResult.home, loopId);
+  } finally {
+    if (loopId !== undefined) await waitForEnd(setupResult.home, loopId).catch(() => undefined);
+    await removeAfterOwnersExit(setupResult.root);
+  }
+});
+
 test("an attached loop reports a gone loop owner without ending the loop", async () => {
   const setupResult = await setup(
     "formatVersion: 1\nsteps:\n  - id: work\n    kind: command\n    run: sleep 0.2\n",

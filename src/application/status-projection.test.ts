@@ -95,6 +95,7 @@ test("a fresh run with only run.created is running, with no current attempt", ()
   assert.equal(status.seq, 1);
   assert.equal(status.runId, "r-1");
   assert.equal(status.loopfileName, "implement");
+  assert.equal(Object.hasOwn(status, "remote"), false);
   assert.equal(status.state, "running");
   assert.equal(status.endReason, null);
   assert.equal(status.startedAt, at(0));
@@ -105,6 +106,19 @@ test("a fresh run with only run.created is running, with no current attempt", ()
   assert.deepEqual(status.visitedSteps, []);
   assert.equal(status.lastTransition, null);
   assert.deepEqual(status.metrics, UNKNOWN_METRICS);
+});
+
+test("a remote run carries its source record into status", () => {
+  const remote = {
+    host: "github.com",
+    repo: "acme/loops",
+    path: "sub",
+    ref: "main",
+    sha: "a".repeat(40),
+  };
+  const status = projectStatus(events({ ...created, remote }), context());
+
+  assert.deepEqual(status.remote, remote);
 });
 
 test("a run in a loop carries its link into status", () => {

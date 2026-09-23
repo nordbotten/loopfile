@@ -115,6 +115,7 @@ async function runLaunched(
     loopIndex: launch.loopIndex,
     workspaceMode: launch.workspaceMode,
     loopfileName: launch.loopfileName,
+    remote: launch.remote,
     repository: launch.repository,
     executor: localExecutor(stepEnv),
     cancelSignal,
