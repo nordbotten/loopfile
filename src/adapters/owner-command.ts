@@ -9,7 +9,7 @@
  * target repository and the inputs. With it the command runs the workflow to its
  * end (`workflow-run.ts`, #116). Without it the run owner only starts, says who
  * it is and waits to be stopped. With `LOOPFILE_RESUME` set by `loopfile
- * resume` it goes on with a crashed run instead (#64).
+ * resume` it goes on with a crashed run; with `LOOPFILE_CONTINUE` it continues an ended run (#85).
  *
  * SIGTERM, SIGINT or SIGHUP to the run owner cancels the run, the same way
  * `loopfile cancel` does (#63, ADR 0008).
@@ -19,10 +19,12 @@ import { decodeLaunch, LAUNCH_ENV, type LaunchRequest } from "../application/lau
 import { localExecutor } from "./local-executor.ts";
 import { loopfileHome } from "./run-directory.ts";
 import { RunOwnerError, startRunOwner } from "./run-owner.ts";
-import { executeRun, resumeRun } from "./workflow-run.ts";
+import { continueRun, executeRun, resumeRun } from "./workflow-run.ts";
 
 /** Set by `loopfile resume` (#64): the run owner goes on with a crashed run instead of starting one. */
 export const RESUME_ENV = "LOOPFILE_RESUME";
+/** Set by `loopfile continue` (#85). */
+export const CONTINUE_ENV = "LOOPFILE_CONTINUE";
 
 /** Runs a run owner to its end, and returns the process exit code. */
 export async function ownerCommand(
@@ -76,6 +78,7 @@ function runOwner(
   cancelSignal: AbortSignal,
 ): Promise<void> {
   if (env[RESUME_ENV] !== undefined) return runResumed(runId, env, cancelSignal);
+  if (env[CONTINUE_ENV] !== undefined) return runContinued(runId, env, cancelSignal);
   if (launch !== undefined) return runLaunched(runId, launch, env, cancelSignal);
   return waitUntilStopped(runId, env, cancelSignal);
 }
@@ -127,6 +130,23 @@ async function runResumed(
   delete stepEnv[RESUME_ENV];
   delete stepEnv[LAUNCH_ENV];
   await resumeRun({
+    home: loopfileHome(env),
+    runId,
+    executor: localExecutor(stepEnv),
+    cancelSignal,
+  });
+}
+
+/** Continues an ended run without changing its workspace or Materialized Loopfile. */
+async function runContinued(
+  runId: string,
+  env: Record<string, string | undefined>,
+  cancelSignal: AbortSignal,
+): Promise<void> {
+  const stepEnv = { ...env };
+  delete stepEnv[CONTINUE_ENV];
+  delete stepEnv[LAUNCH_ENV];
+  await continueRun({
     home: loopfileHome(env),
     runId,
     executor: localExecutor(stepEnv),

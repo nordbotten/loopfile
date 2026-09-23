@@ -69,6 +69,11 @@ export interface OwnerStarted extends EventBase {
   readonly host: string;
 }
 
+/** A person continued an ended run; limits start again from this event. */
+export interface RunContinued extends EventBase {
+  readonly type: "run.continued";
+}
+
 /** A visit to a step began. Its process group is what cancel and a leftover check use. */
 export interface AttemptStarted extends EventBase {
   readonly type: "attempt.started";
@@ -265,6 +270,7 @@ export interface RunCancelled extends EventBase {
 export type RunEvent =
   | RunCreated
   | OwnerStarted
+  | RunContinued
   | AttemptStarted
   | IterationStarted
   | IterationEnded
@@ -372,6 +378,7 @@ export const LOOP_EVENT_TYPES: ReadonlySet<string> = new Set<LoopEvent["type"]>(
 export const EVENT_TYPES: ReadonlySet<string> = new Set<EventRecord["type"]>([
   "run.created",
   "owner.started",
+  "run.continued",
   "attempt.started",
   "iteration.started",
   "iteration.ended",

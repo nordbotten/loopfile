@@ -11,7 +11,13 @@ import {
   renderOperatorConfirmation,
   renderOperatorFailure,
 } from "../application/operator-error.ts";
-import { parseEventLog } from "../application/replay.ts";
+import {
+  isCompleted,
+  isInternalError,
+  parseEventLog,
+  type RunResult,
+  replay,
+} from "../application/replay.ts";
 import type { RunEvent } from "../domain/events.ts";
 import { loopfileHome, pathExists, type RunPaths, runPaths } from "./run-directory.ts";
 import { requestInterrupt } from "./run-owner.ts";
@@ -21,7 +27,8 @@ const HELP = `${USAGE}
 
 Stop the current attempt and start a new attempt of the same step. The
 interrupted attempt counts toward maxAttempts. Interrupting an ended or crashed
-run fails; use loopfile resume for a crashed run.
+run fails; use loopfile continue for an ended run and loopfile resume for a crashed
+or internal_error run.
 `;
 
 /** How long the command waits for the owner to start the replacement attempt. */
@@ -133,17 +140,35 @@ async function interruptTarget(
     );
     return undefined;
   }
-  if (events.some((event) => event.type === "run.ended" || event.type === "run.cancelled")) {
+  const result = endedResult(events);
+  if (result !== undefined) {
     err(
       renderOperatorFailure({
-        summary: `run ${runId} has ended`,
+        summary: `run ${runId} ${result.result === "cancelled" ? "was cancelled" : "has ended"}`,
         code: "already_ended",
-        help: "Interrupt only a running run with an active attempt.",
+        help: endedHelp(result, runId),
       }).stderr,
     );
     return undefined;
   }
   return { runId, paths, events };
+}
+
+/** How the run ended, unless `continue` or `resume` took it up again since. */
+function endedResult(events: readonly RunEvent[]): RunResult | undefined {
+  const ended = events.some(
+    (event) => event.type === "run.ended" || event.type === "run.cancelled",
+  );
+  return ended ? replay(events).result : undefined;
+}
+
+/** Names the command that goes on from an ended run, when there is one. */
+function endedHelp(result: RunResult, runId: string): string {
+  if (isCompleted(result)) {
+    return "Completed runs have no active attempt to interrupt; start a new run instead.";
+  }
+  const command = isInternalError(result) ? "resume" : "continue";
+  return `Use \`loopfile ${command} ${runId}\` for this ended run.`;
 }
 
 async function readEvents(paths: RunPaths) {

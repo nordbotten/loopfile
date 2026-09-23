@@ -38,6 +38,16 @@ export type RunResult =
   | { readonly result: "success" | "failure"; readonly reason: RunEndReason }
   | { readonly result: "cancelled" };
 
+/** True for a run that ended with `internal_error`, which `resume` takes up and `continue` does not. */
+export function isInternalError(result: RunResult): boolean {
+  return result.result !== "cancelled" && result.reason === "internal_error";
+}
+
+/** True for a run that reached `$success`. */
+export function isCompleted(result: RunResult): boolean {
+  return result.result === "success" && result.reason === "end_state";
+}
+
 /** One transition, in the order it happened. Everything a `transition` event carries but its envelope. */
 export type TransitionRecord = Omit<Transition, "seq" | "at" | "type">;
 
@@ -58,6 +68,12 @@ export interface RunState {
   readonly attempts: Readonly<Record<StepId, readonly AttemptId[]>>;
   /** Every transition, oldest first, checked against the workflow's `maxTransitions`. */
   readonly transitions: readonly TransitionRecord[];
+  /** Attempts per step since the last `run.continued`, for maxAttempts. */
+  readonly attemptsSinceContinue: Readonly<Record<StepId, readonly AttemptId[]>>;
+  /** Moves since the last `run.continued`, for maxTransitions. */
+  readonly transitionsSinceContinue: readonly TransitionRecord[];
+  /** Run owner time since the last `run.continued`, for runTimeout. */
+  readonly ownerTimeSinceContinueMs: number;
   /**
    * Run owner time used, summed per `owner.started`. The gap between a crash
    * and the resume that follows it belongs to nobody, so `runTimeout` does not
@@ -130,6 +146,9 @@ export function replay(events: readonly RunEvent[]): RunState {
     ...(currentStep === undefined ? {} : { currentStep }),
     attempts: attemptsPerStep(events),
     transitions: transitionRecords(events),
+    attemptsSinceContinue: attemptsPerStep(events.slice(lastContinuationIndex(events) + 1)),
+    transitionsSinceContinue: transitionRecords(events.slice(lastContinuationIndex(events) + 1)),
+    ownerTimeSinceContinueMs: ownerTimeSinceContinueMs(events),
     ownerTimeMs: ownerTimeMs(events),
     createdAt: created.at,
     lastEventAt: last.at,
@@ -196,9 +215,20 @@ function transitionRecords(events: readonly RunEvent[]): readonly TransitionReco
  * the run only up to the last thing that owner managed to write.
  */
 function ownerTimeMs(events: readonly RunEvent[]): number {
+  return ownerTime(events, undefined);
+}
+
+function ownerTimeSinceContinueMs(events: readonly RunEvent[]): number {
+  const index = lastContinuationIndex(events);
+  if (index < 0) return ownerTimeMs(events);
+  const continued = events[index];
+  return continued === undefined ? 0 : ownerTime(events.slice(index + 1), Date.parse(continued.at));
+}
+
+function ownerTime(events: readonly RunEvent[], initialStart: number | undefined): number {
   let total = 0;
-  let startedAt: number | undefined;
-  let lastAt = 0;
+  let startedAt = initialStart;
+  let lastAt = initialStart ?? 0;
   for (const event of events) {
     const at = Date.parse(event.at);
     if (event.type === "owner.started") {
@@ -210,18 +240,36 @@ function ownerTimeMs(events: readonly RunEvent[]): number {
   return total + span(startedAt, lastAt);
 }
 
+function lastContinuationIndex(events: readonly RunEvent[]): number {
+  return events.findLastIndex((event) => event.type === "run.continued");
+}
+
 function span(startedAt: number | undefined, lastAt: number): number {
   return startedAt === undefined ? 0 : lastAt - startedAt;
 }
 
 function finalResult(events: readonly RunEvent[]): { result: RunResult } | undefined {
-  const end = events.findLast(
-    (event): event is RunEnded | RunCancelled =>
-      event.type === "run.ended" || event.type === "run.cancelled",
+  const end = events.findLast(isRunEnd);
+  if (end === undefined || takenUpAgain(events, end)) return undefined;
+  return { result: resultOf(end) };
+}
+
+function isRunEnd(event: RunEvent): event is RunEnded | RunCancelled {
+  return event.type === "run.ended" || event.type === "run.cancelled";
+}
+
+/** True when `continue` or `resume` started the run again after `end`. */
+function takenUpAgain(events: readonly RunEvent[], end: RunEnded | RunCancelled): boolean {
+  return (
+    lastContinuationIndex(events) > events.lastIndexOf(end) ||
+    resumedAfterInternalError(events, end)
   );
-  if (end === undefined || resumedAfterInternalError(events, end)) return undefined;
-  if (end.type === "run.cancelled") return { result: { result: "cancelled" } };
-  return { result: { result: end.result, reason: end.reason } };
+}
+
+function resultOf(end: RunEnded | RunCancelled): RunResult {
+  return end.type === "run.cancelled"
+    ? { result: "cancelled" }
+    : { result: end.result, reason: end.reason };
 }
 
 function resumedAfterInternalError(

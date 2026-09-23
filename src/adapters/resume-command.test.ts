@@ -441,12 +441,13 @@ test("an ended or cancelled run is refused with its state", async () => {
   const done = await crashedRun([{ type: "run.ended", result: "success", reason: "end_state" }]);
   const endedRun = await resume([done.runId], done.env);
   assert.equal(endedRun.code, 1);
-  assert.match(endedRun.err, /has ended \(success\)\. Resume is only for a crashed run/);
+  assert.match(endedRun.err, /completed\. Resume is only for a crashed run/);
+  assert.match(endedRun.err, /Completed runs cannot be continued/);
 
   const stopped = await crashedRun([{ type: "run.cancelled" }]);
   const cancelled = await resume([stopped.runId], stopped.env);
   assert.equal(cancelled.code, 1);
-  assert.match(cancelled.err, /was cancelled\. .*start a new run/);
+  assert.match(cancelled.err, /was cancelled\. Continue it with `loopfile continue/);
 });
 
 test("a run whose workspace is gone is refused, and resume never makes a new one", async () => {

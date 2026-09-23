@@ -14,7 +14,7 @@
 import { readFile } from "node:fs/promises";
 import { parseArgs } from "node:util";
 import { renderOperatorFailure } from "../application/operator-error.ts";
-import { CorruptEventLogError, parseEventLog } from "../application/replay.ts";
+import { CorruptEventLogError, parseEventLog, replay } from "../application/replay.ts";
 import { resumePlan, resumeRefusal } from "../application/resume.ts";
 import { renderRunList } from "../application/run-list.ts";
 import { modelDigest } from "../application/workflow-run.ts";
@@ -205,7 +205,7 @@ async function liveOwnerFailure(
   return {
     summary: `a run owner is still running run ${runId}`,
     code: "owner_alive",
-    help: `Use \`loopfile cancel ${runId}\` to stop it, or wait for it to finish.`,
+    help: `Use \`loopfile interrupt ${runId}\` to stop its current attempt, or wait for it to finish.`,
     exitCode: 2,
   };
 }
@@ -226,15 +226,22 @@ function parseResumeLog(text: string): readonly RunEvent[] | ResumeFailure {
 function resumeMismatch(events: readonly RunEvent[], digest: string): ResumeFailure | undefined {
   const refused = resumeRefusal(events, digest);
   if (refused === undefined) return undefined;
-  const runEnded = /^run .* (?:has ended|was cancelled)/.test(refused);
-  return {
-    summary: refused,
-    code: runEnded ? "operation_failed" : "format_mismatch",
-    help: runEnded
-      ? "Start a new run instead."
-      : "Resume requires the original event format and model.",
-    exitCode: runEnded ? 1 : 2,
-  };
+  if (refused.includes("event format") || refused.includes("Materialized Loopfile")) {
+    return {
+      summary: refused,
+      code: "format_mismatch",
+      help: "Resume requires the original event format and model.",
+      exitCode: 2,
+    };
+  }
+  const state = replay(events);
+  const help =
+    state.result?.result === "success" && state.result.reason === "end_state"
+      ? "Completed runs cannot be continued; start a new run instead."
+      : state.result?.result !== "cancelled" && state.result?.reason === "internal_error"
+        ? `Use \`loopfile resume ${state.runId}\` for this internal_error.`
+        : `Use \`loopfile continue ${state.runId}\` to continue this ended run.`;
+  return { summary: refused, code: "operation_failed", help, exitCode: 1 };
 }
 
 function workspaceFailure(paths: RunPaths, runId: string): ResumeFailure {
