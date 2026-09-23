@@ -11,6 +11,7 @@
 
 import { type ChildProcess, spawn } from "node:child_process";
 import { closeSync, openSync } from "node:fs";
+import { stat } from "node:fs/promises";
 import { connect } from "node:net";
 import { parseArgs } from "node:util";
 import {
@@ -117,7 +118,7 @@ export async function launchCommand(
 
   let parsed: ReturnType<typeof parseSource>;
   try {
-    parsed = parseSource(args.source);
+    parsed = parseSource(args.source, await sourceExists(args.source));
   } catch (error) {
     return refuse(io, (error as Error).message, 2, "bad_argument");
   }
@@ -179,7 +180,12 @@ async function launchRemote(
     try {
       fetched = await fetchRemote(remote, env);
     } catch (error) {
-      const message = error instanceof RemoteFetchError ? error.message : (error as Error).message;
+      const message =
+        remote.bareSource === undefined
+          ? error instanceof RemoteFetchError
+            ? error.message
+            : (error as Error).message
+          : `no local path and no GitHub repo named ${remote.bareSource}`;
       const code = error instanceof RemoteFetchError ? error.code : "operation_failed";
       return refuse(io, message, 2, code);
     }
@@ -248,6 +254,16 @@ export async function prepareLaunchSource(
 
   const workflow = await loadWorkflow(source, input.kind, io, input.text);
   return workflow === undefined ? { ok: false, exitCode: 1 } : { ...input, workflow };
+}
+
+async function sourceExists(source: string): Promise<boolean> {
+  try {
+    await stat(source);
+    return true;
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    return code !== "ENOENT" && code !== "ENOTDIR";
+  }
 }
 
 function isMissingPath(error: unknown): boolean {
