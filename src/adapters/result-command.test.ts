@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
+import type { RemoteRecord } from "../domain/events.ts";
 import { STATUS_FORMAT_VERSION } from "../domain/status.ts";
 import { resultCommand } from "./result-command.ts";
 import { loopPaths, runPaths } from "./run-directory.ts";
@@ -30,13 +31,19 @@ function capture() {
   };
 }
 
-function status(runId: string, running: boolean, end: "success" | "failure" | "cancelled") {
+function status(
+  runId: string,
+  running: boolean,
+  end: "success" | "failure" | "cancelled",
+  remote?: RemoteRecord,
+) {
   return {
     formatVersion: STATUS_FORMAT_VERSION,
     seq: 1,
     updatedAt: "2026-09-21T14:00:00.000Z",
     runId,
     loopfileName: "review-loop",
+    ...(remote === undefined ? {} : { remote }),
     state: running
       ? "running"
       : end === "success"
@@ -70,6 +77,7 @@ async function makeRun(
   ended: boolean,
   end: "success" | "failure" | "cancelled" = "success",
   reason = "end_state",
+  remote?: RemoteRecord,
 ) {
   const paths = runPaths(home, runId);
   await mkdir(paths.root, { recursive: true });
@@ -82,6 +90,7 @@ async function makeRun(
       eventFormatVersion: 1,
       modelDigest: "sha256:model",
       targetFolder: "/repo",
+      ...(remote === undefined ? {} : { remote }),
       workspacePath: `${home}/runs/${runId}/workspace`,
       workspaceMode: "isolate",
       isolateKind: "worktree",
@@ -131,7 +140,7 @@ async function makeRun(
       : []),
   ];
   await writeFile(paths.events, `${events.map((event) => JSON.stringify(event)).join("\n")}\n`);
-  await writeFile(paths.status, JSON.stringify(status(runId, !ended, end)));
+  await writeFile(paths.status, JSON.stringify(status(runId, !ended, end, remote)));
 }
 
 test("a finished run prints all operator facts as JSON and exits 0", async () => {
@@ -147,6 +156,7 @@ test("a finished run prints all operator facts as JSON and exits 0", async () =>
     loopfileName: "review-loop",
     loopId: null,
     loopIndex: null,
+    remote: null,
     state: "completed",
     endReason: "success",
     startedAt: "2026-09-21T14:00:00.000Z",
@@ -196,6 +206,57 @@ test("the human result prints the target and workspace", async () => {
       "outputs      none\n",
   );
   assert.equal(output.errors, "");
+});
+
+test("human result shows remote source with and without optional path and ref", async () => {
+  for (const [runId, remote, line] of [
+    [
+      "20260921-140010-rmaa",
+      {
+        host: "github.com",
+        repo: "acme/loops",
+        path: "review",
+        ref: "main",
+        sha: "4c9d077abcde1234567890abcdef1234567890ab",
+      },
+      "remote: github.com/acme/loops/review @ main (4c9d077)",
+    ],
+    [
+      "20260921-140011-rmab",
+      {
+        host: "github.com",
+        repo: "acme/loops",
+        path: "review",
+        sha: "4c9d077abcde1234567890abcdef1234567890ab",
+      },
+      "remote: github.com/acme/loops/review (4c9d077)",
+    ],
+    [
+      "20260921-140012-rmac",
+      {
+        host: "github.com",
+        repo: "acme/loops",
+        ref: "main",
+        sha: "4c9d077abcde1234567890abcdef1234567890ab",
+      },
+      "remote: github.com/acme/loops @ main (4c9d077)",
+    ],
+    [
+      "20260921-140013-rmad",
+      { host: "github.com", repo: "acme/loops", sha: "4c9d077abcde1234567890abcdef1234567890ab" },
+      "remote: github.com/acme/loops (4c9d077)",
+    ],
+  ] as const) {
+    await makeRun(runId, true, "success", "end_state", remote);
+    const output = capture();
+    assert.equal(await resultCommand(["result", runId], output.out, output.err, env), 0);
+    assert.equal(output.output.split("\n")[1], line);
+    assert.equal(output.errors, "");
+
+    const json = capture();
+    assert.equal(await resultCommand(["result", runId, "--json"], json.out, json.err, env), 0);
+    assert.deepEqual(JSON.parse(json.output).remote, remote);
+  }
 });
 
 test("result includes declared inputs and outputs, not scratch data", async () => {
@@ -449,11 +510,18 @@ test("result help and unknown runs use their separate output paths", async () =>
 
 test("result collects every run from a completed loop in text and JSON", async () => {
   const loopId = "loop-20260921-140100-abcd";
+  const remote = {
+    host: "github.com",
+    repo: "acme/loops",
+    path: "review",
+    ref: "main",
+    sha: "4c9d077abcde1234567890abcdef1234567890ab",
+  };
   const runs = [
-    { runId: "20260921-140101-aaaa", inputSet: { issue: "41" } },
-    { runId: "20260921-140102-bbbb", inputSet: { issue: "42" } },
+    { runId: "20260921-140101-aaaa", inputSet: { issue: "41" }, remote },
+    { runId: "20260921-140102-bbbb", inputSet: { issue: "42" }, remote: undefined },
   ];
-  for (const run of runs) await makeRun(run.runId, true);
+  for (const run of runs) await makeRun(run.runId, true, "success", "end_state", run.remote);
   await makeLoopResult(loopId, runs, "source_empty");
 
   const json = capture();
@@ -471,6 +539,7 @@ test("result collects every run from a completed loop in text and JSON", async (
       retryOf: null,
       state: "completed",
       endReason: "success",
+      remote: runs[position]?.remote ?? null,
       branch: `loopfile/${runId}`,
     })),
   });

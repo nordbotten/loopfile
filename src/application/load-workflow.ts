@@ -194,8 +194,8 @@ function workflowModel(
 
 function readWorkspaceMode(manifest: Raw, report: Report): WorkspaceMode | undefined {
   if (!Object.hasOwn(manifest, "workspace")) return undefined;
-  if (manifest.workspace === "isolate") return "isolate";
-  report("workspace", "workspace must be one of: isolate");
+  if (manifest.workspace === "isolate" || manifest.workspace === "here") return manifest.workspace;
+  report("workspace", "workspace must be one of: isolate, here");
   return undefined;
 }
 

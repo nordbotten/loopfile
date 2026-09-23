@@ -103,8 +103,56 @@ test("an ended run prints its human view and exits 0", async () => {
   assert.match(r.output, /^outcome +success/m);
   assert.match(r.output, /plan -> build \(on, outcome approved\)/);
   assert.match(r.output, /tool calls unknown/);
+  assert.doesNotMatch(r.output, /^remote:/m);
   assert.equal(r.output.includes(ESC), false);
   assert.equal(r.errors, "");
+});
+
+test("human status shows remote source with and without optional path and ref", async () => {
+  for (const [runId, remote, line] of [
+    [
+      "20260917-160320-rmaa",
+      {
+        host: "github.com",
+        repo: "acme/loops",
+        path: "review",
+        ref: "main",
+        sha: "4c9d077abcde1234567890abcdef1234567890ab",
+      },
+      "remote: github.com/acme/loops/review @ main (4c9d077)",
+    ],
+    [
+      "20260917-160321-rmaa",
+      {
+        host: "github.com",
+        repo: "acme/loops",
+        path: "review",
+        sha: "4c9d077abcde1234567890abcdef1234567890ab",
+      },
+      "remote: github.com/acme/loops/review (4c9d077)",
+    ],
+    [
+      "20260917-160322-rmab",
+      {
+        host: "github.com",
+        repo: "acme/loops",
+        ref: "main",
+        sha: "4c9d077abcde1234567890abcdef1234567890ab",
+      },
+      "remote: github.com/acme/loops @ main (4c9d077)",
+    ],
+    [
+      "20260917-160323-rmac",
+      { host: "github.com", repo: "acme/loops", sha: "4c9d077abcde1234567890abcdef1234567890ab" },
+      "remote: github.com/acme/loops (4c9d077)",
+    ],
+  ] as const) {
+    await makeRun(runId, { remote });
+    const r = runner();
+    assert.equal(await statusCommand(["status", runId], r.out, r.err, env), 0);
+    assert.equal(r.output.split("\n")[1], line);
+    assert.equal(r.errors, "");
+  }
 });
 
 test("a run with no end event and a dead socket is crashed", async () => {
@@ -142,8 +190,25 @@ test("--json has the format version, derived state, null metrics and no ANSI", a
   assert.equal(parsed.state, "crashed");
   assert.equal(parsed.metrics.costUsd, null);
   assert.equal(parsed.recentTransitions[0].to, "build");
+  assert.equal(Object.hasOwn(parsed, "remote"), false);
   assert.equal(r.output.includes(ESC), false);
   assert.equal(r.output.endsWith("\n"), true);
+});
+
+test("--json includes remote only when status.json has a remote record", async () => {
+  const runId = "20260917-160324-rmad";
+  const remote = {
+    host: "github.com",
+    repo: "acme/loops",
+    path: "review",
+    ref: "main",
+    sha: "4c9d077abcde1234567890abcdef1234567890ab",
+  };
+  await makeRun(runId, { remote });
+  const r = runner();
+  assert.equal(await statusCommand(["status", runId, "--json"], r.out, r.err, env), 0);
+  assert.deepEqual(JSON.parse(r.output).remote, remote);
+  assert.equal(r.errors, "");
 });
 
 test("--json passes an unknown endReason through and exits 0", async () => {

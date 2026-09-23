@@ -125,6 +125,7 @@ test("a run with no readable status.json is unreadable, with the run ID's own st
     runId: RUN_ID,
     loopId: null,
     loopfileName: null,
+    remote: null,
     state: "unreadable",
     currentStep: null,
     startedAt: "2026-09-17T16:03:44.000Z",
@@ -163,6 +164,25 @@ test("a completed run keeps its own state whatever the host and liveness say", (
     entry.elapsedMs,
     Date.parse("2026-09-17T16:09:00.000Z") - Date.parse(status().startedAt),
   );
+});
+
+test("a run entry preserves its remote record", () => {
+  const remote = {
+    host: "github.com",
+    repo: "acme/loops",
+    path: "review",
+    ref: "main",
+    sha: "4c9d077abcde1234567890abcdef1234567890ab",
+  };
+  const entry = deriveRunListEntry({
+    runId: RUN_ID,
+    status: status({ remote }),
+    ownerHost: "host-a",
+    thisHost: "host-a",
+    alive: true,
+    now: NOW,
+  });
+  assert.deepEqual(entry.remote, remote);
 });
 
 test("a running run whose owner still answers is running", () => {
@@ -450,6 +470,7 @@ test("renderRunList prints a header and one row per entry, with no ANSI when ans
   const lines = text.split("\n").filter((line) => line !== "");
   assert.equal(lines.length, 2);
   assert.match(lines[0] as string, /RUN ID/);
+  assert.doesNotMatch(lines[0] as string, /remote/i);
   assert.match(lines[1] as string, new RegExp(RUN_ID));
   assert.equal(hasAnsi(text), false);
 });

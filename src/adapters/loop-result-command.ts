@@ -5,7 +5,7 @@ import { loopStatus } from "../application/loop-status.ts";
 import { type OperatorFailure, renderOperatorFailure } from "../application/operator-error.ts";
 import { CorruptEventLogError, parseEventLog } from "../application/replay.ts";
 import { parseStatusProjection } from "../application/status.ts";
-import type { LoopEvent, LoopRunStarted } from "../domain/events.ts";
+import type { LoopEvent, LoopRunStarted, RemoteRecord } from "../domain/events.ts";
 import type { LoopStatus, StatusProjection } from "../domain/status.ts";
 import { loopfileHome, loopPaths, pathExists, runPaths } from "./run-directory.ts";
 
@@ -19,6 +19,7 @@ interface LoopResultRun {
   readonly retryOf: string | null;
   readonly state: StatusProjection["state"] | "crashed";
   readonly endReason: string | null;
+  readonly remote: RemoteRecord | null;
   readonly branch: string;
 }
 
@@ -107,6 +108,7 @@ async function readLoopResult(
         retryOf: run.retryOf,
         state: child.state,
         endReason: child.endReason,
+        remote: child.remote,
         branch: `loopfile/${run.runId}`,
       };
     }),
@@ -126,17 +128,21 @@ async function readChildStatus(
   home: string,
   runId: string,
   loopState: LoopStatus["state"],
-): Promise<{ state: StatusProjection["state"] | "crashed"; endReason: string | null }> {
+): Promise<{
+  state: StatusProjection["state"] | "crashed";
+  endReason: string | null;
+  remote: RemoteRecord | null;
+}> {
   try {
     const status = parseStatusProjection(
       JSON.parse(await readFile(runPaths(home, runId).status, "utf8")),
     );
-    return { state: status.state, endReason: status.endReason };
+    return { state: status.state, endReason: status.endReason, remote: status.remote ?? null };
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
       return loopState === "running"
-        ? { state: "running", endReason: null }
-        : { state: "crashed", endReason: null };
+        ? { state: "running", endReason: null, remote: null }
+        : { state: "crashed", endReason: null, remote: null };
     }
     throw error;
   }

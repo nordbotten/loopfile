@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -64,6 +64,19 @@ test("the target repository is the one containing the directory", async () => {
   const { repo } = await repository();
   await mkdir(join(repo, "src"));
   assert.equal(await targetRepository(join(repo, "src")), repo);
+});
+
+test("here uses the launch folder without creating a workspace", async () => {
+  const { repo, runRoot } = await repository();
+  const workspace = await createWorkspace({
+    repository: repo,
+    path: join(runRoot, "workspace"),
+    runId: "r-here",
+    mode: "here",
+  });
+
+  assert.deepEqual(workspace, { path: repo, targetFolder: repo, mode: "here" });
+  await assert.rejects(stat(join(runRoot, "workspace")), { code: "ENOENT" });
 });
 
 test("outside Git, the target is the launch folder and isolate makes a full copy", async () => {

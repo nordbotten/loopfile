@@ -81,7 +81,7 @@ steps:
     const io = capture();
     assert.equal(await checkCommand(["check", directory, "--json"], io.out, io.err), 1);
     assert.deepEqual(JSON.parse(io.output), [
-      { path: "workspace", line: 2, message: "workspace must be one of: isolate" },
+      { path: "workspace", line: 2, message: "workspace must be one of: isolate, here" },
     ]);
     assert.equal(io.errors, "");
     assert.deepEqual(await readdir(target), []);

@@ -46,14 +46,33 @@ test("operator result arguments accept text and JSON forms", () => {
   assert.match(failureMessage(["result", "run-1", "extra", "--json"]), /unknown argument: extra/);
 });
 
-test("a plain result has null loop fields and no loop line", () => {
+test("a plain result has null loop and remote fields and no extra lines", () => {
   const result = view();
   assert.equal(result.state, "running");
   assert.equal(result.endReason, null);
   assert.equal(result.lastOutcome, null);
   assert.equal(result.loopId, null);
   assert.equal(result.loopIndex, null);
-  assert.doesNotMatch(renderResultView(result), /^loop:/m);
+  assert.equal(result.remote, null);
+  assert.doesNotMatch(renderResultView(result), /^(?:loop:|remote:)/m);
+});
+
+test("a remote result carries its record and prints it after the Loopfile name", () => {
+  const remote = {
+    host: "github.com",
+    repo: "acme/loops",
+    path: "review",
+    ref: "main",
+    sha: "4c9d077abcde1234567890abcdef1234567890ab",
+  };
+  const result = buildResultView([{ ...created, remote } as RunEvent], "review-loop");
+
+  assert.deepEqual(result.remote, remote);
+  assert.deepEqual(renderResultView(result).split("\n").slice(0, 3), [
+    "run          run-1 · review-loop",
+    "remote: github.com/acme/loops/review @ main (4c9d077)",
+    "state        running",
+  ]);
 });
 
 test("a result in a loop carries and prints its link", () => {

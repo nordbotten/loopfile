@@ -1,8 +1,9 @@
 /** The operator's read-only result view over a run event log (#226). */
 
-import type { RunEvent } from "../domain/events.ts";
+import type { RemoteRecord, RunEvent } from "../domain/events.ts";
 import type { WorkspaceMode } from "../domain/model.ts";
 import type { RunLifecycle, StatusEndReason, StatusMetrics } from "../domain/status.ts";
+import { formatRemoteLine } from "./remote-view.ts";
 import { replay } from "./replay.ts";
 import { runLocation } from "./run-location.ts";
 import { lifecycleOf, UNKNOWN_METRICS } from "./status-projection.ts";
@@ -59,6 +60,7 @@ export interface ResultView {
   readonly loopfileName: string;
   readonly loopId: string | null;
   readonly loopIndex: number | null;
+  readonly remote: RemoteRecord | null;
   readonly state: RunLifecycle;
   readonly endReason: StatusEndReason | null;
   readonly startedAt: string;
@@ -98,6 +100,7 @@ export function buildResultView(
     loopfileName,
     loopId: created.loopId ?? null,
     loopIndex: created.loopIndex ?? null,
+    remote: created.remote ?? null,
     state: lifecycle.state,
     endReason: lifecycle.endReason,
     startedAt: created.at,
@@ -119,6 +122,7 @@ function resultLine(label: string, text: string): string {
 /** Renders the compact human form; every result value occupies one line. */
 export function renderResultView(view: ResultView): string {
   const lines = [resultLine("run", `${view.runId} · ${view.loopfileName}`)];
+  if (view.remote !== null) lines.push(formatRemoteLine(view.remote));
   if (view.loopId !== null && view.loopIndex !== null) {
     lines.push(`loop: ${view.loopId} (run ${view.loopIndex})`);
   }
