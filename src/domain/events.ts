@@ -42,6 +42,63 @@ interface EventBase {
   readonly at: Timestamp;
 }
 
+/** Where a Remote Loopfile came from and the commit that supplied it (ADR 0013). */
+export interface RemoteRecord {
+  readonly host: string;
+  readonly repo: string;
+  readonly path?: string;
+  readonly ref?: string;
+  readonly sha: string;
+}
+
+const REMOTE_RECORD_FIELDS = new Set(["host", "repo", "path", "ref", "sha"]);
+
+/** True when `value` is a normalized remote run record. */
+export function isRemoteRecord(value: unknown): value is RemoteRecord {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  return (
+    Object.keys(record).every((key) => REMOTE_RECORD_FIELDS.has(key)) &&
+    validRemoteHost(record.host) &&
+    validRemoteRepo(record.repo) &&
+    validRemotePath(record.path) &&
+    validRemoteRef(record.ref) &&
+    typeof record.sha === "string" &&
+    /^[0-9a-f]{40}$/.test(record.sha)
+  );
+}
+
+function validRemoteHost(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    value !== "" &&
+    value === value.toLowerCase() &&
+    !value.includes("@")
+  );
+}
+
+function validRemoteRepo(value: unknown): value is string {
+  if (typeof value !== "string" || value !== value.toLowerCase()) return false;
+  const segments = value.split("/");
+  return segments.length >= 2 && segments.every(validRemotePathSegment);
+}
+
+function validRemotePath(value: unknown): boolean {
+  if (value === undefined) return true;
+  if (typeof value !== "string" || value === "" || value.startsWith("/") || value.endsWith("/")) {
+    return false;
+  }
+  return value.split("/").every(validRemotePathSegment);
+}
+
+function validRemotePathSegment(value: string): boolean {
+  return value !== "" && value !== "." && value !== "..";
+}
+
+function validRemoteRef(value: unknown): boolean {
+  return value === undefined || (typeof value === "string" && value !== "");
+}
+
 /** One launch input as it was given, recorded without its value. */
 export interface LaunchInputRecord {
   readonly name: InputName;
@@ -69,6 +126,7 @@ export interface RunCreated extends EventBase {
   readonly baseCommit?: string;
   /** `loopfile/<runid>` for modes that create a branch. */
   readonly branch?: string;
+  readonly remote?: RemoteRecord;
   readonly inputs: readonly LaunchInputRecord[];
   readonly loopId?: string;
   readonly loopIndex?: number;

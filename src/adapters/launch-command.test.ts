@@ -18,6 +18,7 @@ import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { parseEventLog } from "../application/replay.ts";
+import { parseStatusProjection } from "../application/status.ts";
 import { parseTrustList } from "../application/trust.ts";
 import { type LaunchIo, launchCommand, startRun } from "./launch-command.ts";
 import { listCommand } from "./list-command.ts";
@@ -433,7 +434,7 @@ test("git+https launches the requested ref and subdirectory from another Git hos
   const fixture = await makeGitFixture(
     { "review/manifest.yaml": markerManifest("v1-review") },
     "grp/sub/loops.git",
-    "https://git.example.test/",
+    "https://user:token@git.example.test/",
   );
   const tmp = await privateTmp(setupResult.base);
   try {
@@ -444,7 +445,10 @@ test("git+https launches the requested ref and subdirectory from another Git hos
     const s = session();
     assert.equal(
       await launchCommand(
-        ["git+https://git.example.test/grp/sub/loops.git@v1#subdirectory=review", "--trust"],
+        [
+          "git+https://user:token@git.example.test/grp/sub/loops.git@v1#subdirectory=review",
+          "--trust",
+        ],
         cli,
         s.io,
         { ...setupResult.env, ...fixture.env, TMPDIR: tmp },
@@ -456,6 +460,14 @@ test("git+https launches the requested ref and subdirectory from another Git hos
     const runId = s.out().trim();
     const events = await waitForEnd(setupResult.home, runId);
     assert.equal(resultOf(events), "success");
+    const created = events.find((event) => event.type === "run.created");
+    assert.deepEqual(created?.type === "run.created" ? created.remote : undefined, {
+      host: "git.example.test",
+      repo: "grp/sub/loops",
+      path: "review",
+      ref: "v1",
+      sha,
+    });
     assert.equal(
       await readFile(join(runPaths(setupResult.home, runId).workspace, "marker.txt"), "utf8"),
       "v1-review",
@@ -464,6 +476,74 @@ test("git+https launches the requested ref and subdirectory from another Git hos
   } finally {
     await fixture.cleanup();
   }
+});
+
+test("a remote launch records the source and full SHA in run.created and status.json", async () => {
+  const setupResult = await setup();
+  const fixture = await makeGitFixture({ "sub/manifest.yaml": markerManifest("recorded") });
+  const tmp = await privateTmp(setupResult.base);
+  try {
+    const sha = (
+      await run("git", ["rev-parse", "HEAD"], { cwd: fixture.repository })
+    ).stdout.trim();
+    const remote = { host: "github.com", repo: "acme/loops", path: "sub", ref: "main", sha };
+    for (const source of [
+      "github:Acme/Loops/sub@main",
+      "https://github.com/Acme/Loops/tree/main/sub",
+    ]) {
+      const paths = await launchRemoteAndWait(source, setupResult, fixture.env, tmp);
+      const created = parseEventLog(await readFile(paths.events, "utf8"))[0];
+      const status = parseStatusProjection(JSON.parse(await readFile(paths.status, "utf8")));
+
+      assert.equal(created?.type, "run.created");
+      assert.deepEqual(created?.type === "run.created" ? created.remote : undefined, remote);
+      assert.deepEqual(status.remote, remote);
+      assert.equal(created?.type === "run.created" && created.eventFormatVersion, 1);
+      assert.equal(status.formatVersion, 1);
+    }
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("a remote launch on the default branch omits ref from its record", async () => {
+  const setupResult = await setup();
+  const fixture = await makeGitFixture({ "manifest.yaml": markerManifest("default") });
+  const tmp = await privateTmp(setupResult.base);
+  try {
+    const sha = (
+      await run("git", ["rev-parse", "HEAD"], { cwd: fixture.repository })
+    ).stdout.trim();
+    const paths = await launchRemoteAndWait("github:Acme/Loops", setupResult, fixture.env, tmp);
+    const created = parseEventLog(await readFile(paths.events, "utf8"))[0];
+    const status = parseStatusProjection(JSON.parse(await readFile(paths.status, "utf8")));
+    const remote = { host: "github.com", repo: "acme/loops", sha };
+
+    assert.deepEqual(created?.type === "run.created" ? created.remote : undefined, remote);
+    assert.deepEqual(status.remote, remote);
+    assert.equal(
+      created?.type === "run.created" && Object.hasOwn(created.remote ?? {}, "ref"),
+      false,
+    );
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("a local launch omits remote from run.created and status.json", async () => {
+  const setupResult = await setup();
+  const launched = await detached(
+    setupResult.source,
+    setupResult.home,
+    setupResult.env,
+    setupResult.repo,
+  );
+  const created = launched.events[0];
+  const status = parseStatusProjection(JSON.parse(await readFile(launched.paths.status, "utf8")));
+
+  assert.equal(created?.type, "run.created");
+  assert.equal(created?.type === "run.created" && Object.hasOwn(created, "remote"), false);
+  assert.equal(Object.hasOwn(status, "remote"), false);
 });
 
 test("a trusted GitHub Remote Loopfile runs and uses the repository name", async () => {
