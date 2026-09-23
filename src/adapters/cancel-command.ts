@@ -13,6 +13,7 @@ import {
 } from "../application/operator-error.ts";
 import { parseEventLog, replay } from "../application/replay.ts";
 import type { LoopCancelMode, LoopEvent } from "../domain/events.ts";
+import { askOnTerminal } from "./input.ts";
 import { loopfileHome, loopPaths, pathExists, type RunPaths, runPaths } from "./run-directory.ts";
 import { requestCancel, requestLoopCancel } from "./run-owner.ts";
 
@@ -34,6 +35,9 @@ export interface CancelOptions {
   readonly answerTimeoutMs?: number;
   /** How long to wait for the socket file to go. */
   readonly waitMs?: number;
+  /** Terminal state and prompt can be injected in tests. */
+  readonly isTTY?: boolean;
+  readonly ask?: (question: string) => Promise<string | null>;
 }
 
 type Out = (text: string) => void;
@@ -62,7 +66,7 @@ async function cancelLoopCommandWork(
 ): Promise<number> {
   const args = loopCancelArgs(argv, err);
   if (args === undefined) return 2;
-  const { loopId, mode } = args;
+  const { loopId } = args;
   const paths = loopPaths(loopfileHome(env as NodeJS.ProcessEnv), loopId);
   if (!(await pathExists(paths.root))) {
     err(
@@ -78,6 +82,8 @@ async function cancelLoopCommandWork(
     err(renderOperatorConfirmation({ ended: loopId, code: "already_ended" }));
     return 0;
   }
+  const mode = await resolveLoopCancelMode(loopId, args.mode, err, options);
+  if (mode === undefined) return 2;
   if (!(await requestLoopCancel(paths.socket, loopId, mode, options.answerTimeoutMs))) {
     if (await loopHasEnded(paths.events)) {
       err(renderOperatorConfirmation({ ended: loopId, code: "already_ended" }));
@@ -100,11 +106,12 @@ async function cancelLoopCommandWork(
 function loopCancelArgs(
   argv: readonly string[],
   err: Out,
-): { readonly loopId: string; readonly mode: LoopCancelMode } | undefined {
+): { readonly loopId: string; readonly mode?: LoopCancelMode } | undefined {
   const loopId = argv[1];
   const modeFlag = argv[2];
   const mode: LoopCancelMode | undefined =
     modeFlag === "--now" ? "now" : modeFlag === "--after-run" ? "after_run" : undefined;
+  if (loopId !== undefined && argv.length === 2) return { loopId };
   if (loopId !== undefined && mode !== undefined && argv.length === 3) return { loopId, mode };
   err(
     renderOperatorFailure({
@@ -114,6 +121,49 @@ function loopCancelArgs(
     }).stderr,
   );
   return undefined;
+}
+
+async function resolveLoopCancelMode(
+  loopId: string,
+  mode: LoopCancelMode | undefined,
+  err: Out,
+  options: CancelOptions,
+): Promise<LoopCancelMode | undefined> {
+  if (mode !== undefined) return mode;
+  const help = `Use loopfile cancel ${loopId} --now or loopfile cancel ${loopId} --after-run`;
+  if (!(options.isTTY ?? (process.stdin.isTTY === true && process.stdout.isTTY === true))) {
+    err(
+      renderOperatorFailure({
+        summary: `cancel ${loopId} needs a mode`,
+        code: "no_terminal",
+        help,
+      }).stderr,
+    );
+    return undefined;
+  }
+  const answer = await askLoopCancelMode(loopId, options.ask);
+  if (answer !== undefined) return answer;
+  err(
+    renderOperatorFailure({
+      summary: `cancel ${loopId} needs a mode`,
+      code: "bad_argument",
+      help,
+    }).stderr,
+  );
+  return undefined;
+}
+
+async function askLoopCancelMode(
+  loopId: string,
+  ask: (question: string) => Promise<string | null> = askOnTerminal,
+): Promise<LoopCancelMode | undefined> {
+  const question = `Cancel loop ${loopId}: stop the current run now, or after it ends? [now/after-run]`;
+  while (true) {
+    const answer = await ask(question);
+    if (answer === null) return undefined;
+    if (answer.trim() === "now") return "now";
+    if (answer.trim() === "after-run") return "after_run";
+  }
 }
 
 async function loopHasEnded(path: string): Promise<boolean> {
