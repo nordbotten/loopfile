@@ -22,6 +22,7 @@ const SUPPRESSIONS = [
   [/\b(?:istanbul|c8|v8) ignore\b/, "coverage suppressed"],
   [/\.(?:skip|only|todo)\s*\(/, "test skipped, focused or marked todo"],
   [/\b(?:skip|only|todo)\s*:\s*true\b/, "test skipped, focused or marked todo"],
+  [/\bStryker disable\b/, "mutation testing suppressed"],
 ];
 
 /** Every suppression in one file's text, with its line number. */
