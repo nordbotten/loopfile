@@ -9,7 +9,7 @@ import { promisify } from "node:util";
 import { loopStatus } from "../application/loop-status.ts";
 import { parseEventLog } from "../application/replay.ts";
 import type { LoopEvent, RunEvent } from "../domain/events.ts";
-import { cancelCommand } from "./cancel-command.ts";
+import { type CancelOptions, cancelCommand } from "./cancel-command.ts";
 import { loopCommand } from "./loop-command.ts";
 import { ownerPids, removeAfterOwnersExit } from "./owner-cleanup.test.ts";
 import { loopPaths, runPaths } from "./run-directory.ts";
@@ -85,7 +85,12 @@ async function startLoop(setupResult: Awaited<ReturnType<typeof setup>>, pause?:
   return captured.out().trim();
 }
 
-async function cancel(id: string, flag?: string, env: NodeJS.ProcessEnv = process.env) {
+async function cancel(
+  id: string,
+  flag?: string,
+  env: NodeJS.ProcessEnv = process.env,
+  options: CancelOptions = {},
+) {
   const captured = capture();
   const code = await cancelCommand(
     ["cancel", id, ...(flag === undefined ? [] : [flag])],
@@ -94,7 +99,7 @@ async function cancel(id: string, flag?: string, env: NodeJS.ProcessEnv = proces
       captured.io.err(text);
     },
     env,
-    { answerTimeoutMs: 500, waitMs: 5_000 },
+    { answerTimeoutMs: 500, waitMs: 5_000, ...options },
   );
   return { code, out: captured.out(), err: captured.err() };
 }
@@ -230,6 +235,121 @@ test("cancel during a 30-second pause ends the loop promptly", async () => {
   }
 });
 
+test("cancel without a mode and no terminal refuses without stopping the loop", async () => {
+  const setupResult = await setup("true");
+  let loopId: string | undefined;
+  try {
+    const liveLoopId = await startLoop(setupResult, "30s");
+    loopId = liveLoopId;
+    await until(
+      async () =>
+        (await loopEvents(setupResult.home, liveLoopId)).some(
+          (event) => event.type === "loop.paused",
+        )
+          ? true
+          : undefined,
+      "the loop to pause",
+    );
+    let err = "";
+    const code = await cancelCommand(
+      ["cancel", liveLoopId],
+      () => undefined,
+      (text) => {
+        err += text;
+      },
+      setupResult.env,
+      { isTTY: false },
+    );
+    assert.equal(code, 2);
+    assert.equal(
+      err,
+      `error: cancel ${liveLoopId} needs a mode\ncode: no_terminal\nhelp: Use loopfile cancel ${liveLoopId} --now or loopfile cancel ${liveLoopId} --after-run\n`,
+    );
+    const events = await loopEvents(setupResult.home, liveLoopId);
+    assert.equal(loopStatus(events).state, "running");
+    assert.equal(
+      events.some((event) => event.type === "loop.cancel_requested"),
+      false,
+    );
+    assert.notEqual(events.at(-1)?.type, "loop.ended");
+
+    let eofError = "";
+    const eof = await cancelCommand(
+      ["cancel", liveLoopId],
+      () => undefined,
+      (text) => {
+        eofError += text;
+      },
+      setupResult.env,
+      { isTTY: true, ask: async () => null },
+    );
+    assert.equal(eof, 2);
+    assert.match(eofError, /code: bad_argument/);
+  } finally {
+    if (loopId !== undefined) await cancel(loopId, "--now", setupResult.env);
+    await removeAfterOwnersExit(setupResult.dir);
+  }
+});
+
+test("terminal input chooses after-run and retries invalid answers", async () => {
+  const setupResult = await setup("sleep 0.2");
+  let loopId: string | undefined;
+  try {
+    const liveLoopId = await startLoop(setupResult);
+    loopId = liveLoopId;
+    const runId = await firstRun(setupResult.home, liveLoopId);
+    await waitForRunAttempt(setupResult.home, runId);
+    const prompts: string[] = [];
+    const answers = ["later", "after-run"];
+    const result = await cancel(liveLoopId, undefined, setupResult.env, {
+      isTTY: true,
+      ask: async (question) => {
+        prompts.push(question);
+        return answers.shift() ?? null;
+      },
+    });
+    assert.equal(result.code, 0, result.err);
+    assert.equal(result.err, `cancelled: ${liveLoopId} (after_run)\n`);
+    assert.deepEqual(prompts, [
+      `Cancel loop ${liveLoopId}: stop the current run now, or after it ends? [now/after-run]`,
+      `Cancel loop ${liveLoopId}: stop the current run now, or after it ends? [now/after-run]`,
+    ]);
+    assert.equal((await runEvents(setupResult.home, runId)).at(-1)?.type, "run.ended");
+    const events = await loopEvents(setupResult.home, liveLoopId);
+    assert.equal(loopStatus(events).state, "cancelled");
+    assert.equal(loopStatus(events).cancelMode, "after_run");
+    assert.equal(events.filter((event) => event.type === "loop.run_started").length, 1);
+  } finally {
+    if (loopId !== undefined) await cancel(loopId, "--now", setupResult.env);
+    await removeAfterOwnersExit(setupResult.dir);
+  }
+});
+
+test("loop cancel rejects both mode flags", async () => {
+  let err = "";
+  const code = await cancelCommand(
+    ["cancel", "loop-20260101-000000-example", "--now", "--after-run"],
+    () => undefined,
+    (text) => {
+      err += text;
+    },
+    {},
+  );
+  assert.equal(code, 2);
+  assert.match(err, /code: bad_argument/);
+});
+
+test("ADR 0011 records cancel without a mode as a second no-terminal exception", async () => {
+  const adr = await readFile(
+    new URL("../../docs/adr/0011-operator-contract.md", import.meta.url),
+    "utf8",
+  );
+  assert.match(
+    adr,
+    /the two commands that need a terminal are `status` with no run ID and `cancel <loopid>` with no mode/,
+  );
+});
+
 test("cancelling a child run ends its loop as failed with run_failed", async () => {
   const setupResult = await setup("sleep 60");
   try {
@@ -250,7 +370,7 @@ test("cancelling a child run ends its loop as failed with run_failed", async () 
   }
 });
 
-test("loop cancel reports missing, ended, and unavailable owners and requires a mode", async () => {
+test("loop cancel reports missing, ended, and unavailable owners", async () => {
   const setupResult = await setup("true");
   try {
     const missing = await cancel("loop-20260101-000000-none", "--now", setupResult.env);
@@ -274,19 +394,6 @@ test("loop cancel reports missing, ended, and unavailable owners and requires a 
           : undefined,
       "the loop to pause",
     );
-    let missingModeErr = "";
-    const missingMode = await cancelCommand(
-      ["cancel", liveLoopId],
-      () => undefined,
-      (text) => {
-        missingModeErr += text;
-      },
-      runningSetup.env,
-    );
-    assert.equal(missingMode, 2);
-    assert.match(missingModeErr, /--now.*--after-run/);
-    assert.match(missingModeErr, /code: bad_argument/);
-
     const [owner] = await ownerPids(loopPaths(runningSetup.home, liveLoopId).events);
     assert.ok(owner !== undefined);
     process.kill(owner, "SIGKILL");

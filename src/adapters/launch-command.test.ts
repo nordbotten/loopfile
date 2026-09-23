@@ -42,6 +42,10 @@ steps:
     run: test "$(node ${cli} data get input.issue)" = 42
 `;
 
+function markerManifest(marker: string): string {
+  return `formatVersion: 1\nsteps:\n  - id: mark\n    kind: command\n    run: 'printf ${marker} > marker.txt'\n`;
+}
+
 async function setup(manifest = MANIFEST) {
   count += 1;
   const base = join(root, `case-${count}`);
@@ -125,6 +129,29 @@ async function waitForEnd(home: string, runId: string): Promise<ReturnType<typeo
   throw new Error("the run did not end");
 }
 
+async function launchRemoteAndWait(
+  source: string,
+  setupResult: Awaited<ReturnType<typeof setup>>,
+  fixtureEnv: NodeJS.ProcessEnv,
+  tmp: string,
+) {
+  const s = session();
+  assert.equal(
+    await launchCommand(
+      [source, "--trust", "-d"],
+      cli,
+      s.io,
+      { ...setupResult.env, ...fixtureEnv, TMPDIR: tmp },
+      { repository: setupResult.repo },
+    ),
+    0,
+    s.err(),
+  );
+  const runId = s.out().trim();
+  assert.equal(resultOf(await waitForEnd(setupResult.home, runId)), "success");
+  return runPaths(setupResult.home, runId);
+}
+
 async function detached(source: string, home: string, env: NodeJS.ProcessEnv, repo: string) {
   const s = session();
   const code = await launchCommand([source, "-d", "--input", "issue=42"], cli, s.io, env, {
@@ -167,6 +194,165 @@ test("a trusted GitHub Remote Loopfile runs and uses the repository name", async
       loopfileName: string;
     };
     assert.equal(status.loopfileName, "loops");
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("remote paths run folders, thin Loopfiles and packed Loopfiles", async () => {
+  const setupResult = await setup();
+  const packedSource = join(setupResult.base, "packed-source");
+  const packedFile = join(setupResult.base, "packed.loop");
+  await mkdir(packedSource);
+  await writeFile(join(packedSource, "manifest.yaml"), markerManifest("packed"));
+  await writeArchive(packedSource, packedFile);
+  const fixture = await makeGitFixture({
+    "sub/manifest.yaml": markerManifest("folder"),
+    "thin.loop": markerManifest("thin"),
+    "packed.loop": await readFile(packedFile),
+  });
+  const tmp = await privateTmp(setupResult.base);
+  try {
+    for (const [source, marker, loopfileName] of [
+      ["github:acme/loops/sub", "folder", "sub"],
+      ["github:acme/loops/thin.loop", "thin", "thin.loop"],
+      ["github:acme/loops/packed.loop", "packed", "packed.loop"],
+    ] as const) {
+      const paths = await launchRemoteAndWait(source, setupResult, fixture.env, tmp);
+      assert.equal(await readFile(join(paths.workspace, "marker.txt"), "utf8"), marker);
+      assert.equal(
+        (JSON.parse(await readFile(paths.status, "utf8")) as { loopfileName: string }).loopfileName,
+        loopfileName,
+      );
+      assert.deepEqual(await remoteFolders(tmp), []);
+    }
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("refs select branch, slash branch, lightweight and annotated tags, full SHA, and tag over branch", async () => {
+  const setupResult = await setup();
+  const fixture = await makeGitFixture({ "manifest.yaml": markerManifest("sha") });
+  const tmp = await privateTmp(setupResult.base);
+  const env = fixture.env;
+  const commit = async (marker: string, message: string) => {
+    await writeFile(join(fixture.repository, "manifest.yaml"), markerManifest(marker));
+    await run("git", ["add", "manifest.yaml"], { cwd: fixture.repository, env });
+    await run("git", ["commit", "-q", "-m", message], { cwd: fixture.repository, env });
+    return (await run("git", ["rev-parse", "HEAD"], { cwd: fixture.repository })).stdout.trim();
+  };
+  try {
+    await run("git", ["switch", "-q", "-c", "feature/with-slash"], {
+      cwd: fixture.repository,
+      env,
+    });
+    await commit("slash-branch", "slash branch");
+    await run("git", ["switch", "-q", "main"], { cwd: fixture.repository, env });
+    await commit("lightweight-tag", "lightweight target");
+    await run("git", ["tag", "lightweight"], { cwd: fixture.repository, env });
+    await commit("annotated-tag", "annotated target");
+    await run("git", ["tag", "-a", "annotated", "-m", "annotated"], {
+      cwd: fixture.repository,
+      env,
+    });
+    await run("git", ["branch", "collision"], { cwd: fixture.repository, env });
+    await commit("tag-wins", "tag target");
+    await run("git", ["tag", "collision"], { cwd: fixture.repository, env });
+    const sha = (
+      await run("git", ["rev-list", "--max-parents=0", "HEAD"], {
+        cwd: fixture.repository,
+      })
+    ).stdout.trim();
+
+    for (const [ref, marker] of [
+      ["", "tag-wins"],
+      ["main", "tag-wins"],
+      ["feature/with-slash", "slash-branch"],
+      ["lightweight", "lightweight-tag"],
+      ["annotated", "annotated-tag"],
+      [sha, "sha"],
+      ["collision", "tag-wins"],
+    ] as const) {
+      const source = ref === "" ? "github:acme/loops" : `github:acme/loops@${ref}`;
+      const paths = await launchRemoteAndWait(source, setupResult, fixture.env, tmp);
+      assert.equal(await readFile(join(paths.workspace, "marker.txt"), "utf8"), marker, ref);
+      assert.deepEqual(await remoteFolders(tmp), []);
+    }
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("an unknown ref is a bad argument and leaves no remote temp folder", async () => {
+  const setupResult = await setup();
+  const fixture = await makeGitFixture({ "manifest.yaml": markerManifest("unused") });
+  const tmp = await privateTmp(setupResult.base);
+  try {
+    const s = session();
+    assert.equal(
+      await launchCommand(
+        ["github:acme/loops@missing", "--trust"],
+        cli,
+        s.io,
+        { ...setupResult.env, ...fixture.env, TMPDIR: tmp },
+        { repository: setupResult.repo },
+      ),
+      2,
+    );
+    assert.match(s.err(), /error: ref missing not found in github\.com\/acme\/loops/);
+    assert.match(s.err(), /code: bad_argument/);
+    assert.deepEqual(await remoteFolders(tmp), []);
+    await assert.rejects(stat(join(setupResult.home, "runs")));
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("a dot segment in a GitHub path is refused as a bad argument", async () => {
+  const setupResult = await setup();
+  const tmp = await privateTmp(setupResult.base);
+  const s = session();
+  assert.equal(
+    await launchCommand(
+      ["github:acme/loops/a/../b", "--trust"],
+      cli,
+      s.io,
+      { ...setupResult.env, TMPDIR: tmp },
+      { repository: setupResult.repo },
+    ),
+    2,
+  );
+  assert.match(s.err(), /code: bad_argument/);
+  assert.deepEqual(await remoteFolders(tmp), []);
+});
+
+test("an unknown path is a bad argument and removes its remote temp folder", async () => {
+  const setupResult = await setup();
+  const fixture = await makeGitFixture({ "manifest.yaml": markerManifest("unused") });
+  const tmp = await privateTmp(setupResult.base);
+  try {
+    const sha = (await run("git", ["rev-parse", "HEAD"], { cwd: fixture.repository })).stdout
+      .trim()
+      .slice(0, 7);
+    const s = session();
+    assert.equal(
+      await launchCommand(
+        ["github:acme/loops/missing/path", "--trust"],
+        cli,
+        s.io,
+        { ...setupResult.env, ...fixture.env, TMPDIR: tmp },
+        { repository: setupResult.repo },
+      ),
+      2,
+    );
+    assert.match(
+      s.err(),
+      new RegExp(`error: path missing/path not found in github\\.com/acme/loops at ${sha}`),
+    );
+    assert.match(s.err(), /code: bad_argument/);
+    assert.deepEqual(await remoteFolders(tmp), []);
+    await assert.rejects(stat(join(setupResult.home, "runs")));
   } finally {
     await fixture.cleanup();
   }
