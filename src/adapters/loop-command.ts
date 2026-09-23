@@ -265,13 +265,23 @@ async function createAndStartLoop(
     io.err(renderOperatorConfirmation({ started: loopId }));
     return 0;
   }
+  io.out(`${loopId}\n`);
+  io.err(renderOperatorConfirmation({ started: loopId }));
+  return await attachLoop(loopId, home, io.err, options);
+}
+
+/** Attaches to a loop owner and reports runs through its end. */
+export async function attachLoop(
+  loopId: string,
+  home: string,
+  err: (text: string) => void,
+  options: LoopCommandOptions = {},
+): Promise<number> {
   const interrupted = new AbortController();
   const onInterrupt = (): void => interrupted.abort();
   process.once("SIGINT", onInterrupt);
   try {
-    io.out(`${loopId}\n`);
-    io.err(renderOperatorConfirmation({ started: loopId }));
-    return await followLoop(loopId, home, io.err, options, interrupted.signal);
+    return await followLoop(loopId, home, err, options, interrupted.signal);
   } finally {
     process.off("SIGINT", onInterrupt);
   }

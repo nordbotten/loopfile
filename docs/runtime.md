@@ -420,7 +420,9 @@ adds `workspace` and `workspaceMode` without changing its format version.
 `loopfile interrupt <runid>` stops the current attempt and starts a new attempt
 of the same step; it fails when the run has ended, crashed, or has no attempt
 running. `loopfile resume <runid>` continues a crashed run after the owner is
-startable again.
+startable again. `loopfile resume <loopid>` resumes a crashed loop, keeping its
+input-source position and waiting for any child that is still running; ended
+loops must be started again.
 
 ## Running from a script
 
