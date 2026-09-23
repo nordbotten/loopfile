@@ -178,7 +178,7 @@ test("run.created records the workspace and the attempts are numbered from 001",
   assert.deepEqual(ids, ["001-build", "002-test"]);
 });
 
-test("a run launched from a worktree records the main repository and worktree HEAD", async () => {
+test("a run launched from a worktree records its top level and HEAD", async () => {
   const { repo, source, home, runId } = await setup(CLEAN);
   const outerWorkspace = join(repo, "..", "outer-workspace");
   await git(repo, "worktree", "add", "-q", "-b", "outer", outerWorkspace);
@@ -197,7 +197,7 @@ test("a run launched from a worktree records the main repository and worktree HE
 
   const events = parseEventLog(await readFile(runPaths(home, runId).events, "utf8"));
   const created = events.find((event) => event.type === "run.created");
-  assert.equal(created?.type === "run.created" && created.targetFolder, repo);
+  assert.equal(created?.type === "run.created" && created.targetFolder, outerWorkspace);
   assert.equal(created?.type === "run.created" && Object.hasOwn(created, "repositoryPath"), false);
   assert.equal(created?.type === "run.created" && created.eventFormatVersion, 1);
   assert.equal(created?.type === "run.created" && created.baseCommit, outerHead);

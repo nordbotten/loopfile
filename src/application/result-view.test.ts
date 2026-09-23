@@ -122,7 +122,7 @@ test("result JSON carries target and workspace facts without changing its versio
   assert.doesNotMatch(json, /workspaceExists/);
 });
 
-test("legacy results keep absent branch facts as empty strings", () => {
+test("results keep absent branch facts empty in JSON and hide them in text", () => {
   const legacy: RunEvent = {
     type: "run.created",
     runId: "legacy",
@@ -136,6 +136,11 @@ test("legacy results keep absent branch facts as empty strings", () => {
   const result = buildResultView([legacy], "review-loop");
   assert.equal(result.branch, "");
   assert.equal(result.baseCommit, "");
+  assert.equal(JSON.parse(JSON.stringify(result)).branch, "");
+  assert.equal(JSON.parse(JSON.stringify(result)).baseCommit, "");
+  const text = renderResultView(result);
+  assert.doesNotMatch(text, /^branch(?:\s|$)/m);
+  assert.doesNotMatch(text, /^base commit(?:\s|$)/m);
 });
 
 test("the text result view keeps every field and value on one line", () => {

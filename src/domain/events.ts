@@ -62,10 +62,10 @@ export interface RunCreated extends EventBase {
   readonly eventFormatVersion: number;
   readonly modelDigest: string;
   readonly targetFolder: string;
-  /** Older run logs omit workspace fields; future non-Git modes omit branch facts. */
+  /** Older run logs omit workspace fields; copy workspaces omit branch facts. */
   readonly workspacePath?: string;
   readonly workspaceMode?: WorkspaceMode;
-  readonly isolateKind?: "worktree";
+  readonly isolateKind?: "worktree" | "copy";
   readonly baseCommit?: string;
   /** `loopfile/<runid>` for modes that create a branch. */
   readonly branch?: string;

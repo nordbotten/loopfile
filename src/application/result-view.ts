@@ -134,8 +134,10 @@ export function renderResultView(view: ResultView): string {
       "workspace",
       view.workspaceMode === "" ? view.workspace : `${view.workspaceMode} · ${view.workspace}`,
     ),
-    resultLine("branch", view.branch),
-    resultLine("base commit", view.baseCommit),
+  );
+  if (view.branch !== "") lines.push(resultLine("branch", view.branch));
+  if (view.baseCommit !== "") lines.push(resultLine("base commit", view.baseCommit));
+  lines.push(
     resultLine("last outcome", outcomeText(view.lastOutcome)),
     ...valueLines("input", view.inputs),
     ...valueLines("output", view.outputs),

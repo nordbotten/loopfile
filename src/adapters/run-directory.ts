@@ -40,7 +40,7 @@ export interface RunPaths {
   readonly ownerLog: string;
   /** One folder per attempt, `<nnn>-<step>` (#15). */
   readonly attempts: string;
-  /** The Git worktree every step runs in (CONTEXT.md). Made by #16, not here. */
+  /** The isolated workspace every step runs in: a Git worktree or full copy. Made by #16, not here. */
   readonly workspace: string;
   /** The Materialized Loopfile. The only folder whose contents are the user's. */
   readonly loopfile: string;
