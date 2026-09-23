@@ -116,6 +116,7 @@ async function driveLoop(
       deps.env,
       loopId,
       workflow,
+      history,
     );
 
     if (action.kind === "wait") {
@@ -210,12 +211,13 @@ async function nextAction(
   ownerEnv: Record<string, string | undefined>,
   loopId: string,
   workflow: Workflow | undefined,
+  history: readonly LoopEvent[],
 ): Promise<ReturnType<typeof nextLoopAction>> {
   if (status.maxRuns !== null && status.runs >= status.maxRuns) {
-    return nextLoopAction(status, child, source, undefined, workflow);
+    return nextLoopAction(status, child, source, undefined, workflow, history);
   }
   const nextResult = await nextResultFor(source, child, repositoryPath, ownerEnv, loopId);
-  return nextLoopAction(status, child, source, nextResult, workflow);
+  return nextLoopAction(status, child, source, nextResult, workflow, history);
 }
 
 async function nextResultFor(

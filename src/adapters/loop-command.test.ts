@@ -612,6 +612,14 @@ test("loop input errors happen before a loop folder exists", async () => {
         message: "--max-runs must be an integer of 1 or more",
       },
       {
+        args: ["--retry=-1", "--times", "2", "-d"],
+        message: "--retry must be an integer of 0 or more",
+      },
+      {
+        args: ["--retry", "nope", "--times", "2", "-d"],
+        message: "--retry must be an integer of 0 or more",
+      },
+      {
         args: ["--times", "2", "--list", "items", "-d"],
         message: "a loop takes only one input source",
       },
@@ -681,6 +689,66 @@ test("max runs caps a retry", async () => {
     const events = await waitForEnd(setupResult.home, captured.output().trim());
     assert.equal(events.filter((event) => event.type === "loop.run_started").length, 1);
     assert.equal(loopStatus(events).endReason, "max_runs");
+  } finally {
+    await rm(setupResult.root, { recursive: true, force: true });
+  }
+});
+
+test("retries a failed run in a new workspace and completes", async () => {
+  const setupResult = await setup();
+  const state = join(setupResult.root, "outside-workspace-state");
+  await writeFile(
+    join(setupResult.source, "manifest.yaml"),
+    `formatVersion: 1\nsteps:\n  - id: work\n    kind: command\n    run: ${JSON.stringify(`test -e ${state} || (touch ${state} && exit 1)`)}\n`,
+  );
+  try {
+    const captured = io();
+    const code = await loopCommand(
+      ["loop", setupResult.source, "--times", "1", "--retry", "1"],
+      cli,
+      captured.value,
+      setupResult.env,
+      { repository: setupResult.repo, pollMs: 10, ownerPingTimeoutMs: 50 },
+    );
+    assert.equal(code, 0, captured.errors());
+    const events = await waitForEnd(setupResult.home, captured.output().trim());
+    const started = events.filter(
+      (event): event is Extract<LoopEvent, { type: "loop.run_started" }> =>
+        event.type === "loop.run_started",
+    );
+    assert.equal(events[0]?.type === "loop.created" ? events[0].retry : undefined, 1);
+    assert.equal(started.length, 2);
+    assert.equal(started[1]?.retryOf, started[0]?.runId);
+    assert.deepEqual(
+      { inputSet: started[1]?.inputSet, sourceIndex: started[1]?.sourceIndex },
+      { inputSet: started[0]?.inputSet, sourceIndex: started[0]?.sourceIndex },
+    );
+    assert.equal(loopStatus(events).state, "completed");
+  } finally {
+    await rm(setupResult.root, { recursive: true, force: true });
+  }
+});
+
+test("retry zero fails after one run", async () => {
+  const setupResult = await setup();
+  const state = join(setupResult.root, "outside-workspace-state");
+  await writeFile(
+    join(setupResult.source, "manifest.yaml"),
+    `formatVersion: 1\nsteps:\n  - id: work\n    kind: command\n    run: ${JSON.stringify(`test -e ${state} || (touch ${state} && exit 1)`)}\n`,
+  );
+  try {
+    const captured = io();
+    const code = await loopCommand(
+      ["loop", setupResult.source, "--times", "1", "--retry", "0"],
+      cli,
+      captured.value,
+      setupResult.env,
+      { repository: setupResult.repo, pollMs: 10, ownerPingTimeoutMs: 50 },
+    );
+    assert.equal(code, 1, captured.errors());
+    const events = await waitForEnd(setupResult.home, captured.output().trim());
+    assert.equal(events.filter((event) => event.type === "loop.run_started").length, 1);
+    assert.equal(loopStatus(events).endReason, "run_failed");
   } finally {
     await rm(setupResult.root, { recursive: true, force: true });
   }

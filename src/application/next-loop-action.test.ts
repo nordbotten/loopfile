@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import type { LoopEvent } from "../domain/events.ts";
 import type { LoopStatus } from "../domain/status.ts";
 import { type LastChild, nextLoopAction } from "./next-loop-action.ts";
 
@@ -32,6 +33,28 @@ const status: LoopStatus = {
 
 function action(child: LastChild) {
   return nextLoopAction(status, child);
+}
+
+function retryAction(child: LastChild, history: readonly LoopEvent[], retry = 1) {
+  return nextLoopAction({ ...status, retry }, child, undefined, undefined, undefined, history);
+}
+
+function started(
+  runId: string,
+  inputSet: Record<string, string>,
+  sourceIndex: number,
+  retryOf: string | null = null,
+): Extract<LoopEvent, { type: "loop.run_started" }> {
+  return {
+    seq: 2,
+    at: "2026-09-22T10:00:00.000Z",
+    type: "loop.run_started",
+    runId,
+    index: 1,
+    inputSet,
+    sourceIndex,
+    retryOf,
+  };
 }
 
 test("starts the first run with fixed inputs", () => {
@@ -75,9 +98,81 @@ test("does not need a next command result when max runs is reached", () => {
 
 test("allows a failed run's retry with the same input", () => {
   assert.deepEqual(
-    nextLoopAction(
-      { ...status, retry: 1, lastRetryCount: 0 },
+    retryAction({ state: "failed", runId: "run-one" }, [
+      started("run-one", { project: "loopfile" }, 1),
+    ]),
+    {
+      kind: "start",
+      inputSet: { project: "loopfile" },
+      sourceIndex: 1,
+      retryOf: "run-one",
+    },
+  );
+});
+
+test("ends a failed run when its retries are used up", () => {
+  assert.deepEqual(
+    retryAction(
+      { state: "failed", runId: "run-two" },
+      [
+        started("run-one", { project: "loopfile" }, 1),
+        started("run-two", { project: "loopfile" }, 1, "run-one"),
+      ],
+      1,
+    ),
+    { kind: "end", reason: "run_failed", detail: "run run-two failed" },
+  );
+});
+
+test("counts the retry chain per input set", () => {
+  assert.deepEqual(
+    retryAction({ state: "failed", runId: "run-b" }, [
+      started("run-a", { issue: "a" }, 1),
+      started("run-a-retry", { issue: "a" }, 1, "run-a"),
+      started("run-b", { issue: "b" }, 2),
+    ]),
+    {
+      kind: "start",
+      inputSet: { issue: "b" },
+      sourceIndex: 2,
+      retryOf: "run-b",
+    },
+  );
+});
+
+test("counts every retry in the chain", () => {
+  assert.deepEqual(
+    retryAction(
+      { state: "failed", runId: "run-two" },
+      [
+        started("run-one", { project: "loopfile" }, 1),
+        started("run-two", { project: "loopfile" }, 1, "run-one"),
+      ],
+      2,
+    ),
+    {
+      kind: "start",
+      inputSet: { project: "loopfile" },
+      sourceIndex: 1,
+      retryOf: "run-two",
+    },
+  );
+});
+
+test("does not retry a failed child absent from history", () => {
+  assert.deepEqual(retryAction({ state: "failed", runId: "missing" }, []), {
+    kind: "end",
+    reason: "run_failed",
+    detail: "run missing failed",
+  });
+});
+
+test("counts a retry whose parent is absent", () => {
+  assert.deepEqual(
+    retryAction(
       { state: "failed", runId: "run-one" },
+      [started("run-one", { project: "loopfile" }, 1, "missing")],
+      2,
     ),
     {
       kind: "start",
@@ -93,6 +188,10 @@ test("max runs stops a retry", () => {
     nextLoopAction(
       { ...status, retry: 1, maxRuns: 1, runs: 1, lastRetryCount: 0 },
       { state: "failed", runId: "run-one" },
+      undefined,
+      undefined,
+      undefined,
+      [started("run-one", { project: "loopfile" }, 1)],
     ),
     { kind: "end", reason: "max_runs" },
   );
