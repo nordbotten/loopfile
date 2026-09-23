@@ -2,18 +2,27 @@
 #
 # setup -> implement -> test -> review -> ship
 #
-# A failed test, a review that asks for changes, a red CI or a conflict with
-# main goes to fix, not back to implement, so the agent works on the feedback and does not start over.
+# Feedback goes to a fix step for its cause, not back to implement, so the agent
+# works on the feedback and does not start over. Each cause has its own budget,
+# so a flaky test cannot use up the visits a review needs:
+#   test failed        -> fix-test   -> test
+#   changes requested  -> fix-review -> test
+#   red CI             -> fix-ci     -> test
+#   conflict with main -> resolve    -> test
+#
+# test merges main first, so a conflict comes early and small. ship holds one
+# lock for every run on this machine, so only one run merges at a time.
 #
 # Start it with scripts/run-ticket.sh, which picks the issue and gives the inputs.
 formatVersion: 1
 inputs:
   task: the issue number, title and body
-  issue: the issue number, for "Closes #N"
+  issue: 'the issue number, for "Closes #N"'
   merge: yes to merge the PR when CI is green, no to stop at a green PR
   ci: yes to wait for CI on the PR, no to skip the wait when the repository has no CI
-maxTransitions: 30
-runTimeout: 3h
+maxTransitions: 50
+# ship can wait for other runs' merges, see its timeout.
+runTimeout: 4h
 
 steps:
   - id: setup
@@ -24,22 +33,12 @@ steps:
   - id: implement
     kind: agent
     harness: pi
-    model: openai-codex/gpt-5.6-luna
+    model: openai-codex/gpt-6-luna
     effort: xhigh
     promptFile: prompts/implement.md
     timeout: 60m
-    on:
-      done: test
-      blocked: $failure
-
-  - id: fix
-    kind: agent
-    harness: pi
-    model: openai-codex/gpt-5.6-luna
-    effort: xhigh
-    promptFile: prompts/fix.md
-    timeout: 60m
-    maxAttempts: 5          # visits from test, review and ship count
+    outputs:
+      criteria: [done]
     on:
       done: test
       blocked: $failure
@@ -48,46 +47,122 @@ steps:
     kind: command
     run: |
       log="$LOOPFILE_SCRATCH/test.log"
-      # Loops run side by side on a shared machine, so stay low and use few cores.
-      if nice -n 10 npm run gate:quiet > "$log" 2>&1 &&
-        nice -n 10 npm run quality:mutation -- --concurrency 4 >> "$log" 2>&1; then
-        outcome=passed
-      else
+      # Other runs merge to main while this one works. Bring main in before each
+      # test, so a conflict comes while it is small. It stays in progress for resolve.
+      git fetch origin main
+      if ! git merge --no-edit origin/main > "$LOOPFILE_SCRATCH/merge.txt" 2>&1; then
+        { cat "$LOOPFILE_SCRATCH/merge.txt"; git diff --name-only --diff-filter=U; } > "$LOOPFILE_SCRATCH/conflict.txt"
+        loopfile data put test.conflict "$LOOPFILE_SCRATCH/conflict.txt"
+        loopfile result conflict
+        exit 0
+      fi
+      # A left-over mutation sandbox holds a nested biome.json that breaks lint.
+      rm -rf .stryker-tmp
+      outcome=passed
+      if ! npm run verify > "$log" 2>&1; then
+        # Run it once more. A pass the second time is a flaky test, not a
+        # problem of this branch, so it does not go to fix.
+        mv "$log" "$log.first"
+        if npm run verify > "$log" 2>&1; then
+          tail -c 20000 "$log.first" > "$log.flake"
+          loopfile data put test.flake "$log.flake"
+        else
+          outcome=failed
+        fi
+      fi
+      # The run is niced by run-ticket.sh, so mutation can use half the cores.
+      if [ "$outcome" = passed ] &&
+        ! npm run quality:mutation -- --concurrency 8 >> "$log" 2>&1; then
         outcome=failed
       fi
       tail -c 60000 "$log" > "$log.tail"
       loopfile data put test.log "$log.tail"
       loopfile result "$outcome"
     timeout: 45m
-    outputs: [log]
+    outputs:
+      log: [passed, failed]
+      conflict: [conflict]
     on:
       passed: review
-      failed: fix
+      failed: fix-test
+      conflict: resolve
 
   - id: review
     kind: agent
     harness: claude
-    model: claude-opus-5
+    model: claude-opus-5-5
     effort: medium
     args:
       - --settings
-      - '{"permissions":{"allow":["Bash(git diff *)","Bash(git log *)","Bash(git show *)","Bash(git status *)","Bash(gh issue view *)","Bash(gh pr view *)"]}}'
+      - '{"permissions":{"allow":["Bash(git diff *)","Bash(git log *)","Bash(git show *)","Bash(git status *)","Bash(git rev-parse *)","Bash(gh issue view *)","Bash(gh pr view *)"]}}'
     promptFile: prompts/review.md
     timeout: 20m
     outputs:
       feedback: [changes_requested]
       notes: [approved]
+      sha: [approved]
     on:
       approved: ship
-      changes_requested: fix
+      changes_requested: fix-review
+
+  - id: fix-test
+    kind: agent
+    harness: pi
+    model: openai-codex/gpt-6-luna
+    effort: xhigh
+    promptFile: prompts/fix.md
+    timeout: 60m
+    maxAttempts: 4
+    on:
+      done: test
+      blocked: $failure
+
+  - id: fix-review
+    kind: agent
+    harness: pi
+    model: openai-codex/gpt-6-luna
+    effort: xhigh
+    promptFile: prompts/fix.md
+    timeout: 60m
+    maxAttempts: 3
+    on:
+      done: test
+      blocked: $failure
+
+  - id: fix-ci
+    kind: agent
+    harness: pi
+    model: openai-codex/gpt-6-luna
+    effort: xhigh
+    promptFile: prompts/fix.md
+    timeout: 60m
+    maxAttempts: 3
+    on:
+      done: test
+      blocked: $failure
+
+  - id: resolve
+    kind: agent
+    harness: pi
+    model: openai-codex/gpt-6-luna
+    effort: xhigh
+    promptFile: prompts/resolve.md
+    timeout: 60m
+    maxAttempts: 3
+    on:
+      done: test
+      blocked: $failure
 
   - id: ship
     kind: command
     run: |
       issue=$(loopfile data get input.issue)
       branch=$(git branch --show-current)
-      # Other runs merge to main while this one works. Bring main in first, so
-      # the PR does not go stale. A conflict stays in the workspace for fix.
+      # One run ships at a time on this machine. While this run holds the lock,
+      # no other run merges, so main does not move between its CI and its merge.
+      mkdir -p "$HOME/.loopfile/ticket"
+      exec 9> "$HOME/.loopfile/ticket/ship.lock"
+      flock 9
       git fetch origin main
       if ! git merge --no-edit origin/main > "$LOOPFILE_SCRATCH/merge.txt" 2>&1; then
         { cat "$LOOPFILE_SCRATCH/merge.txt"; git diff --name-only --diff-filter=U; } > "$LOOPFILE_SCRATCH/conflict.txt"
@@ -122,7 +197,7 @@ steps:
       if [ "$ci_green" = yes ]; then
         if [ "$(loopfile data get input.merge)" = yes ]; then
           if ! gh pr merge --squash; then
-            # main wants an up-to-date branch, and another run merged first.
+            # Someone merged to main outside the lock, for example by hand.
             # Ship again: merge main, push and wait for CI once more.
             [ "$(gh pr view --json mergeStateStatus -q .mergeStateStatus)" = BEHIND ] || exit 1
             loopfile result behind
@@ -139,13 +214,14 @@ steps:
         loopfile data put ship.ci "$LOOPFILE_SCRATCH/ci.log"
         loopfile result ci_failed
       fi
-    timeout: 45m
+    # Includes the wait for the lock while other runs ship.
+    timeout: 2h
     outputs:
       ci: [ci_failed]
       conflict: [conflict]
     on:
       merged: $success
       ready: $success
-      ci_failed: fix
-      conflict: fix
+      ci_failed: fix-ci
+      conflict: resolve
       behind: ship

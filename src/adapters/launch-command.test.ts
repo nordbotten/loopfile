@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, readdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
@@ -11,6 +11,7 @@ import { parseEventLog } from "../application/replay.ts";
 import { type LaunchIo, launchCommand, startRun } from "./launch-command.ts";
 import { listCommand } from "./list-command.ts";
 import type { MonitorIo } from "./monitor.ts";
+import { removeAfterOwnersExit } from "./owner-cleanup.test.ts";
 import { writeArchive } from "./pack-command.ts";
 import { makeGitFixture } from "./remote-fixture.ts";
 import { resultCommand } from "./result-command.ts";
@@ -28,7 +29,7 @@ const gitEnv = {
 };
 
 const root = await realpath(await mkdtemp(join(tmpdir(), "loopfile-launch-")));
-after(() => rm(root, { recursive: true, force: true }));
+after(() => removeAfterOwnersExit(root));
 let count = 0;
 
 /** The step reads `input.issue` with the step command, and fails unless it is 42. */
@@ -95,24 +96,18 @@ function session(tty = false) {
   return { io, screen, out: () => out, err: () => err };
 }
 
-async function remoteFolders(): Promise<readonly string[]> {
-  return (await readdir(tmpdir(), { withFileTypes: true }))
-    .filter((entry) => entry.isDirectory() && entry.name.startsWith("loopfile-remote-"))
-    .map((entry) => entry.name)
-    .sort();
+/**
+ * A temp folder of the test's own for a remote fetch, so a check that the
+ * fetch cleaned up never sees another test's `loopfile-remote-` folder.
+ */
+async function privateTmp(base: string): Promise<string> {
+  const tmp = join(base, "tmp");
+  await mkdir(tmp);
+  return tmp;
 }
 
-async function waitForRemoteFolders(expected: readonly string[]): Promise<void> {
-  for (let tries = 0; tries < 100; tries += 1) {
-    const actual = await remoteFolders();
-    if (
-      actual.length === expected.length &&
-      actual.every((name, index) => name === expected[index])
-    )
-      return;
-    await new Promise((resolve) => setTimeout(resolve, 20));
-  }
-  assert.deepEqual(await remoteFolders(), expected);
+async function remoteFolders(tmp: string): Promise<readonly string[]> {
+  return (await readdir(tmp)).filter((name) => name.startsWith("loopfile-remote-"));
 }
 
 function resultOf(events: ReturnType<typeof parseEventLog>): string | undefined {
@@ -143,11 +138,11 @@ async function detached(source: string, home: string, env: NodeJS.ProcessEnv, re
 }
 
 test("a trusted GitHub Remote Loopfile runs and uses the repository name", async () => {
-  const { repo, home, env } = await setup();
+  const { base, repo, home, env } = await setup();
   const fixture = await makeGitFixture({
     "manifest.yaml": "formatVersion: 1\nsteps:\n  - id: done\n    kind: command\n    run: 'true'\n",
   });
-  const remoteBefore = await remoteFolders();
+  const tmp = await privateTmp(base);
   try {
     const s = session();
     assert.equal(
@@ -158,13 +153,14 @@ test("a trusted GitHub Remote Loopfile runs and uses the repository name", async
         {
           ...env,
           ...fixture.env,
+          TMPDIR: tmp,
         },
         { repository: repo },
       ),
       0,
       s.err(),
     );
-    await waitForRemoteFolders(remoteBefore);
+    assert.deepEqual(await remoteFolders(tmp), []);
     const runId = s.out().trim();
     assert.equal(resultOf(await waitForEnd(home, runId)), "success");
     const status = JSON.parse(await readFile(runPaths(home, runId).status, "utf8")) as {
@@ -215,9 +211,9 @@ test("an untrusted GitHub Remote Loopfile refuses without making a run", async (
 });
 
 test("a remote manifest failure cleans its fetched folder", async () => {
-  const { repo, home, env } = await setup("formatVersion: 1\nsteps: []\n");
+  const { base, repo, home, env } = await setup("formatVersion: 1\nsteps: []\n");
   const fixture = await makeGitFixture({ "manifest.yaml": "formatVersion: 1\nsteps: []\n" });
-  const remoteBefore = await remoteFolders();
+  const tmp = await privateTmp(base);
   try {
     const s = session();
     assert.equal(
@@ -225,12 +221,12 @@ test("a remote manifest failure cleans its fetched folder", async () => {
         ["github:acme/loops", "--trust"],
         cli,
         s.io,
-        { ...env, ...fixture.env },
+        { ...env, ...fixture.env, TMPDIR: tmp },
         { repository: repo },
       ),
       1,
     );
-    await waitForRemoteFolders(remoteBefore);
+    assert.deepEqual(await remoteFolders(tmp), []);
     await assert.rejects(stat(join(home, "runs")));
   } finally {
     await fixture.cleanup();

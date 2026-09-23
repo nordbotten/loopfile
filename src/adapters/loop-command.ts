@@ -389,7 +389,8 @@ async function reportRuns(
 
 type LoopRunEndState = StatusProjection["state"] | "crashed";
 
-async function childEndState(
+/** How a loop's child run ended, or `undefined` while it runs. Exported for tests. */
+export async function childEndState(
   home: string,
   runId: string,
   loopEnded: boolean,
@@ -398,9 +399,13 @@ async function childEndState(
   const status = await readChildStatus(runPaths(home, runId).status);
   if (status === undefined) return loopEnded ? "crashed" : undefined;
   if (status.state !== "running") return status.state;
-  return (await pingOwner(runPaths(home, runId).socket, ownerPingTimeoutMs)) === runId
-    ? undefined
-    : "crashed";
+  if ((await pingOwner(runPaths(home, runId).socket, ownerPingTimeoutMs)) === runId) {
+    return undefined;
+  }
+  // The run may have ended while the ping waited: its owner writes the final
+  // status before it closes the socket, so read the status again first.
+  const final = await readChildStatus(runPaths(home, runId).status);
+  return final !== undefined && final.state !== "running" ? final.state : "crashed";
 }
 
 async function readLoopStatus(path: string): Promise<LoopStatus | undefined> {

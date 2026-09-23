@@ -24,7 +24,7 @@
     "typecheck": "tsc --noEmit",
     "lint": "biome check .",
     "format": "biome check --write .",
-    "test": "node --test 'src/**/*.test.ts' 'quality/**/*.test.mjs'",
+    "test": "node --test --test-timeout=120000 'src/**/*.test.ts' 'quality/**/*.test.mjs'",
     "quality:zones": "node quality/quality-zones.mjs",
     "quality:suppressions": "node quality/quality-suppressions.mjs",
     "quality:imports": "node quality/quality-imports.mjs",
@@ -33,7 +33,8 @@
     "quality:ratchet": "node quality/quality-ratchet-check.mjs",
     "quality": "node quality/quality-runner.mjs",
     "gate": "node quality/quality-runner.mjs --gate",
-    "gate:quiet": "node quality/quality-runner.mjs --gate --quiet"
+    "gate:quiet": "node quality/quality-runner.mjs --gate --quiet",
+    "verify": "npm run build && npm run lint && npm run gate:quiet && node --test --test-timeout=120000 'quality/**/*.test.mjs'"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.14",

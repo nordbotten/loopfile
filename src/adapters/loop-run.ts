@@ -317,8 +317,13 @@ async function childState(home: string, runId: string): Promise<LastChild> {
   if (childStatus !== undefined && childStatus.state !== "running") {
     return { state: childStatus.state, runId };
   }
-  const alive = (await pingOwner(paths.socket)) === runId;
-  return { state: alive ? "running" : "crashed", runId };
+  if ((await pingOwner(paths.socket)) === runId) return { state: "running", runId };
+  // The run may have ended while the ping waited: its owner writes the final
+  // status before it closes the socket, so read the status again before
+  // calling the run crashed.
+  const final = await readChildStatus(paths.status);
+  if (final !== undefined && final.state !== "running") return { state: final.state, runId };
+  return { state: "crashed", runId };
 }
 
 async function waitForChild(home: string, runId: string, pollMs = CHILD_POLL_MS): Promise<void> {

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
@@ -10,13 +10,14 @@ import { parseEventLog } from "../application/replay.ts";
 import { interruptCommand } from "./interrupt-command.ts";
 import { type LaunchIo, launchCommand } from "./launch-command.ts";
 import type { MonitorIo } from "./monitor.ts";
+import { removeAfterOwnersExit } from "./owner-cleanup.test.ts";
 import { pathExists, type RunPaths, runPaths } from "./run-directory.ts";
 import { requestCancel, startRunOwner } from "./run-owner.ts";
 
 const run = promisify(execFile);
 const cli = fileURLToPath(new URL("../cli.ts", import.meta.url));
 const root = await realpath(await mkdtemp(join(tmpdir(), "loopfile-interrupt-")));
-after(() => rm(root, { recursive: true, force: true }));
+after(() => removeAfterOwnersExit(root));
 let count = 0;
 
 const gitEnv = {

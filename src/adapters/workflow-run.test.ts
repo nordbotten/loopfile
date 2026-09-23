@@ -1380,7 +1380,6 @@ steps:
   - id: test
     kind: agent
     harness: claude
-    timeout: 5s
     prompt: test
     outputs: [log]
     on:
@@ -1405,7 +1404,7 @@ steps:
       test: [
         [
           { do: "dataPut", key: "test.log", content: "test handoff" },
-          { do: "sleep", ms: 6000 },
+          { do: "exit", code: 1 },
         ],
       ],
       fix: [
@@ -1722,13 +1721,14 @@ steps:
       ? true
       : undefined;
   });
+  assert.deepEqual(await running, { result: "success" });
+  // Counted after the run ends: the replacement writes attempt.started before its iteration.started.
   const events = parseEventLog(await readFile(paths.events, "utf8"));
   assert.equal(
     events.filter((event) => event.type === "iteration.started").length,
     2,
     "the replacement attempt starts its first iteration, but the interrupted attempt starts no second iteration",
   );
-  assert.deepEqual(await running, { result: "success" });
 });
 
 test("a cancel on the control socket stops the attempt, kills what ignores SIGTERM, and ends as cancelled", async () => {

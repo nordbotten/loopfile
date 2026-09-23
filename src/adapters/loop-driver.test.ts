@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
@@ -14,6 +14,7 @@ import { type FakeScript, fakeHarnessAdapters } from "./fake-harness.test.ts";
 import { startRun } from "./launch-command.ts";
 import { localExecutor } from "./local-executor.ts";
 import { runLoop } from "./loop-run.ts";
+import { removeAfterOwnersExit } from "./owner-cleanup.test.ts";
 import { programIdentity } from "./program-identity.ts";
 import { loopPaths, runPaths } from "./run-directory.ts";
 import { statusCommand } from "./status-command.ts";
@@ -28,7 +29,7 @@ const gitEnv = {
   GIT_COMMITTER_EMAIL: "test@example.invalid",
 };
 const root = await mkdtemp(join(tmpdir(), "loopfile-loop-run-"));
-after(() => rm(root, { recursive: true, force: true }));
+after(() => removeAfterOwnersExit(root));
 let count = 0;
 
 async function setup(
