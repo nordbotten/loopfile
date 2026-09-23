@@ -23,6 +23,7 @@ export interface GitFixture {
 export async function makeGitFixture(
   files: Readonly<Record<string, string | Uint8Array>>,
   source = "acme/loops",
+  remotePrefix = "https://github.com/",
 ): Promise<GitFixture> {
   const root = await mkdtemp(join(tmpdir(), "loopfile-git-fixture-"));
   const repository = join(root, ...source.split("/"));
@@ -48,7 +49,7 @@ export async function makeGitFixture(
       ...env,
       GIT_CONFIG_COUNT: "1",
       GIT_CONFIG_KEY_0: `url.file://${root}/.insteadOf`,
-      GIT_CONFIG_VALUE_0: "https://github.com/",
+      GIT_CONFIG_VALUE_0: remotePrefix,
     },
     cleanup: () => rm(root, { recursive: true, force: true }),
   };

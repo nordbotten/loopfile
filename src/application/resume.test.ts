@@ -33,7 +33,7 @@ const created = {
   runId: "r-1",
   eventFormatVersion: 1,
   modelDigest: "sha256:model",
-  repositoryPath: "/repo",
+  targetFolder: "/repo",
   baseCommit: "abc",
   branch: "loopfile/r-1",
   inputs: [],

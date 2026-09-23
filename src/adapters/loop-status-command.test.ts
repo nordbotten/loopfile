@@ -353,7 +353,7 @@ test("status gets the current child step from a live child owner", async () => {
         runId,
         eventFormatVersion: 1,
         modelDigest: "sha256:program",
-        repositoryPath: "/repo",
+        targetFolder: "/repo",
         baseCommit: "0".repeat(40),
         branch: `loopfile/${runId}`,
         inputs: [],
