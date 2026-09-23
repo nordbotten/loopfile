@@ -44,10 +44,10 @@ function git(...args) {
  * real timers. They reach most of `CORE`, so Stryker ran each one for most
  * mutants, and a mutant that made a run hang cost a full timeout. The last three
  * caused almost all of the timeouts and made the run over three times slower.
- * The unit tests must kill `CORE` mutants on their own. `gate` and `check` still
- * run these files.
+ * The unit tests must kill `CORE` mutants on their own. Process, repository and
+ * real-timer tests are left out; `gate` and `check` still run these files.
  */
-const SLOW_TESTS = new Set([
+const MUTATION_EXCLUDED_TESTS = new Set([
   "src/adapters/workflow-run.test.ts",
   "src/adapters/launch-command.test.ts",
   "src/adapters/monitor.test.ts",
@@ -58,12 +58,26 @@ const SLOW_TESTS = new Set([
   "src/adapters/feedback-loop.test.ts",
   "src/adapters/resume-command.test.ts",
   "src/adapters/continue-command.test.ts",
+  "src/adapters/fake-harness-check.test.ts",
+  "src/adapters/fake-harness.test.ts",
+  "src/adapters/interrupt-command.test.ts",
+  "src/adapters/local-executor.test.ts",
+  "src/adapters/loop-cancel-command.test.ts",
+  "src/adapters/loop-driver.test.ts",
+  "src/adapters/owner-command.test.ts",
+  "src/adapters/remote-fetch.test.ts",
+  "src/adapters/remove-command.test.ts",
+  "src/adapters/ticket-run.test.ts",
+  "src/adapters/workspace.test.ts",
+  "src/cli.test.ts",
 ]);
 
 export default {
   testRunner: "tap",
   plugins: ["@stryker-mutator/tap-runner"],
-  tap: { testFiles: filesInZone("TESTS").filter((file) => !SLOW_TESTS.has(file)) },
+  tap: {
+    testFiles: filesInZone("TESTS").filter((file) => !MUTATION_EXCLUDED_TESTS.has(file)),
+  },
   mutate: changedCore(
     git("diff", "-U0", "--merge-base", "origin/main"),
     git("ls-files", "--others", "--exclude-standard"),
