@@ -7,6 +7,7 @@ import { PassThrough } from "node:stream";
 import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import { loopStatus } from "../application/loop-status.ts";
 import { parseEventLog } from "../application/replay.ts";
 import type { LoopEvent, RunEvent } from "../domain/events.ts";
 import { cancelCommand } from "./cancel-command.ts";
@@ -14,6 +15,7 @@ import { materializeDirectory } from "./directory-loader.ts";
 import { openEventLog } from "./event-log.ts";
 import { loopCommand } from "./loop-command.ts";
 import { loopResumeCommand } from "./loop-resume-command.ts";
+import { runLoop } from "./loop-run.ts";
 import type { MonitorIo } from "./monitor.ts";
 import { removeAfterOwnersExit } from "./owner-cleanup.test.ts";
 import { programIdentity } from "./program-identity.ts";
@@ -716,6 +718,68 @@ steps:
   assert.equal(created?.type === "run.created" ? created.loopIndex : undefined, 1);
 });
 
+test("resume continues a loop after its driver throws once", async () => {
+  const setupResult = await setup(`formatVersion: 1
+steps:
+  - id: work
+    kind: command
+    run: 'true'
+`);
+  const loopId = "loop-20260923-000004-dddd";
+  const paths = await createLoopDirectory({
+    home: setupResult.home,
+    loopId,
+    targetRepository: setupResult.repo,
+  });
+  await materializeDirectory(setupResult.source, paths.loopfile);
+  const log = await openEventLog<LoopEvent>(paths.events);
+  await log.append({
+    type: "loop.created",
+    loopId,
+    eventFormatVersion: 1,
+    repositoryPath: setupResult.repo,
+    loopfileName: "source",
+    source: { kind: "times", count: 1 },
+    fixedInputs: {},
+    retry: 0,
+    maxRuns: null,
+    pauseMs: null,
+    program: await programIdentity(cli),
+  });
+  await log.append({ type: "owner.started", pid: process.pid, host: "test" });
+  await log.close();
+
+  let threw = false;
+  await assert.rejects(
+    runLoop(setupResult.home, loopId, {
+      cli,
+      env: setupResult.env,
+      afterRunStarted: async () => {
+        if (threw) return;
+        threw = true;
+        throw new Error("injected driver failure");
+      },
+    }),
+    /injected driver failure/,
+  );
+  const internalEnd = (await events(setupResult.home, loopId)).at(-1);
+  assert.equal(internalEnd?.type, "loop.ended");
+  assert.equal(internalEnd?.type === "loop.ended" && internalEnd.reason, "internal_error");
+  assert.equal(internalEnd?.type === "loop.ended" && internalEnd.childSeq, null);
+
+  const resumed = await resume([loopId, "-d"], setupResult.env);
+  assert.equal(resumed.code, 0, resumed.err);
+  const history = await waitForEnd(setupResult.home, loopId);
+  const end = history.at(-1);
+  assert.equal(end?.type === "loop.ended" && end.reason, "source_empty");
+  assert.equal(loopStatus(history).state, "completed");
+  assert.equal(
+    (await events(setupResult.home, loopId)).filter((event) => event.type === "loop.run_started")
+      .length,
+    1,
+  );
+});
+
 test("loop resume refuses live, ended, missing and invalid loops with the required codes", async () => {
   const liveSetup = await setup(
     "formatVersion: 1\nsteps:\n  - id: work\n    kind: command\n    run: sleep 1\n",
@@ -735,13 +799,13 @@ test("loop resume refuses live, ended, missing and invalid loops with the requir
   assert.match(ended.err, /code: already_ended/);
   assert.match(ended.err, /help: Resume is only for a crashed loop: start a new loop instead\./);
 
-  const internalId = "loop-20260923-000001-bbbb";
-  const internalPaths = loopPaths(endedSetup.home, internalId);
-  await mkdir(internalPaths.root, { recursive: true });
-  const internalLog = await openEventLog<LoopEvent>(internalPaths.events);
-  await internalLog.append({
+  const repeatedId = "loop-20260923-000001-bbbb";
+  const repeatedPaths = loopPaths(endedSetup.home, repeatedId);
+  await mkdir(repeatedPaths.root, { recursive: true });
+  const repeatedLog = await openEventLog<LoopEvent>(repeatedPaths.events);
+  await repeatedLog.append({
     type: "loop.created",
-    loopId: internalId,
+    loopId: repeatedId,
     eventFormatVersion: 1,
     repositoryPath: endedSetup.repo,
     loopfileName: "source",
@@ -752,11 +816,25 @@ test("loop resume refuses live, ended, missing and invalid loops with the requir
     pauseMs: null,
     program: await programIdentity(cli),
   });
-  await internalLog.append({ type: "loop.ended", result: "failure", reason: "internal_error" });
-  await internalLog.close();
-  const internal = await resume([internalId], endedSetup.env);
-  assert.equal(internal.code, 2);
-  assert.match(internal.err, /code: already_ended/);
+  await repeatedLog.append({
+    type: "loop.ended",
+    result: "failure",
+    reason: "internal_error",
+    childSeq: 5,
+  });
+  await repeatedLog.append({
+    type: "loop.ended",
+    result: "failure",
+    reason: "internal_error",
+    childSeq: 5,
+  });
+  await repeatedLog.close();
+  const repeated = await resume([repeatedId], endedSetup.env);
+  assert.equal(repeated.code, 2);
+  assert.match(
+    repeated.err,
+    /^error: loop loop-20260923-000001-bbbb hit the same internal error twice with no progress\. Report it as a bug and start a new loop\.\ncode: already_ended\n/,
+  );
 
   const missing = await resume(["loop-20260923-000003-cccc"], endedSetup.env);
   assert.equal(missing.code, 2);

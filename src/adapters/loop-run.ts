@@ -12,7 +12,13 @@ import {
 } from "../application/next-loop-action.ts";
 import { parseEventLog } from "../application/replay.ts";
 import { parseStatusProjection } from "../application/status.ts";
-import type { LoopCancelMode, LoopEvent, LoopRunStarted, LoopSource } from "../domain/events.ts";
+import type {
+  LoopCancelMode,
+  LoopEvent,
+  LoopRunStarted,
+  LoopSource,
+  RunEvent,
+} from "../domain/events.ts";
 import type { Workflow } from "../domain/model.ts";
 import type { LoopStatus, StatusProjection } from "../domain/status.ts";
 import { loadDirectory } from "./directory-loader.ts";
@@ -136,7 +142,7 @@ export async function runLoop(
       statusPath: paths.status,
     });
   } catch (error) {
-    await appendInternalError(log, history, paths.status, error);
+    await appendInternalError(home, log, history, paths.status, error);
     throw error;
   } finally {
     await log.close();
@@ -149,18 +155,32 @@ async function startChildRun(deps: RunLoopDeps, options: StartRunOptions): Promi
 }
 
 async function appendInternalError(
+  home: string,
   log: EventLog<LoopEvent>,
   history: LoopEvent[],
   statusPath: string,
   error: unknown,
 ): Promise<void> {
   if (history.at(-1)?.type === "loop.ended") return;
+  const lastRun = history.findLast((event) => event.type === "loop.run_started");
+  const childSeq =
+    lastRun?.type === "loop.run_started" ? await readChildSequence(home, lastRun.runId) : null;
   await appendLoopEvent(log, history, statusPath, {
     type: "loop.ended",
     result: "failure",
     reason: "internal_error",
     detail: String(error),
+    childSeq,
   }).catch(() => undefined);
+}
+
+async function readChildSequence(home: string, runId: string): Promise<number | null> {
+  try {
+    const events = parseEventLog<RunEvent>(await readFile(runPaths(home, runId).events, "utf8"));
+    return events.at(-1)?.seq ?? null;
+  } catch {
+    return null;
+  }
 }
 
 interface LoopDriver {
