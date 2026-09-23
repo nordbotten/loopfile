@@ -58,7 +58,7 @@ Commands:
   check <source> [--json]
   docs [<topic>]
   list [--json]
-  cancel <runid>
+  cancel <runid|loopid> [--now|--after-run]
   interrupt <runid>
   resume [<runid>] [-d] [--kill-leftovers]
   remove <runid> [--kill-leftovers] [--force]

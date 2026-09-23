@@ -1,19 +1,20 @@
 /**
- * What the run owner's two sockets say to each other (#115).
+ * What run and loop owners say on their control sockets, and what run owners
+ * say on attempt sockets (#115).
  *
- * The control socket (ADR 0008) is how a reader learns a run owner is alive
- * and how the CLI waits for "ready". The attempt socket (ADR 0005) is what a
+ * A control socket (ADR 0008) is how a reader learns an owner is alive and how
+ * the CLI waits for "ready". A run's attempt socket (ADR 0005) is what a
  * step's data and result commands reach over `LOOPFILE_ENDPOINT`.
  *
- * Both carry one JSON object on each line. Only the helper CLI and the run
- * owner ever see this, so the format is the implementer's pick and nothing
- * else depends on it (ADR 0005).
+ * Both carry one JSON object on each line. Only the helper CLI and owners see
+ * this, so the format is the implementer's pick and nothing else depends on it.
  *
  * Everything here is pure: text in, decision out. Binding, connecting and
  * unlinking are the adapter's (`src/adapters/run-owner.ts`), so the rules that
  * decide whether a call is answered can be tested without a socket.
  */
 
+import type { LoopCancelMode } from "../domain/events.ts";
 import type { AttemptId } from "../domain/model.ts";
 
 /** A ping asks a run owner who it is. The reply proves the socket is not stale. */
@@ -21,6 +22,22 @@ export const PING = "ping";
 
 /** Asks the run owner to stop the run (#63, ADR 0008). */
 export const CANCEL = "cancel";
+
+/** Asks the loop owner to stop a loop (#68). */
+export const LOOP_CANCEL = "loop_cancel";
+
+/** A loop cancellation request on the control socket. */
+export interface LoopCancelRequest {
+  readonly type: typeof LOOP_CANCEL;
+  readonly mode: LoopCancelMode;
+}
+
+/** The loop owner wrote `loop.cancel_requested` and accepted the request. */
+export interface LoopCancelling {
+  readonly type: "loop_cancelling";
+  readonly loopId: string;
+  readonly mode: LoopCancelMode;
+}
 
 /** Asks the run owner to stop the current attempt and start it again (#53). */
 export const INTERRUPT = "interrupt";
@@ -62,7 +79,13 @@ export interface ControlError {
 }
 
 /** Everything the control socket sends. */
-export type ControlMessage = Pong | Ready | Cancelling | Interrupting | ControlError;
+export type ControlMessage =
+  | Pong
+  | Ready
+  | Cancelling
+  | LoopCancelling
+  | Interrupting
+  | ControlError;
 
 /** Why the attempt socket refused a call. */
 export type RefusalCode = "stale_attempt" | "bad_request";
@@ -132,6 +155,21 @@ export function answeredRunId(line: string): string | undefined {
   const message = decodeMessage(line);
   if (message?.type !== "pong" && message?.type !== "ready") return undefined;
   return typeof message.runId === "string" ? message.runId : undefined;
+}
+
+/** Reads a valid loop cancellation request. */
+export function loopCancelRequest(line: string): LoopCancelRequest | undefined {
+  const message = decodeMessage(line);
+  if (message?.type !== LOOP_CANCEL || (message.mode !== "now" && message.mode !== "after_run")) {
+    return undefined;
+  }
+  return { type: LOOP_CANCEL, mode: message.mode };
+}
+
+/** Whether `line` confirms this loop owner recorded the requested mode. */
+export function confirmsLoopCancel(line: string, loopId: string, mode: LoopCancelMode): boolean {
+  const message = decodeMessage(line);
+  return message?.type === "loop_cancelling" && message.loopId === loopId && message.mode === mode;
 }
 
 /** Whether `line` is the run owner of `runId` saying it took the cancel. */

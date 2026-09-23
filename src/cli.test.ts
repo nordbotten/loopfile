@@ -82,7 +82,7 @@ test("--help is a short command index", () => {
       "  check <source> [--json]",
       "  docs [<topic>]",
       "  list [--json]",
-      "  cancel <runid>",
+      "  cancel <runid|loopid> [--now|--after-run]",
       "  interrupt <runid>",
       "  resume [<runid>] [-d] [--kill-leftovers]",
       "  remove <runid> [--kill-leftovers] [--force]",
@@ -935,7 +935,7 @@ test("prune rejects a bad age with an operator failure", async () => {
 test("cancel is its own command and is not run as a source", async () => {
   const bare = run(["cancel"]);
   assert.equal(await bare.code, 2);
-  assert.match(bare.errors, /Usage: loopfile cancel <runid>/);
+  assert.match(bare.errors, /Usage: loopfile cancel <runid\|loopid>/);
   const unknown = run(["cancel", "no-such-run"], {
     LOOPFILE_HOME: "/tmp/loopfile-cli-test-home-that-does-not-exist",
   });

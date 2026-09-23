@@ -12,7 +12,7 @@ import {
 } from "../application/next-loop-action.ts";
 import { parseEventLog } from "../application/replay.ts";
 import { parseStatusProjection } from "../application/status.ts";
-import type { LoopEvent, LoopSource } from "../domain/events.ts";
+import type { LoopCancelMode, LoopEvent, LoopSource } from "../domain/events.ts";
 import type { Workflow } from "../domain/model.ts";
 import type { LoopStatus } from "../domain/status.ts";
 import { loadDirectory } from "./directory-loader.ts";
@@ -20,7 +20,7 @@ import { type EventLog, type NewEvent, openEventLog } from "./event-log.ts";
 import { type StartRunOptions, type StartRunResult, startRun } from "./launch-command.ts";
 import { programIdentity } from "./program-identity.ts";
 import { loopPaths, newRunId, runPaths } from "./run-directory.ts";
-import { pingOwner } from "./run-owner.ts";
+import { pingOwner, requestCancel } from "./run-owner.ts";
 
 /** Inputs the in-process loop driver needs from its caller. */
 export interface RunLoopDeps {
@@ -32,6 +32,69 @@ export interface RunLoopDeps {
   readonly startRun?: (options: StartRunOptions) => Promise<StartRunResult>;
   /** Overridable for tests; production checks children every 500 ms. */
   readonly pollMs?: number;
+  /** Requests made on the loop owner's control socket. */
+  readonly cancelRequests?: LoopCancelRequests;
+}
+
+export interface LoopCancelRequests {
+  request(mode: LoopCancelMode): Promise<boolean>;
+  take(): { readonly mode: LoopCancelMode; acknowledge(): void } | undefined;
+  hasPending(): boolean;
+  wait(): Promise<void>;
+  close(): void;
+}
+
+/** Holds one loop cancellation request until the driver has recorded it. */
+export function createLoopCancelRequests(): LoopCancelRequests {
+  let mode: LoopCancelMode | undefined;
+  let taken = false;
+  let closed = false;
+  let acknowledged = false;
+  let resolveRequest: (accepted: boolean) => void = () => undefined;
+  const response = new Promise<boolean>((resolve) => {
+    resolveRequest = resolve;
+  });
+  let wake!: () => void;
+  const notified = new Promise<void>((resolve) => {
+    wake = resolve;
+  });
+  let finish!: () => void;
+  const finished = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  return {
+    request(requestedMode) {
+      if (closed) return Promise.resolve(false);
+      if (mode !== undefined) return mode === requestedMode ? response : Promise.resolve(false);
+      mode = requestedMode;
+      wake();
+      return response;
+    },
+    take() {
+      if (mode === undefined || taken) return undefined;
+      taken = true;
+      return {
+        mode,
+        acknowledge() {
+          if (acknowledged) return;
+          acknowledged = true;
+          resolveRequest(true);
+        },
+      };
+    },
+    hasPending() {
+      return mode !== undefined && !taken;
+    },
+    wait() {
+      return taken ? finished : notified;
+    },
+    close() {
+      closed = true;
+      if (!acknowledged) resolveRequest(false);
+      wake();
+      finish();
+    },
+  };
 }
 
 const CHILD_POLL_MS = 500;
@@ -56,7 +119,7 @@ export async function runLoop(
   try {
     const workflow =
       created.source.kind === "next" ? await loadNextWorkflow(paths.loopfile) : undefined;
-    return await driveLoop(
+    return await driveLoop({
       home,
       loopId,
       created,
@@ -64,14 +127,15 @@ export async function runLoop(
       deps,
       log,
       history,
-      paths.loopfile,
-      paths.status,
-    );
+      loopfilePath: paths.loopfile,
+      statusPath: paths.status,
+    });
   } catch (error) {
     await appendInternalError(log, history, paths.status, error);
     throw error;
   } finally {
     await log.close();
+    deps.cancelRequests?.close();
   }
 }
 
@@ -94,89 +158,134 @@ async function appendInternalError(
   }).catch(() => undefined);
 }
 
-async function driveLoop(
-  home: string,
-  loopId: string,
-  created: Extract<LoopEvent, { readonly type: "loop.created" }>,
-  workflow: Workflow | undefined,
-  deps: RunLoopDeps,
-  log: EventLog<LoopEvent>,
-  history: LoopEvent[],
-  loopfilePath: string,
-  statusPath: string,
-): Promise<LoopStatus> {
+interface LoopDriver {
+  readonly home: string;
+  readonly loopId: string;
+  readonly created: Extract<LoopEvent, { readonly type: "loop.created" }>;
+  readonly workflow: Workflow | undefined;
+  readonly deps: RunLoopDeps;
+  readonly log: EventLog<LoopEvent>;
+  readonly history: LoopEvent[];
+  readonly loopfilePath: string;
+  readonly statusPath: string;
+}
+
+async function driveLoop(driver: LoopDriver): Promise<LoopStatus> {
   for (;;) {
-    const status = loopStatus(history);
-    await waitForPause(status.pausedUntil);
-    const child = await lastChild(home, status);
+    if (await recordCancellation(driver)) continue;
+    const status = loopStatus(driver.history);
+    await waitForPause(
+      status.cancelRequested === null ? status.pausedUntil : null,
+      driver.deps.cancelRequests,
+    );
+    const child = await lastChild(driver.home, status);
     const action = await nextAction(
       status,
       child,
-      created.source,
-      created.repositoryPath,
-      deps.env,
-      loopId,
-      workflow,
-      history,
-      created.pauseMs,
+      driver.created.source,
+      driver.created.repositoryPath,
+      driver.deps.env,
+      driver.loopId,
+      driver.workflow,
+      driver.history,
+      driver.created.pauseMs,
     );
-
-    if (action.kind === "wait") {
-      await waitForChild(home, currentRunId(status), deps.pollMs);
-      continue;
-    }
-    if (action.kind === "pause") {
-      await appendLoopEvent(log, history, statusPath, {
-        type: "loop.paused",
-        until: action.until,
-      });
-      continue;
-    }
-    if (action.kind === "end") return await appendEnd(log, history, statusPath, action);
-
-    const currentProgram = await programIdentity(deps.cli);
-    if (
-      currentProgram.version !== created.program.version ||
-      currentProgram.digest !== created.program.digest
-    ) {
-      return await appendEnd(log, history, statusPath, {
-        kind: "end",
-        reason: "program_changed",
-        detail: `loopfile changed from ${created.program.version} to ${currentProgram.version}`,
-      });
-    }
-
-    const runId = newRunId();
-    const index = status.runs + 1;
-    await appendLoopEvent(log, history, statusPath, {
-      type: "loop.run_started",
-      runId,
-      index,
-      inputSet: action.inputSet,
-      sourceIndex: action.sourceIndex,
-      retryOf: action.retryOf ?? null,
-    });
-
-    const started = await startChildRun(deps, {
-      source: loopfilePath,
-      sourceKind: "directory",
-      repository: created.repositoryPath,
-      inputs: action.inputSet,
-      runId,
-      loopId,
-      loopIndex: index,
-      cli: deps.cli,
-      env: deps.env,
-    });
-    if (!started.ok) {
-      return await appendEnd(log, history, statusPath, {
-        kind: "end",
-        reason: "internal_error",
-        detail: started.failure.messages.join("; "),
-      });
-    }
-    await waitForChild(home, runId, deps.pollMs);
+    if (driver.deps.cancelRequests?.hasPending()) continue;
+    const ended = await performLoopAction(action, status, driver);
+    if (ended !== undefined) return ended;
   }
+}
+
+async function recordCancellation(driver: LoopDriver): Promise<boolean> {
+  const cancellation = driver.deps.cancelRequests?.take();
+  if (cancellation === undefined) return false;
+  await appendLoopEvent(driver.log, driver.history, driver.statusPath, {
+    type: "loop.cancel_requested",
+    mode: cancellation.mode,
+  });
+  cancellation.acknowledge();
+  const child = await lastChild(driver.home, loopStatus(driver.history));
+  if (cancellation.mode === "now" && child.state === "running") {
+    await requestCancel(runPaths(driver.home, child.runId).socket, child.runId);
+  }
+  return true;
+}
+
+async function performLoopAction(
+  action: ReturnType<typeof nextLoopAction>,
+  status: LoopStatus,
+  driver: LoopDriver,
+): Promise<LoopStatus | undefined> {
+  if (action.kind === "wait") {
+    await waitForChild(
+      driver.home,
+      currentRunId(status),
+      driver.deps.pollMs,
+      driver.deps.cancelRequests,
+    );
+    return undefined;
+  }
+  if (action.kind === "pause") {
+    await appendLoopEvent(driver.log, driver.history, driver.statusPath, {
+      type: "loop.paused",
+      until: action.until,
+    });
+    return undefined;
+  }
+  if (action.kind === "end") {
+    return await appendEnd(driver.log, driver.history, driver.statusPath, action);
+  }
+  return await startNextChild(action, status, driver);
+}
+
+async function startNextChild(
+  action: Extract<ReturnType<typeof nextLoopAction>, { readonly kind: "start" }>,
+  status: LoopStatus,
+  driver: LoopDriver,
+): Promise<LoopStatus | undefined> {
+  const currentProgram = await programIdentity(driver.deps.cli);
+  if (driver.deps.cancelRequests?.hasPending()) return undefined;
+  if (
+    currentProgram.version !== driver.created.program.version ||
+    currentProgram.digest !== driver.created.program.digest
+  ) {
+    return await appendEnd(driver.log, driver.history, driver.statusPath, {
+      kind: "end",
+      reason: "program_changed",
+      detail: `loopfile changed from ${driver.created.program.version} to ${currentProgram.version}`,
+    });
+  }
+
+  const runId = newRunId();
+  const index = status.runs + 1;
+  await appendLoopEvent(driver.log, driver.history, driver.statusPath, {
+    type: "loop.run_started",
+    runId,
+    index,
+    inputSet: action.inputSet,
+    sourceIndex: action.sourceIndex,
+    retryOf: action.retryOf ?? null,
+  });
+  const started = await startChildRun(driver.deps, {
+    source: driver.loopfilePath,
+    sourceKind: "directory",
+    repository: driver.created.repositoryPath,
+    inputs: action.inputSet,
+    runId,
+    loopId: driver.loopId,
+    loopIndex: index,
+    cli: driver.deps.cli,
+    env: driver.deps.env,
+  });
+  if (!started.ok) {
+    return await appendEnd(driver.log, driver.history, driver.statusPath, {
+      kind: "end",
+      reason: "internal_error",
+      detail: started.failure.messages.join("; "),
+    });
+  }
+  await waitForChild(driver.home, runId, driver.deps.pollMs, driver.deps.cancelRequests);
+  return undefined;
 }
 
 async function appendEnd(
@@ -190,6 +299,7 @@ async function appendEnd(
     result:
       action.reason === "source_empty" || action.reason === "max_runs" ? "success" : "failure",
     reason: action.reason,
+    ...(action.cancelMode === undefined ? {} : { cancelMode: action.cancelMode }),
     ...(action.detail === undefined ? {} : { detail: action.detail }),
   });
   return loopStatus(history);
@@ -294,10 +404,31 @@ function runNextCommand(
   });
 }
 
-async function waitForPause(until: string | null): Promise<void> {
+async function waitForPause(
+  until: string | null,
+  cancelRequests: LoopCancelRequests | undefined,
+): Promise<void> {
   if (until === null) return;
   const delay = Date.parse(until) - Date.now();
-  if (delay > 0) await new Promise((resolve) => setTimeout(resolve, delay));
+  if (delay > 0) await waitForDelayOrCancel(delay, cancelRequests);
+}
+
+async function waitForDelayOrCancel(
+  delay: number,
+  cancelRequests: LoopCancelRequests | undefined,
+): Promise<void> {
+  if (cancelRequests === undefined) {
+    await new Promise((resolve) => setTimeout(resolve, delay));
+    return;
+  }
+  let timer: NodeJS.Timeout | undefined;
+  await Promise.race([
+    new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, delay);
+    }),
+    cancelRequests.wait(),
+  ]);
+  if (timer !== undefined) clearTimeout(timer);
 }
 
 function currentRunId(status: LoopStatus): string {
@@ -326,10 +457,15 @@ async function childState(home: string, runId: string): Promise<LastChild> {
   return { state: "crashed", runId };
 }
 
-async function waitForChild(home: string, runId: string, pollMs = CHILD_POLL_MS): Promise<void> {
+async function waitForChild(
+  home: string,
+  runId: string,
+  pollMs = CHILD_POLL_MS,
+  cancelRequests?: LoopCancelRequests,
+): Promise<void> {
   for (;;) {
-    if ((await childState(home, runId)).state !== "running") return;
-    await new Promise((resolve) => setTimeout(resolve, pollMs));
+    if ((await childState(home, runId)).state !== "running" || cancelRequests?.hasPending()) return;
+    await waitForDelayOrCancel(pollMs, cancelRequests);
   }
 }
 

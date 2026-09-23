@@ -32,7 +32,13 @@
  *   The one-field `loopfile` object is flattened to `loopfileName`.
  */
 
-import type { InputSet, LoopEndReason, Timestamp, TransitionCause } from "./events.ts";
+import type {
+  InputSet,
+  LoopCancelMode,
+  LoopEndReason,
+  Timestamp,
+  TransitionCause,
+} from "./events.ts";
 import type { AttemptId, HarnessName, LoopId, Outcome, RunId, StepId, Target } from "./model.ts";
 
 /** The status format version this tool writes (ADR 0006). */
@@ -162,9 +168,9 @@ export interface LoopStatus {
   readonly runIds: readonly RunId[];
   readonly currentRunId: RunId | null;
   readonly pausedUntil: Timestamp | null;
-  readonly cancelRequested: "now" | "after_run" | null;
+  readonly cancelRequested: LoopCancelMode | null;
   readonly endReason: LoopEndReason | null;
-  readonly cancelMode: "now" | "after_run" | null;
+  readonly cancelMode: LoopCancelMode | null;
   readonly detail: string | null;
   readonly startedAt: Timestamp;
   readonly endedAt: Timestamp | null;

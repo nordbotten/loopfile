@@ -318,9 +318,11 @@ export interface LoopPaused extends EventBase {
   readonly until: Timestamp;
 }
 
+export type LoopCancelMode = "now" | "after_run";
+
 export interface LoopCancelRequested extends EventBase {
   readonly type: "loop.cancel_requested";
-  readonly mode: "now" | "after_run";
+  readonly mode: LoopCancelMode;
 }
 
 export type LoopEndReason =
@@ -337,7 +339,7 @@ export interface LoopEnded extends EventBase {
   readonly result: "success" | "failure";
   readonly reason: LoopEndReason;
   /** Present only when `reason` is `cancelled`. */
-  readonly cancelMode?: "now" | "after_run";
+  readonly cancelMode?: LoopCancelMode;
   /** Optional one-line operator detail. */
   readonly detail?: string;
   /** Present only when `reason` is `internal_error`. */

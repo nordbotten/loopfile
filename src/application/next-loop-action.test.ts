@@ -422,8 +422,31 @@ test("ends when the source is empty", () => {
   });
 });
 
-test("waits for a running child", () => {
+test("waits for a running child even when cancellation is requested", () => {
   assert.deepEqual(action({ state: "running", runId: "run-one" }), { kind: "wait" });
+  assert.deepEqual(
+    nextLoopAction({ ...status, cancelRequested: "now" }, { state: "running", runId: "run-one" }),
+    { kind: "wait" },
+  );
+});
+
+test("ends cancelled without starting or retrying when no child is running", () => {
+  for (const mode of ["now", "after_run"] as const) {
+    assert.deepEqual(
+      nextLoopAction(
+        { ...status, cancelRequested: mode, retry: 3 },
+        { state: "completed", runId: "run-one" },
+      ),
+      { kind: "end", reason: "cancelled", cancelMode: mode },
+    );
+    assert.deepEqual(
+      nextLoopAction(
+        { ...status, cancelRequested: mode, retry: 3 },
+        { state: "failed", runId: "run-one" },
+      ),
+      { kind: "end", reason: "cancelled", cancelMode: mode },
+    );
+  }
 });
 
 test("ends on a failed or cancelled child", () => {

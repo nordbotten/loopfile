@@ -211,6 +211,6 @@ test("cancel takes exactly one run ID", async () => {
       {},
     );
     assert.equal(code, 2);
-    assert.match(err, /Usage: loopfile cancel <runid>/);
+    assert.match(err, /Usage: loopfile cancel <runid\|loopid>/);
   }
 });
