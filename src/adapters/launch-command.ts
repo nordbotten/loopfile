@@ -209,6 +209,9 @@ async function launchSource(
     inputs: inputs.inputs,
     workspaceMode: workspace.mode,
     loopfileName,
+    ...(fetchedRemote === undefined
+      ? {}
+      : { remote: { ...fetchedRemote.remote, sha: fetchedRemote.sha } }),
     ...optionalLoopFields(options.loopId, options.loopIndex),
   };
   return await start(args.detach, request, source.workflow, cli, io, env, options);
@@ -611,6 +614,7 @@ async function start(
     loopId: request.loopId,
     loopIndex: request.loopIndex,
     loopfileName: request.loopfileName,
+    remote: request.remote,
     cli,
     env,
     readyTimeoutMs: options.readyTimeoutMs,
@@ -648,6 +652,7 @@ export interface StartRunOptions {
   readonly loopId?: string;
   readonly loopIndex?: number;
   readonly loopfileName?: string;
+  readonly remote?: LaunchRequest["remote"];
   /** The CLI script used to start the detached run owner. */
   readonly cli: string;
   readonly env: Record<string, string | undefined>;
@@ -714,6 +719,7 @@ export async function startRun(options: StartRunOptions): Promise<StartRunResult
     inputs: inputs.inputs,
     workspaceMode: options.workspaceMode,
     loopfileName: options.loopfileName,
+    ...(options.remote === undefined ? {} : { remote: options.remote }),
     ...optionalLoopFields(options.loopId, options.loopIndex),
   };
   return await startDetachedOwner({

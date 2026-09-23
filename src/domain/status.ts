@@ -7,7 +7,8 @@
  * the monitor — #36, #49, #52). Resume never reads it and deleting it loses
  * nothing (ADR 0007), so nothing here is a source of truth.
  *
- * Every field is always present. For a harness metric, `null` means unknown
+ * Every required field is always present; `remote` is omitted for local runs.
+ * For a harness metric, `null` means unknown
  * and a number, including `0`, is a value the harness reported; a harness
  * adapter never estimates one (ADR 0007). No field holds a run folder path,
  * so a consumer needs none to use this file.
@@ -36,6 +37,7 @@ import type {
   InputSet,
   LoopCancelMode,
   LoopEndReason,
+  RemoteRecord,
   Timestamp,
   TransitionCause,
 } from "./events.ts";
@@ -187,6 +189,7 @@ export interface StatusProjection {
   /** The loop that started this run, or `null` for a plain run. */
   readonly loopId: string | null;
   readonly loopIndex: number | null;
+  readonly remote?: RemoteRecord;
   readonly state: RunLifecycle;
   readonly endReason: StatusEndReason | null;
   readonly startedAt: Timestamp;
