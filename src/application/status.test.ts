@@ -19,6 +19,28 @@ test("parses a completed example with every metric reported, including 0", () =>
   assert.equal(parsed.metrics.toolCalls, 0);
 });
 
+test("reads a status.json with remote metadata", () => {
+  const remote = {
+    host: "github.com",
+    repo: "acme/loops",
+    path: "sub",
+    ref: "main",
+    sha: "a".repeat(40),
+  };
+  const value = { ...(roundTrip(runningExample) as Record<string, unknown>), remote };
+
+  assert.deepEqual(parseStatusProjection(value).remote, remote);
+});
+
+test("rejects malformed remote metadata in status.json", () => {
+  const value = {
+    ...(roundTrip(runningExample) as Record<string, unknown>),
+    remote: { host: "github.com", repo: "acme/loops", sha: "bad" },
+  };
+
+  assert.throws(() => parseStatusProjection(value), InvalidStatusProjectionError);
+});
+
 test("reads a status.json without loop fields as a plain run", () => {
   const value = roundTrip(runningExample) as Record<string, unknown>;
   delete value.loopId;
