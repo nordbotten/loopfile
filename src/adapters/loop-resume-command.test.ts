@@ -13,6 +13,7 @@ import type { LoopEvent, RunEvent } from "../domain/events.ts";
 import { cancelCommand } from "./cancel-command.ts";
 import { materializeDirectory } from "./directory-loader.ts";
 import { openEventLog } from "./event-log.ts";
+import { groupAlive } from "./local-executor.ts";
 import { loopCommand } from "./loop-command.ts";
 import { loopResumeCommand } from "./loop-resume-command.ts";
 import { runLoop } from "./loop-run.ts";
@@ -205,13 +206,36 @@ steps:
       ),
     "first child command to run",
   );
+  const attempt = await until(async () => {
+    const event = (await runEvents(setupResult.home, first.runId)).find(
+      (item) => item.type === "attempt.started",
+    );
+    return event?.type === "attempt.started" ? event : undefined;
+  }, "first child attempt to start");
   const loopOwner = (await events(setupResult.home, loopId)).find(
     (event) => event.type === "owner.started",
   );
   assert.equal(loopOwner?.type, "owner.started");
   if (loopOwner?.type === "owner.started") process.kill(loopOwner.pid, "SIGKILL");
   process.kill(runOwner.pid, "SIGKILL");
-  await new Promise((resolve) => setTimeout(resolve, 600));
+  await until(
+    async () =>
+      (await pingOwner(loopPaths(setupResult.home, loopId).socket, 20)) === undefined
+        ? true
+        : undefined,
+    "loop owner to stop",
+  );
+  await until(
+    async () =>
+      (await pingOwner(runPaths(setupResult.home, first.runId).socket, 20)) === undefined
+        ? true
+        : undefined,
+    "child owner to stop",
+  );
+  await until(
+    async () => (!groupAlive(attempt.processGroupId) ? true : undefined),
+    "orphaned child process group to stop",
+  );
 
   const resumed = await resume([loopId], setupResult.env);
   assert.equal(resumed.code, 0, resumed.err);

@@ -10,7 +10,7 @@
  */
 
 import { execFile } from "node:child_process";
-import { cp, mkdir } from "node:fs/promises";
+import { cp, mkdir, rm } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { promisify } from "node:util";
 import type { RunCreated } from "../domain/events.ts";
@@ -174,7 +174,12 @@ export async function createWorkspace(options: CreateWorkspaceOptions): Promise<
 /** What removing a workspace did. A kept one says where it is and why. */
 export type WorkspaceRemoval =
   | { readonly removed: true }
-  | { readonly removed: false; readonly path: string; readonly reason: string };
+  | {
+      readonly removed: false;
+      readonly path: string;
+      readonly reason: string;
+      readonly dirty: boolean;
+    };
 
 /**
  * Removes the worktree with `git worktree remove`, with `--force` only when asked.
@@ -193,7 +198,16 @@ export async function removeWorkspace(
     await git(workspace.repositoryPath, "worktree", "remove", ...flags, workspace.path);
     return { removed: true };
   } catch (error) {
-    return { removed: false, path: workspace.path, reason: gitMessage(error) };
+    if (isGitMissing(error) || isNotGitRepository(error)) {
+      await rm(workspace.path, { recursive: true, force: true });
+      return { removed: true };
+    }
+    return {
+      removed: false,
+      path: workspace.path,
+      reason: gitMessage(error),
+      dirty: isDirtyWorktreeRefusal(error),
+    };
   }
 }
 
@@ -249,6 +263,10 @@ function isGitMissing(error: unknown): boolean {
 
 function isNotGitRepository(error: unknown): boolean {
   return /not a git repository/i.test(gitMessage(error));
+}
+
+function isDirtyWorktreeRefusal(error: unknown): boolean {
+  return /contains modified or untracked files/i.test((error as { stderr?: string }).stderr ?? "");
 }
 
 /** Git's own reason, from its stderr, without the `fatal:` noise around it. */

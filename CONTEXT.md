@@ -156,7 +156,7 @@ _Avoid_: Checkout, sandbox
 The branch `loopfile/<runid>` for an isolate worktree. It is the run's product and Loopfile never deletes it; `here` and `empty` runs have none.
 
 **Remove**:
-Deleting one run's folder and its workspace because someone asked for it. The run branch stays. Loopfile never removes a run on its own.
+Deleting one run's folder and any workspace Loopfile made because someone asked for it. In `here`, only the run folder is deleted. The run branch stays. Loopfile never removes a run on its own.
 _Avoid_: Delete, clean, abandon
 
 **Prune**:

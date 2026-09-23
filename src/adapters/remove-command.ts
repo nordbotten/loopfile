@@ -16,17 +16,19 @@ import {
   pruneWorktrees,
   removeWorkspace,
   type Workspace,
+  type WorkspaceRemoval,
   workspaceFromCreated,
 } from "./workspace.ts";
 
 const USAGE = "Usage: loopfile remove <runid> [--kill-leftovers] [--force]";
 const HELP = `${USAGE}
 
-Remove a run's workspace and folder, keeping its branch when it has one. A live
-run must be cancelled first. --kill-leftovers kills processes left by the run
-before removing it. --force also deletes uncommitted work in a worktree. Exit 0
-means removal succeeded; invalid or refused work returns 2 (or 1 for a removal
-operation failure).
+Remove a run's workspace and folder, keeping its branch when it has one. A here
+run removes only its run folder. A live run must be cancelled first.
+--kill-leftovers kills processes left by the run before removing it. --force
+deletes uncommitted work only in an isolate worktree; it is ignored otherwise.
+Exit 0 means removal succeeded; invalid or refused work returns 2 (or 1 for a
+removal operation failure).
 `;
 
 export interface RemoveOptions {
@@ -220,25 +222,39 @@ async function removeRunWorkspace(
   workspace: Workspace,
   created: Extract<RunEvent, { type: "run.created" }>,
   force: boolean,
-): Promise<RemoveResult | undefined> {
+): Promise<RemoveFailure | string | undefined> {
   if (workspace.mode === "here") return undefined;
+  if (!(await pathExists(workspace.path))) {
+    if (workspace.isolateKind === "worktree")
+      await pruneWorktrees(workspace.repositoryPath).catch(() => undefined);
+    return `warning: workspace is gone: ${workspace.path}\n`;
+  }
   if (workspace.mode === "empty" || workspace.isolateKind === "copy") {
     await rm(workspace.path, { recursive: true, force: true });
     return undefined;
   }
-  if (!(await pathExists(workspace.path))) {
-    await pruneWorktrees(workspace.repositoryPath);
-    return undefined;
-  }
   const removed = await removeWorkspace(workspace, force);
-  return removed.removed
-    ? undefined
-    : refused(
-        `workspace of run ${created.runId} is dirty: ${removed.reason}`,
-        "workspace_dirty",
-        `Commit or discard the workspace changes, or run \`loopfile remove ${created.runId} --force\` to delete them.`,
-        1,
-      );
+  if (!removed.removed && !(await pathExists(workspace.path))) {
+    await pruneWorktrees(workspace.repositoryPath).catch(() => undefined);
+    return `warning: workspace is gone: ${workspace.path}\n`;
+  }
+  return removed.removed ? undefined : workspaceRemovalFailure(created.runId, removed);
+}
+
+function workspaceRemovalFailure(
+  runId: string,
+  removed: Extract<WorkspaceRemoval, { readonly removed: false }>,
+): RemoveFailure {
+  return failure(
+    removed.dirty
+      ? `workspace of run ${runId} is dirty: ${removed.reason}`
+      : `could not remove workspace of run ${runId}: ${removed.reason}`,
+    removed.dirty ? "workspace_dirty" : "operation_failed",
+    removed.dirty
+      ? `Commit or discard the workspace changes, or run \`loopfile remove ${runId} --force\` to delete them.`
+      : "Inspect the target repository and workspace, then try again.",
+    1,
+  );
 }
 
 async function removeFiles(
@@ -248,23 +264,15 @@ async function removeFiles(
 ): Promise<RemoveResult> {
   try {
     const workspace = workspaceFromCreated(created, paths.workspace);
-    const branch = workspace.isolateKind === "worktree" ? workspace.branch : undefined;
-    if (created.targetFolder !== undefined && !(await pathExists(created.targetFolder))) {
-      await rm(paths.root, { recursive: true, force: true });
-      return {
-        ok: true,
-        runId: created.runId,
-        ...(branch === undefined ? {} : { branch }),
-        warning: `warning: target folder is gone: ${created.targetFolder}\n`,
-      };
-    }
-    const workspaceFailure = await removeRunWorkspace(workspace, created, force);
-    if (workspaceFailure !== undefined) return workspaceFailure;
+    const workspaceResult = await removeRunWorkspace(workspace, created, force);
+    if (workspaceResult !== undefined && typeof workspaceResult !== "string")
+      return { ok: false, failure: workspaceResult };
     await rm(paths.root, { recursive: true, force: true });
     return {
       ok: true,
       runId: created.runId,
-      ...(branch === undefined ? {} : { branch }),
+      ...(created.branch === undefined || created.branch === "" ? {} : { branch: created.branch }),
+      ...(typeof workspaceResult === "string" ? { warning: workspaceResult } : {}),
     };
   } catch (error) {
     return refused(
