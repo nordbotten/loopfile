@@ -29,7 +29,7 @@
 
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
-import { filesInZone, REPO_ROOT } from "./quality-zones.mjs";
+import { changedCore, filesInZone, REPO_ROOT } from "./quality-zones.mjs";
 
 const bars = JSON.parse(readFileSync(new URL("quality-ratchet.json", import.meta.url), "utf8"));
 
@@ -37,26 +37,6 @@ const bars = JSON.parse(readFileSync(new URL("quality-ratchet.json", import.meta
 function git(...args) {
   const output = execFileSync("git", [...args, "--", "src"], { cwd: REPO_ROOT, encoding: "utf8" });
   return output.split("\n");
-}
-
-const core = new Set(filesInZone("CORE"));
-
-/**
- * Stryker `file:start-end` patterns for the `CORE` lines added or changed since
- * the merge base with `origin/main`, plus every `CORE` file not yet tracked.
- */
-export function changedCore(diff, untracked) {
-  const patterns = untracked.filter((file) => core.has(file));
-  let file;
-  for (const line of diff) {
-    if (line.startsWith("+++ ")) file = line.slice(6);
-    const hunk = /^@@ -\S+ \+(\d+)(?:,(\d+))? @@/.exec(line);
-    if (!hunk || !core.has(file)) continue;
-    const start = Number(hunk[1]);
-    const count = hunk[2] === undefined ? 1 : Number(hunk[2]);
-    if (count > 0) patterns.push(`${file}:${start}-${start + count - 1}`);
-  }
-  return patterns;
 }
 
 /**

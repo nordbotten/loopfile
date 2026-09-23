@@ -15,8 +15,7 @@ import { crapScores } from "./quality-coverage.mjs";
 import { forbiddenReason, importsOf } from "./quality-imports.mjs";
 import { quietDiagnostics } from "./quality-runner.mjs";
 import { findSuppressions } from "./quality-suppressions.mjs";
-import { zoneOf } from "./quality-zones.mjs";
-import { changedCore } from "./stryker.config.mjs";
+import { changedCore, zoneOf } from "./quality-zones.mjs";
 
 /** A minimal Istanbul report shaped the way c8 writes one. */
 function report({ statements, branches, functions }) {
