@@ -56,6 +56,7 @@ const SLOW_TESTS = new Set([
   "src/adapters/launch-command.test.ts",
   "src/adapters/monitor.test.ts",
   "src/adapters/cancel-command.test.ts",
+  "src/adapters/loop-command.test.ts",
   "src/adapters/implement-review-run.test.ts",
   "src/adapters/input-equivalence.test.ts",
   "src/adapters/feedback-loop.test.ts",

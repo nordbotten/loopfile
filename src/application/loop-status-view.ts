@@ -16,20 +16,119 @@ export interface LoopRunStatusView {
   readonly metrics: StatusMetrics | null;
 }
 
+export interface LoopTotals {
+  readonly completed: number;
+  readonly failed: number;
+  readonly cancelled: number;
+  readonly retries: number;
+  readonly wallMs: number | null;
+  readonly costUsd: number | null;
+  readonly runsWithoutCost: number;
+  readonly meanMsPerCompleted: number | null;
+  readonly meanCostUsdPerCompleted: number | null;
+}
+
 export interface LoopStatusView {
   readonly loop: Omit<LoopStatus, "state"> & { readonly state: LoopListState };
   readonly runs: readonly LoopRunStatusView[];
+  readonly totals: LoopTotals;
 }
 
 export function buildLoopStatusView(
   status: LoopStatus,
   state: LoopListState,
   runs: readonly LoopRunStatusView[],
+  now: string,
 ): LoopStatusView {
-  return { loop: { ...status, state }, runs };
+  return {
+    loop: { ...status, state },
+    runs,
+    totals: loopTotals(runs, status.startedAt, status.endedAt, now),
+  };
 }
 
-/** Plain text only: one loop fact per line followed by the newest-last run table. */
+export function loopTotals(
+  runs: readonly LoopRunStatusView[],
+  startedAt: string,
+  endedAt: string | null,
+  now: string,
+): LoopTotals {
+  const counts = countRuns(runs);
+  const costs = costTotals(runs);
+  return {
+    ...counts,
+    wallMs: durationMs(startedAt, endedAt ?? now),
+    costUsd: costs.costUsd,
+    runsWithoutCost: costs.runsWithoutCost,
+    meanMsPerCompleted: meanCompletedElapsed(runs),
+    meanCostUsdPerCompleted: costs.meanCostUsdPerCompleted,
+  };
+}
+
+interface RunCounts {
+  readonly completed: number;
+  readonly failed: number;
+  readonly cancelled: number;
+  readonly retries: number;
+}
+
+function countRuns(runs: readonly LoopRunStatusView[]): RunCounts {
+  const counts = { completed: 0, failed: 0, cancelled: 0, retries: 0 };
+  for (const run of runs) {
+    counts.completed += Number(run.state === "completed");
+    counts.failed += Number(run.state === "failed");
+    counts.cancelled += Number(run.state === "cancelled");
+    counts.retries += Number(run.retryOf !== null);
+  }
+  return counts;
+}
+
+interface CostTotals {
+  readonly costUsd: number | null;
+  readonly runsWithoutCost: number;
+  readonly meanCostUsdPerCompleted: number | null;
+}
+
+function costTotals(runs: readonly LoopRunStatusView[]): CostTotals {
+  let costUsd: number | null = null;
+  let runsWithoutCost = 0;
+  let completedWithCost = 0;
+  let completedCostTotal = 0;
+  for (const run of runs) {
+    const cost = run.metrics?.costUsd ?? null;
+    runsWithoutCost += Number(cost === null);
+    if (cost !== null) {
+      costUsd = (costUsd ?? 0) + cost;
+      completedWithCost += Number(run.state === "completed");
+      if (run.state === "completed") completedCostTotal += cost;
+    }
+  }
+  return {
+    costUsd,
+    runsWithoutCost,
+    meanCostUsdPerCompleted:
+      completedWithCost === 0 ? null : completedCostTotal / completedWithCost,
+  };
+}
+
+function meanCompletedElapsed(runs: readonly LoopRunStatusView[]): number | null {
+  let total = 0;
+  let completed = 0;
+  for (const run of runs) {
+    if (run.state !== "completed") continue;
+    completed += 1;
+    if (run.elapsedMs === null) return null;
+    total += run.elapsedMs;
+  }
+  return completed === 0 ? null : total / completed;
+}
+
+function durationMs(startedAt: string, endedAt: string): number | null {
+  const duration = Date.parse(endedAt) - Date.parse(startedAt);
+  return Number.isFinite(duration) ? duration : null;
+}
+
+/** Plain text only: one loop fact per line followed by the newest-last run table and totals. */
 export function renderLoopStatusView(view: LoopStatusView, currentStep: string | null): string {
   const loop = view.loop;
   const lines = [
@@ -47,7 +146,7 @@ export function renderLoopStatusView(view: LoopStatusView, currentStep: string |
   }
   if (loop.pausedUntil !== null) lines.push(`next run: ${loop.pausedUntil}`);
   if (loop.endedAt !== null) lines.push(`ended: ${endText(loop)}`);
-  return `${lines.join("\n")}\n\n${renderRuns(view.runs.slice(-10))}`;
+  return `${lines.join("\n")}\n\n${renderRuns(view.runs.slice(-10))}${renderTotals(view.totals)}\n`;
 }
 
 function sourceText(source: LoopStatus["source"]): string {
@@ -88,6 +187,27 @@ function renderRuns(runs: readonly LoopRunStatusView[]): string {
       ),
     );
   return `${rows.join("\n")}\n`;
+}
+
+function renderTotals(totals: LoopTotals): string {
+  const parts = [`${totals.completed} completed`];
+  if (totals.failed > 0) parts.push(`${totals.failed} failed`);
+  if (totals.cancelled > 0) parts.push(`${totals.cancelled} cancelled`);
+  parts.push(`${totals.retries} retries`);
+  parts.push(`wall ${formatElapsed(totals.wallMs)}`);
+  parts.push(`est. $${money(totals.costUsd)}`);
+  if (totals.runsWithoutCost > 0)
+    parts[parts.length - 1] += ` (${totals.runsWithoutCost} runs without cost)`;
+  if (totals.completed > 0) {
+    parts.push(
+      `mean ${formatElapsed(totals.meanMsPerCompleted)} / est. $${money(totals.meanCostUsdPerCompleted)} per completed run`,
+    );
+  }
+  return `totals: ${parts.join(", ")}`;
+}
+
+function money(value: number | null): string {
+  return value === null ? "-" : value.toFixed(2);
 }
 
 function renderRow(cells: readonly string[], widths: readonly number[]): string {
