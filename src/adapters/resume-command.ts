@@ -1,5 +1,5 @@
 /**
- * `loopfile resume [<runid>] [-d] [--kill-leftovers]`: go on with a crashed run (#64).
+ * `loopfile resume [<runid|loopid>] [-d] [--kill-leftovers]`: resume a crashed run or loop (#64, #77).
  *
  * Every check runs here, in the foreground, where a person reads the error
  * (ADR 0006, ADR 0008): a run owner that still answers, a corrupt event log, a
@@ -16,11 +16,12 @@ import { parseArgs } from "node:util";
 import { renderOperatorFailure } from "../application/operator-error.ts";
 import { CorruptEventLogError, parseEventLog, replay } from "../application/replay.ts";
 import { resumePlan, resumeRefusal } from "../application/resume.ts";
-import { renderRunList } from "../application/run-list.ts";
+import { isLoopId, renderRunList } from "../application/run-list.ts";
 import { modelDigest } from "../application/workflow-run.ts";
 import type { RunEvent } from "../domain/events.ts";
 import { type LaunchIo, type LaunchOptions, startOwner } from "./launch-command.ts";
 import { groupAlive } from "./local-executor.ts";
+import { loopResumeCommand } from "./loop-resume-command.ts";
 import { RESUME_ENV } from "./owner-command.ts";
 import { loopfileHome, pathExists, type RunPaths, runPaths } from "./run-directory.ts";
 import { discoverRuns } from "./run-discovery.ts";
@@ -44,6 +45,8 @@ export type ResumeIo = Pick<LaunchIo, "out" | "err" | "monitor">;
 /** Overridable for tests only. */
 export interface ResumeOptions extends LaunchOptions {
   readonly pingTimeoutMs?: number;
+  readonly ownerPingTimeoutMs?: number;
+  readonly pollMs?: number;
 }
 
 interface ResumeArgs {
@@ -63,11 +66,14 @@ export async function resumeCommand(
 ): Promise<number> {
   const args = parseResumeArgs(argv);
   if (args === undefined) return refuse(io, USAGE, 2);
+  const { runId } = args;
+  if (runId !== undefined && isLoopId(runId)) {
+    return await loopResumeCommand(argv, cli, io, env, options);
+  }
   if (args.help) {
     io.out(HELP);
     return 0;
   }
-  const { runId } = args;
   if (runId === undefined) return await listCrashed(io, env);
 
   const paths = runPaths(loopfileHome(env as NodeJS.ProcessEnv), runId);

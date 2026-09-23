@@ -57,6 +57,7 @@ const MUTATION_EXCLUDED_TESTS = new Set([
   "src/adapters/input-equivalence.test.ts",
   "src/adapters/feedback-loop.test.ts",
   "src/adapters/resume-command.test.ts",
+  "src/adapters/loop-resume-command.test.ts",
   "src/adapters/continue-command.test.ts",
   "src/adapters/fake-harness-check.test.ts",
   "src/adapters/fake-harness.test.ts",

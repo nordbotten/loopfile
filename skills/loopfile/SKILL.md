@@ -15,7 +15,7 @@ Use Loopfile to run a deterministic software-engineering workflow and follow it 
 3. Start it with `loopfile - -d`; take the run ID from stdout.
 4. Follow the run with `loopfile tail <runid> --json` until it ends.
 5. Read the result with `loopfile result <runid> --json`.
-6. On failure, use `loopfile continue <runid> [-d]` to retry the stopped step of an ended, non-completed run; use `loopfile interrupt <runid>` to replace an active attempt, or `loopfile resume <runid>` for a crashed or `internal_error` run.
+6. On failure, use `loopfile continue <runid> [-d]` to retry the stopped step of an ended, non-completed run; use `loopfile interrupt <runid>` to replace an active attempt, `loopfile resume <runid>` for a crashed or `internal_error` run, or `loopfile resume <loopid>` for a crashed loop.
 7. Remove the run with `loopfile remove <runid>`. Continuing keeps the same run, branch and workspace.
 
 ## Claude Code step permissions

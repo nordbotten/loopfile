@@ -59,6 +59,33 @@ function started(
   };
 }
 
+test("restarts the exact logged run when its child folder is missing", () => {
+  const pending = started("pending", { issue: "41" }, 2);
+  const otherRun = started("other", { issue: "42" }, 3);
+  const wrongType: LoopEvent = {
+    ...pending,
+    type: "loop.ended",
+    result: "success",
+    reason: "source_empty",
+  };
+  assert.deepEqual(
+    nextLoopAction(
+      status,
+      { state: "not_started", runId: "pending" },
+      undefined,
+      undefined,
+      undefined,
+      [pending, otherRun, wrongType],
+    ),
+    { kind: "start_pending", run: pending },
+  );
+  assert.deepEqual(nextLoopAction(status, { state: "not_started", runId: "missing" }), {
+    kind: "end",
+    reason: "internal_error",
+    detail: "missing loop.run_started for missing",
+  });
+});
+
 test("starts the first run with fixed inputs", () => {
   const first = nextLoopAction(
     { ...status, place: 0, runs: 0, runIds: [], currentRunId: null },
