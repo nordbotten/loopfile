@@ -35,7 +35,7 @@ export interface TailFailure {
   readonly message: string;
 }
 
-const USAGE = "Usage: loopfile tail <runid> [--json]";
+const USAGE = "Usage: loopfile tail <runid|loopid> [--json]";
 
 /** `tail`'s own arguments, or the failure to report when they are unusable. */
 export function parseTailArgs(argv: readonly string[]): TailArgs | TailFailure {

@@ -30,8 +30,9 @@
  */
 
 import { open, readFile } from "node:fs/promises";
-import { renderOperatorFailure } from "../application/operator-error.ts";
+import { type OperatorFailure, renderOperatorFailure } from "../application/operator-error.ts";
 import { endedExitCode, endedHelp, type RunEnd } from "../application/run-end.ts";
+import { isLoopId } from "../application/run-list.ts";
 import {
   missingActivityLogMessage,
   ownerGoneMessage,
@@ -41,8 +42,16 @@ import {
   throughEnd,
   unknownRunMessage,
 } from "../application/tail.ts";
+import { LOOP_EVENT_TYPES } from "../domain/events.ts";
 import { ownerLogHelp } from "./owner-log.ts";
-import { loopfileHome, pathExists, type RunPaths, runPaths } from "./run-directory.ts";
+import {
+  type LoopPaths,
+  loopfileHome,
+  loopPaths,
+  pathExists,
+  type RunPaths,
+  runPaths,
+} from "./run-directory.ts";
 import { pingOwner } from "./run-owner.ts";
 
 type Out = (text: string) => void;
@@ -55,9 +64,10 @@ interface Sinks {
 }
 
 const discard: Out = () => {};
-const HELP = `Usage: loopfile tail <runid> [--json]
+const HELP = `Usage: loopfile tail <runid|loopid> [--json]
 
-Print the last activity lines and follow the run until it ends. Activity lines
+Print the last activity lines and follow the run until it ends. A loop ID follows
+all of its child runs. Activity lines
 go to stdout only. With --json, print events from events.jsonl instead, one
 JSON object per line. Exit codes are 0 for a completed run, 1 for a failed or
 cancelled run, and 2 for an unknown or otherwise unreadable run.
@@ -89,6 +99,10 @@ export async function tailCommand(
   if (!args.ok) return fail(err, args.message);
 
   try {
+    const home = loopfileHome(env as NodeJS.ProcessEnv);
+    if (isLoopId(args.runId) || (await pathExists(loopPaths(home, args.runId).root))) {
+      return await runLoopTail(args.runId, args.json, out, err, env, options);
+    }
     const sinks = args.json
       ? { activity: discard, events: out }
       : { activity: out, events: discard };
@@ -99,6 +113,220 @@ export async function tailCommand(
     // gets one `error:` line, never a stack trace on someone's terminal.
     return fail(err, error instanceof Error ? error.message : String(error));
   }
+}
+
+interface LoopTailRun {
+  readonly index: number;
+  readonly runId: string;
+}
+
+interface LoopTailContext {
+  readonly loopId: string;
+  readonly home: string;
+  readonly paths: LoopPaths;
+  readonly json: boolean;
+  readonly out: Out;
+  readonly err: Err;
+  readonly env: Record<string, string | undefined>;
+  readonly options: TailOptions;
+}
+
+/** Follows a loop log, handing each child run to the ordinary run follower. */
+async function runLoopTail(
+  loopId: string,
+  json: boolean,
+  out: Out,
+  err: Err,
+  env: Record<string, string | undefined>,
+  options: TailOptions,
+): Promise<number> {
+  const home = loopfileHome(env as NodeJS.ProcessEnv);
+  const paths = loopPaths(home, loopId);
+  if (!(await pathExists(paths.root))) {
+    return loopFail(err, {
+      summary: `no loop ${loopId}`,
+      code: "no_such_loop",
+      help: "Use `loopfile list` to find a valid loop ID.",
+    });
+  }
+
+  const initial = await readOrMissing(paths.events);
+  if (initial === undefined) {
+    return loopFail(err, {
+      summary: `events.jsonl for loop ${loopId} could not be opened`,
+      code: "log_unreadable",
+      help: "Check that events.jsonl exists and is readable.",
+    });
+  }
+
+  const context = { loopId, home, paths, json, out, err, env, options } satisfies LoopTailContext;
+  const first = splitCompleteLines(initial.text);
+  const reader = { position: initial.size, remainder: first.remainder };
+  const ended = await consumeLoopLines(first.lines, context);
+  if (ended !== undefined) return ended;
+
+  const sleep = options.sleep ?? realSleep;
+  for (;;) {
+    const read = await readNew(paths.events, reader.position);
+    reader.position = read.pos;
+    const split = splitCompleteLines(reader.remainder + read.text);
+    reader.remainder = split.remainder;
+    const result = await consumeLoopLines(split.lines, context);
+    if (result !== undefined) return result;
+
+    if ((await pingOwner(paths.socket, options.ownerPingTimeoutMs)) !== loopId) {
+      const last = await readNew(paths.events, reader.position);
+      reader.position = last.pos;
+      const final = splitCompleteLines(reader.remainder + last.text);
+      const finalResult = await consumeLoopLines(final.lines, context);
+      if (finalResult !== undefined) return finalResult;
+      return loopFail(err, {
+        summary: `the loop owner for ${loopId} is gone`,
+        code: "owner_gone",
+        help: `Resume the crashed loop with: loopfile resume ${loopId}`,
+      });
+    }
+    await sleep(options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS);
+  }
+}
+
+async function consumeLoopLines(
+  lines: readonly string[],
+  context: LoopTailContext,
+): Promise<number | undefined> {
+  for (const line of lines) {
+    const event = loopEventInLine(line);
+    if (context.json) context.out(`${line}\n`);
+    if (event === undefined) continue;
+    const result = await consumeLoopEvent(event, context);
+    if (result !== undefined) return result;
+  }
+  return undefined;
+}
+
+async function consumeLoopEvent(
+  event: Record<string, unknown>,
+  context: LoopTailContext,
+): Promise<number | undefined> {
+  switch (event.type) {
+    case "loop.run_started":
+      await consumeRunStarted(event, context);
+      return undefined;
+    case "loop.paused":
+      if (!context.json) context.out(`loop: pause until ${stringOf(event.until)}\n`);
+      return undefined;
+    case "loop.ended": {
+      const state = loopState(event.reason);
+      if (!context.json) context.out(`loop: ended ${state} ${stringOf(event.reason)}\n`);
+      return state === "completed" ? 0 : 1;
+    }
+    default:
+      return undefined;
+  }
+}
+
+async function consumeRunStarted(
+  event: Record<string, unknown>,
+  context: LoopTailContext,
+): Promise<void> {
+  const run = {
+    index: numberOf(event.index),
+    runId: stringOf(event.runId),
+  } satisfies LoopTailRun;
+  if (!context.json) context.out(`loop: run ${run.index} ${run.runId} started\n`);
+  const ready = await waitForChildActivity(
+    context.home,
+    context.loopId,
+    run.runId,
+    context.paths,
+    context.options,
+  );
+  const childCode = ready
+    ? await tailCommand(
+        ["tail", run.runId, ...(context.json ? ["--json"] : [])],
+        context.out,
+        context.err,
+        context.env,
+        context.options,
+      )
+    : 2;
+  if (!context.json)
+    context.out(
+      `loop: run ${run.index} ${run.runId} ${await childState(
+        context.home,
+        run.runId,
+        childCode,
+      )}\n`,
+    );
+}
+
+async function waitForChildActivity(
+  home: string,
+  loopId: string,
+  runId: string,
+  loop: LoopPaths,
+  options: TailOptions,
+): Promise<boolean> {
+  const sleep = options.sleep ?? realSleep;
+  for (;;) {
+    if (await pathExists(runPaths(home, runId).activity)) return true;
+    if (await loopHasEnded(loop.events)) return false;
+    if ((await pingOwner(loop.socket, options.ownerPingTimeoutMs)) !== loopId) return false;
+    await sleep(options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS);
+  }
+}
+
+async function loopHasEnded(path: string): Promise<boolean> {
+  const text = await readFile(path, "utf8").catch(() => "");
+  return text.split("\n").some((line) => loopEventInLine(line)?.type === "loop.ended");
+}
+
+async function childState(home: string, runId: string, exitCode: number): Promise<string> {
+  const text = await readFile(runPaths(home, runId).events, "utf8").catch(() => "");
+  for (const line of text.split("\n").reverse()) {
+    const event = jsonObject(line);
+    if (event?.type === "run.cancelled") return "cancelled";
+    if (event?.type === "run.ended") {
+      return event.result === "success" ? "completed" : "failed";
+    }
+  }
+  return exitCode === 0 ? "completed" : exitCode === 1 ? "failed" : "crashed";
+}
+
+function loopEventInLine(line: string): Record<string, unknown> | undefined {
+  const event = jsonObject(line);
+  return LOOP_EVENT_TYPES.has(String(event?.type)) ? event : undefined;
+}
+
+function jsonObject(line: string): Record<string, unknown> | undefined {
+  if (line.trim() === "") return undefined;
+  try {
+    const value: unknown = JSON.parse(line);
+    return typeof value === "object" && value !== null && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function numberOf(value: unknown): number {
+  return typeof value === "number" ? value : 0;
+}
+
+function stringOf(value: unknown): string {
+  return typeof value === "string" ? value : "unknown";
+}
+
+function loopState(reason: unknown): "completed" | "cancelled" | "failed" {
+  if (reason === "source_empty" || reason === "max_runs") return "completed";
+  if (reason === "cancelled") return "cancelled";
+  return "failed";
+}
+
+function loopFail(err: Err, failure: OperatorFailure): 2 {
+  err(renderOperatorFailure(failure).stderr);
+  return 2;
 }
 
 async function runTail(

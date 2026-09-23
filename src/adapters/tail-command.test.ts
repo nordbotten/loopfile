@@ -4,7 +4,7 @@ import { createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { runPaths } from "./run-directory.ts";
+import { loopPaths, runPaths } from "./run-directory.ts";
 import { tailCommand } from "./tail-command.ts";
 
 const scratch = await mkdtemp(join(tmpdir(), "loopfile-tail-"));
@@ -77,6 +77,57 @@ test("tail on an unknown run gives a clear error and exits 2", async () => {
   assert.equal(code, 2);
   assert.match(out.errText(), /unknown run/);
   assert.match(out.errText(), new RegExp(runId));
+});
+
+test("tail on a missing loop gives no_such_loop", async () => {
+  const { home } = newRun();
+  const out = capture();
+  const code = await tailCommand(["tail", "loop-20260917-160344-k3f7"], out.out, out.err, {
+    LOOPFILE_HOME: home,
+  });
+  assert.equal(code, 2);
+  assert.match(out.errText(), /code: no_such_loop/);
+});
+
+test("tail on an existing loop with no event log gives a clear error and exits 2", async () => {
+  const { home } = newRun();
+  const loopId = "loop-20260917-160344-k3f7";
+  await mkdir(loopPaths(home, loopId).root, { recursive: true });
+
+  const out = capture();
+  const code = await tailCommand(["tail", loopId], out.out, out.err, { LOOPFILE_HOME: home });
+
+  assert.equal(code, 2);
+  assert.match(out.errText(), /code: log_unreadable/);
+});
+
+test("tail prints a loop pause line", async () => {
+  const { home } = newRun();
+  const loopId = "loop-20260917-160344-k3f7";
+  const paths = loopPaths(home, loopId);
+  await mkdir(paths.root, { recursive: true });
+  const until = "2026-09-17T16:05:00.000Z";
+  await writeFile(
+    paths.events,
+    [
+      '{"type":"loop.created","seq":1,"at":"x"}',
+      JSON.stringify({ type: "loop.paused", seq: 2, at: "x", until }),
+      JSON.stringify({
+        type: "loop.ended",
+        seq: 3,
+        at: "x",
+        result: "success",
+        reason: "max_runs",
+      }),
+      "",
+    ].join("\n"),
+  );
+
+  const out = capture();
+  const code = await tailCommand(["tail", loopId], out.out, out.err, { LOOPFILE_HOME: home });
+
+  assert.equal(code, 0);
+  assert.deepEqual(out.lines(), [`loop: pause until ${until}`, "loop: ended completed max_runs"]);
 });
 
 test("tail on a run with no activity log gives a clear error and exits 2", async () => {
