@@ -11,7 +11,7 @@
 
 import { type ChildProcess, spawn } from "node:child_process";
 import { closeSync, openSync } from "node:fs";
-import { mkdir, open, readFile, rename, rm, stat } from "node:fs/promises";
+import { mkdir, open, readFile, rename, rm } from "node:fs/promises";
 import { connect } from "node:net";
 import { dirname, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
@@ -45,7 +45,7 @@ import { renderTrustPrompt } from "../application/trust-prompt.ts";
 import { selectWorkspaceMode } from "../application/workspace-mode.ts";
 import type { Workflow, WorkspaceMode } from "../domain/model.ts";
 import { loadDirectory, loadInput, loadThinText } from "./directory-loader.ts";
-import { classifyInput, type InputKind, readStdin } from "./input.ts";
+import { classifyInput, type InputKind, readStdin, sourceExists } from "./input.ts";
 import {
   attachMonitor,
   hasTerminal,
@@ -54,7 +54,12 @@ import {
   waitForRun,
 } from "./monitor.ts";
 import { ownerLogHelp } from "./owner-log.ts";
-import { type FetchedRemote, fetchRemote, RemoteFetchError } from "./remote-fetch.ts";
+import {
+  type FetchedRemote,
+  fetchRemote,
+  RemoteFetchError,
+  remoteFetchOperatorFailure,
+} from "./remote-fetch.ts";
 import {
   createRunDirectory,
   loopfileHome,
@@ -399,19 +404,9 @@ function refuseRemoteFetch(
   remote: RemoteSource,
   error: unknown,
 ): number {
-  if (error instanceof RemoteFetchError && error.code === "git_missing") {
-    return refuse(
-      io,
-      "git is not on PATH",
-      2,
-      "git_missing",
-      "Install git to run a Remote Loopfile. Local sources do not need it.",
-    );
-  }
-  if (error instanceof RemoteFetchError && error.code === "fetch_failed") {
-    io.err(
-      `error: cannot fetch ${remote.host}/${remote.repo}\n${error.stderr ? `${error.stderr}\n` : ""}code: fetch_failed\nhelp: Check the name and your access to the repository.\n`,
-    );
+  const standardFailure = remoteFetchOperatorFailure(remote, error);
+  if (standardFailure !== undefined) {
+    io.err(standardFailure.stderr);
     return 2;
   }
   const message =
@@ -474,16 +469,6 @@ export async function prepareLaunchSource(
 
   const workflow = await loadWorkflow(source, input.kind, io, input.text);
   return workflow === undefined ? { ok: false, exitCode: 1 } : { ...input, workflow };
-}
-
-async function sourceExists(source: string): Promise<boolean> {
-  try {
-    await stat(source);
-    return true;
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    return code !== "ENOENT" && code !== "ENOTDIR";
-  }
 }
 
 function isMissingPath(error: unknown): boolean {
