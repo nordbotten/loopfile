@@ -15,7 +15,7 @@
  * the same fact as "the run crashed".
  */
 
-import type { Timestamp } from "./events.ts";
+import type { RemoteRecord, Timestamp } from "./events.ts";
 import type { LoopId, RunId } from "./model.ts";
 import type { LoopLifecycle, LoopStatusSource, RunLifecycle } from "./status.ts";
 
@@ -39,6 +39,7 @@ export interface RunListEntry {
   readonly runId: RunId;
   readonly loopId: LoopId | null;
   readonly loopfileName: string | null;
+  readonly remote: RemoteRecord | null;
   readonly state: RunListState;
   readonly currentStep: string | null;
   readonly startedAt: Timestamp | null;
