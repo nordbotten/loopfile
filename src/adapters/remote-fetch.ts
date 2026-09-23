@@ -71,9 +71,7 @@ async function checkoutRemote(
       );
       checkoutSha = sha;
     } catch {
-      const shaFromFirstTry =
-        source.ref === undefined || /^[0-9a-f]{40}$/i.test(source.ref) ? sha : undefined;
-      checkoutSha = await fallbackCheckout(source, shaFromFirstTry, env, repository);
+      checkoutSha = await fallbackCheckout(source, sha, env, repository);
     }
   }
   const path = source.path === undefined ? repository : join(repository, source.path);
