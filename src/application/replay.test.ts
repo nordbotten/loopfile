@@ -125,11 +125,56 @@ test("replays a clean run", () => {
         cause: "on",
       },
     ],
+    attemptsSinceContinue: { plan: ["001-plan"], fix: ["002-fix"] },
+    transitionsSinceContinue: [
+      {
+        from: "plan",
+        attemptId: "001-plan",
+        result: "success",
+        reason: "outcome",
+        outcome: "ready",
+        to: "fix",
+        cause: "on",
+      },
+      {
+        from: "fix",
+        attemptId: "002-fix",
+        result: "success",
+        reason: "clean_exit",
+        to: "$success",
+        cause: "on",
+      },
+    ],
+    ownerTimeSinceContinueMs: 5 * 60_000,
     ownerTimeMs: 5 * 60_000,
     createdAt: at(0),
     lastEventAt: at(5),
     result: { result: "success", reason: "end_state" },
   });
+});
+
+test("run.continued starts fresh limit counts without erasing run history", () => {
+  const events = parseEventLog(
+    eventLog(
+      created,
+      { type: "owner.started", at: at(0), pid: 1, host: "box" },
+      { type: "attempt.started", at: at(1), attemptId: "001-work", stepId: "work", processGroupId: 0 },
+      { type: "attempt.ended", at: at(2), attemptId: "001-work", result: "failure", reason: "nonzero_exit" },
+      { type: "transition", at: at(2), from: "work", attemptId: "001-work", result: "failure", reason: "nonzero_exit", to: "$failure", cause: "onFailure" },
+      { type: "run.ended", at: at(3), result: "failure", reason: "end_state" },
+      { type: "owner.started", at: at(10), pid: 2, host: "box" },
+      { type: "run.continued", at: at(11) },
+      { type: "attempt.started", at: at(12), attemptId: "002-work", stepId: "work", processGroupId: 0 },
+    ),
+  );
+  const state = replay(events);
+  assert.deepEqual(state.attempts, { work: ["001-work", "002-work"] });
+  assert.deepEqual(state.attemptsSinceContinue, { work: ["002-work"] });
+  assert.equal(state.transitions.length, 1);
+  assert.equal(state.transitionsSinceContinue.length, 0);
+  assert.equal(state.ownerTimeMs, 5 * 60_000);
+  assert.equal(state.ownerTimeSinceContinueMs, 1 * 60_000);
+  assert.equal(state.result, undefined);
 });
 
 test("a transition to an end state leaves the current step alone", () => {
@@ -184,6 +229,9 @@ test("a run with no events after run.created has no step, no attempts and no res
     modelDigest: "sha256:model",
     attempts: {},
     transitions: [],
+    attemptsSinceContinue: {},
+    transitionsSinceContinue: [],
+    ownerTimeSinceContinueMs: 0,
     ownerTimeMs: 0,
     createdAt: at(0),
     lastEventAt: at(0),

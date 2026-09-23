@@ -31,6 +31,7 @@ import type { HarnessActivity, HarnessAdapters } from "../application/harness.ts
 import type { LaunchInputs } from "../application/launch-inputs.ts";
 import type { AttemptIdentity } from "../application/owner-protocol.ts";
 import { nextAttemptId, parseEventLog, replay } from "../application/replay.ts";
+import { continuePlan, continueRefusal } from "../application/continue.ts";
 import { resumePlan, resumeRefusal } from "../application/resume.ts";
 import { route } from "../application/routing.ts";
 import {
@@ -197,6 +198,9 @@ export interface ResumeRunOptions {
   readonly cancelSignal?: AbortSignal;
 }
 
+/** What continuing an ended run needs. Everything else is read from its run folder. */
+export type ContinueRunOptions = ResumeRunOptions;
+
 /**
  * Starts a new run owner for a crashed run and runs it to its end (#64).
  *
@@ -230,6 +234,36 @@ export async function resumeRun(options: ResumeRunOptions): Promise<ExecutedRun>
     const run = { ...options, source: paths.loopfile, repository: created.repositoryPath };
     return await runSteps(run, owner, { workflow, workspace }, await loopfileNameOf(paths), (t) =>
       resumeFrom(workflow, t),
+    );
+  } finally {
+    await owner.close();
+  }
+}
+
+/** Starts a new owner and continues the stopped step in the same run and workspace (#85). */
+export async function continueRun(options: ContinueRunOptions): Promise<ExecutedRun> {
+  const paths = runPaths(options.home, options.runId);
+  const workflow = await loadMaterialized(paths);
+  const history = await readEvents(paths);
+  const refused = continueRefusal(history, modelDigest(workflow));
+  if (refused !== undefined) throw new WorkflowRunError(refused);
+
+  const owner = await startRunOwner({
+    home: options.home,
+    runId: options.runId,
+    ...cancelSignalOf(options),
+  });
+  try {
+    const created = history[0] as RunCreated;
+    const workspace: Workspace = {
+      path: paths.workspace,
+      repositoryPath: created.repositoryPath,
+      baseCommit: created.baseCommit,
+      branch: created.branch,
+    };
+    const run = { ...options, source: paths.loopfile, repository: created.repositoryPath };
+    return await runSteps(run, owner, { workflow, workspace }, await loopfileNameOf(paths), (tracked) =>
+      continueFrom(workflow, tracked),
     );
   } finally {
     await owner.close();
@@ -272,6 +306,24 @@ async function resumeFrom(workflow: Workflow, tracked: Tracked): Promise<Moved> 
     await tracked.log.append({ type: "attempt.interrupted", attemptId: interrupted.attemptId });
   }
   if (next.kind === "end") return { event: endStateEvent(next.state) };
+  const step = workflow.steps.find((candidate) => candidate.id === next.stepId);
+  if (step === undefined) throw new WorkflowRunError(`no step ${next.stepId}`);
+  if (next.kind === "route") {
+    return await move(
+      workflow,
+      step,
+      { kind: "ended", attemptId: next.attemptId, end: next.end },
+      tracked,
+    );
+  }
+  const attempts = checkAttemptLimit(step, replay(tracked.history));
+  return attempts.allowed ? { to: step.id } : { event: attempts.event };
+}
+
+/** Adds the limit reset and either retries a step or takes its previously refused move. */
+async function continueFrom(workflow: Workflow, tracked: Tracked): Promise<Moved> {
+  await tracked.log.append({ type: "run.continued" });
+  const next = continuePlan(workflow, tracked.history);
   const step = workflow.steps.find((candidate) => candidate.id === next.stepId);
   if (step === undefined) throw new WorkflowRunError(`no step ${next.stepId}`);
   if (next.kind === "route") {
@@ -407,8 +459,8 @@ async function move(
   const { to, cause } = route(workflow, step.id, visited.end);
   const state = replay(tracked.history);
   const refused =
-    refusal(checkTransitionLimit(workflow, state.transitions.length)) ??
-    refusal(checkRunTimeout(workflow, state.ownerTimeMs));
+    refusal(checkTransitionLimit(workflow, state.transitionsSinceContinue.length)) ??
+    refusal(checkRunTimeout(workflow, state.ownerTimeSinceContinueMs));
   if (refused !== undefined) return { event: refused };
 
   await tracked.log.append({
@@ -903,7 +955,10 @@ function runTimeoutTimer(
   fire: () => void,
 ): NodeJS.Timeout | undefined {
   if (workflow.runTimeoutMs === undefined) return undefined;
-  return setTimeout(fire, Math.max(0, workflow.runTimeoutMs - replay(history).ownerTimeMs));
+  return setTimeout(
+    fire,
+    Math.max(0, workflow.runTimeoutMs - replay(history).ownerTimeSinceContinueMs),
+  );
 }
 
 /** How much longer than the SIGKILL grace `groupsGone` waits for the kernel. */

@@ -70,7 +70,7 @@ test("an ended run is refused and named as ended, with its result", () => {
   const events = log(created, owner, { type: "run.ended", result: "failure", reason: "end_state" });
   const message = resumeRefusal(events, "sha256:model") ?? "";
   assert.match(message, /^run r-1 has ended \(failure\)\. /);
-  assert.match(message, /only for a crashed run: start a new run instead\.$/);
+  assert.match(message, /Continue it with `loopfile continue r-1`\.$/);
 });
 
 test("an internal error run may be resumed", () => {
@@ -109,7 +109,7 @@ test("a cancelled run is refused and named as cancelled", () => {
   const events = log(created, owner, { type: "run.cancelled" });
   assert.equal(
     resumeRefusal(events, "sha256:model"),
-    "run r-1 was cancelled. Resume is only for a crashed run: start a new run instead.",
+    "run r-1 was cancelled. Continue it with `loopfile continue r-1`.",
   );
 });
 

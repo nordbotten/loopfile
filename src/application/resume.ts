@@ -56,9 +56,18 @@ export function resumeRefusal(
   modelDigest: string,
 ): string | undefined {
   const state = replay(events);
-  const created = events[0] as RunCreated;
   const ended = endedRefusal(state, events);
   if (ended !== undefined) return ended;
+  return runModelRefusal(events, modelDigest);
+}
+
+/** The shared ADR 0006 check used before resume or continue. */
+export function runModelRefusal(
+  events: readonly RunEvent[],
+  modelDigest: string,
+): string | undefined {
+  const state = replay(events);
+  const created = events[0] as RunCreated;
   if (created.eventFormatVersion !== EVENT_FORMAT_VERSION) {
     return (
       `run ${state.runId} has event format version ${created.eventFormatVersion}, ` +
@@ -86,8 +95,14 @@ function endedRefusal(state: RunState, events: readonly RunEvent[]): string | un
   ) {
     return undefined;
   }
+  if (result.result === "success" && result.reason === "end_state") {
+    return `run ${state.runId} completed. Resume is only for a crashed run.`;
+  }
+  if (result.result !== "cancelled" && result.reason === "internal_error") {
+    return `run ${state.runId} has ended (internal_error). Resume is only for a crashed run.`;
+  }
   const how = result.result === "cancelled" ? "was cancelled" : `has ended (${result.result})`;
-  return `run ${state.runId} ${how}. Resume is only for a crashed run: start a new run instead.`;
+  return `run ${state.runId} ${how}. Continue it with \`loopfile continue ${state.runId}\`.`;
 }
 
 /** True when an `internal_error` ended two owners without an attempt between them. */

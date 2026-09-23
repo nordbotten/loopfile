@@ -11,7 +11,7 @@ import {
   renderOperatorConfirmation,
   renderOperatorFailure,
 } from "../application/operator-error.ts";
-import { parseEventLog } from "../application/replay.ts";
+import { parseEventLog, replay } from "../application/replay.ts";
 import type { RunEvent } from "../domain/events.ts";
 import { loopfileHome, pathExists, type RunPaths, runPaths } from "./run-directory.ts";
 import { requestInterrupt } from "./run-owner.ts";
@@ -21,7 +21,8 @@ const HELP = `${USAGE}
 
 Stop the current attempt and start a new attempt of the same step. The
 interrupted attempt counts toward maxAttempts. Interrupting an ended or crashed
-run fails; use loopfile resume for a crashed run.
+run fails; use loopfile continue for an ended run and loopfile resume for a crashed
+or internal_error run.
 `;
 
 /** How long the command waits for the owner to start the replacement attempt. */
@@ -133,12 +134,22 @@ async function interruptTarget(
     );
     return undefined;
   }
-  if (events.some((event) => event.type === "run.ended" || event.type === "run.cancelled")) {
+  const terminal = events.findLast(
+    (event) => event.type === "run.ended" || event.type === "run.cancelled",
+  );
+  if (terminal !== undefined) {
+    const state = replay(events);
+    const completed = state.result?.result === "success" && state.result.reason === "end_state";
+    const internalError = terminal.type === "run.ended" && terminal.reason === "internal_error";
+    const command = internalError ? "resume" : "continue";
+    const help = completed
+      ? "Completed runs have no active attempt to interrupt; start a new run instead."
+      : `Use \`loopfile ${command} ${runId}\` for this ended run.`;
     err(
       renderOperatorFailure({
-        summary: `run ${runId} has ended`,
+        summary: `run ${runId} ${terminal.type === "run.cancelled" ? "was cancelled" : "has ended"}`,
         code: "already_ended",
-        help: "Interrupt only a running run with an active attempt.",
+        help,
       }).stderr,
     );
     return undefined;

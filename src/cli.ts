@@ -11,6 +11,7 @@ import {
   reportResult,
 } from "./adapters/attempt-client.ts";
 import { cancelCommand } from "./adapters/cancel-command.ts";
+import { continueCommand } from "./adapters/continue-command.ts";
 import { checkCommand } from "./adapters/check-command.ts";
 import { docsCommand } from "./adapters/docs-command.ts";
 import { readStdin as readRealStdin } from "./adapters/input.ts";
@@ -60,6 +61,7 @@ Commands:
   list [--json]
   cancel <runid|loopid> [--now|--after-run]
   interrupt <runid>
+  continue <runid> [-d]
   resume [<runid>] [-d] [--kill-leftovers]
   remove <runid> [--kill-leftovers] [--force]
   prune [--older-than <age>] [--dry-run]
@@ -89,7 +91,7 @@ Options:
  * `loopfile <source>` returns a promise: it checks the Loopfile, starts a run
  * owner and waits for its "ready" (#35).
  *
- * `__owner`, `cancel`, `check`, `data get`, `interrupt`, `list`, `logs`, `status` and `tail`
+ * `__owner`, `cancel`, `check`, `continue`, `data get`, `interrupt`, `list`, `logs`, `status` and `tail`
  * are the commands that return a promise: `__owner` because a run owner lives as long
  * as its run (ADR 0008), `cancel` because it asks the run owner over its
  * control socket and waits for it to stop (#63), `data get` because it calls one over `LOOPFILE_ENDPOINT` (ADR
@@ -126,6 +128,14 @@ export function main(
   // as paths (#37, decided in #91).
   if (argv[0] === "cancel") return cancelCommand(argv, out, err, env);
   if (argv[0] === "interrupt") return interruptCommand(argv, out, err, env);
+  if (argv[0] === "continue") {
+    return continueCommand(
+      argv,
+      import.meta.filename,
+      { out, err, monitor: { input: process.stdin, output: process.stdout } },
+      env,
+    );
+  }
   if (argv[0] === "check") return checkCommand(argv, out, err, readStdin);
   if (argv[0] === "docs") return docsCommand(argv, out, err);
   if (argv[0] === "list") return listCommand(argv, out, err, env);

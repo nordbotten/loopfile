@@ -535,7 +535,7 @@ export interface OwnerStart {
   readonly ownerEnv: Record<string, string | undefined>;
   readonly detach: boolean;
   /** The confirmation fact printed after the owner is ready. */
-  readonly confirmation: "started" | "resumed";
+  readonly confirmation: "started" | "resumed" | "continued";
   /** The CLI script the run owner is started from. */
   readonly cli: string;
 }
@@ -627,7 +627,7 @@ export async function startDetachedOwner(options: DetachedOwnerStart): Promise<S
 async function continueAfterReady(
   runId: string,
   detach: boolean,
-  confirmation: "started" | "resumed",
+  confirmation: "started" | "resumed" | "continued",
   io: Pick<LaunchIo, "out" | "err" | "monitor">,
   env: Record<string, string | undefined>,
   options: LaunchOptions,

@@ -25,7 +25,7 @@ export type LimitCheck =
  *
  * A transition is any move: an `on` route, `onFailure`, or falling through to
  * the next step, including a move to `$success` or `$failure`. `state`'s
- * transition count is the number already taken. The move that would make the
+ * transition count since `run.continued` is the number already taken. The move that would make the
  * count go past `maxTransitions` is refused; a count that lands exactly on
  * `maxTransitions` is allowed, so a run may still end normally on its last
  * allowed move.
@@ -40,11 +40,10 @@ export function checkTransitionLimit(workflow: Workflow, transitionCount: number
 }
 
 /**
- * Checks `runTimeoutMs` against the run owner time used so far.
+ * Checks `runTimeoutMs` against owner time since the last `run.continued`.
  *
- * `ownerTimeMs` counts only run owner wall time, from each `owner.started` to
- * that owner's last event (`replay`'s `ownerTimeMs`), so the gap between a
- * crash and its resume is never charged to the run.
+ * The replayed count excludes gaps between owners and starts over at each
+ * deliberate continue.
  */
 export function checkRunTimeout(workflow: Workflow, ownerTimeMs: number): LimitCheck {
   if (workflow.runTimeoutMs === undefined) return { allowed: true };
