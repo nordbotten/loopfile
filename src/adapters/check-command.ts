@@ -4,32 +4,44 @@ import { parseArgs } from "node:util";
 import { checkAgainstDeclared, inputHelp, parseInputFlags } from "../application/launch-inputs.ts";
 import type { LoadError, LoadResult } from "../application/load-workflow.ts";
 import { renderOperatorFailureLines } from "../application/operator-error.ts";
+import { formatRemoteLine } from "../application/remote-view.ts";
+import { parseSource, type RemoteSource, SourceParseError } from "../application/source.ts";
 import { loadInput, loadThinText } from "./directory-loader.ts";
-import { classifyInput, InputError, type InputKind, readStdin } from "./input.ts";
+import { classifyInput, InputError, type InputKind, readStdin, sourceExists } from "./input.ts";
+import {
+  type FetchedRemote,
+  fetchRemote,
+  RemoteFetchError,
+  remoteFetchOperatorFailure,
+} from "./remote-fetch.ts";
 
 type Out = (text: string) => void;
 
-const USAGE = "Usage: loopfile check <source> [--json] [--input <name>=<value>]...";
+const USAGE =
+  "Usage: loopfile check <directory|file.loop|github:owner/repo[/path][@ref]|git+https://…|git+ssh://…|-> [--json] [--input <name>=<value>]...";
 const HELP = `${USAGE}
 
-Validate a Loopfile and its launch inputs without starting a run. Use '-' as the
-source to read a thin manifest from stdin. Use --json for
-one structured array of manifest problems. Check does not inspect the run
-environment, such as harness binaries.
+Validate a local or remote Loopfile and its launch inputs without starting a
+run. Remote Loopfiles are fetched but never checked against trust.yaml. Use '-'
+to read a thin manifest from stdin, and --json for one structured array of
+manifest problems. Check does not inspect the run environment, such as harness
+binaries.
 `;
 
 interface CheckArgs {
   readonly source: string | undefined;
   readonly inputs: readonly string[];
   readonly json: boolean;
+  readonly trust: boolean;
 }
 
-/** Runs `check`. Returns 0 when launch would accept the source and inputs. */
+/** Runs `check`. Returns 0 when the source and its launch inputs are valid. */
 export async function checkCommand(
   argv: readonly string[],
   out: Out,
   err: Out,
   readInput: () => Promise<Buffer> = readStdin,
+  env: Record<string, string | undefined> = process.env,
 ): Promise<number> {
   if (argv.includes("--help")) {
     out(HELP);
@@ -37,12 +49,13 @@ export async function checkCommand(
   }
 
   const args = parseCheckArgs(argv);
+  if (args?.trust === true) return fail(err, "--trust is for launch only", 2, USAGE);
   if (args === undefined || args.source === undefined) {
     return fail(err, "check takes one source", 2, USAGE);
   }
 
-  const source = await readSource(args.source, readInput);
-  if (!source.ok) return fail(err, source.summary, source.exitCode, source.help, source.code);
+  const source = await readSource(args.source, readInput, env, args.json, out);
+  if (!source.ok) return reportSourceFailure(source, err);
 
   if (!reportManifest(source.result, args.json, out)) return 1;
 
@@ -58,17 +71,35 @@ export async function checkCommand(
   return 0;
 }
 
+function reportSourceFailure(
+  source: Extract<SourceResult, { readonly ok: false }>,
+  err: Out,
+): number {
+  if (source.stderr !== undefined) {
+    err(source.stderr);
+    return source.exitCode;
+  }
+  return fail(err, source.summary, source.exitCode, source.help, source.code);
+}
+
 type SourceResult =
   | { readonly ok: true; readonly result: LoadResult }
   | {
       readonly ok: false;
       readonly summary: string;
-      readonly code: "bad_argument" | "operation_failed";
+      readonly code: "bad_argument" | "git_missing" | "fetch_failed" | "operation_failed";
       readonly exitCode: 1 | 2;
       readonly help: string;
+      readonly stderr?: string;
     };
 
-async function readSource(source: string, readInput: () => Promise<Buffer>): Promise<SourceResult> {
+async function readSource(
+  source: string,
+  readInput: () => Promise<Buffer>,
+  env: Record<string, string | undefined>,
+  json: boolean,
+  out: Out,
+): Promise<SourceResult> {
   if (source === "-") {
     try {
       return { ok: true, result: loadThinText((await readInput()).toString("utf8"), source) };
@@ -83,6 +114,37 @@ async function readSource(source: string, readInput: () => Promise<Buffer>): Pro
     }
   }
 
+  let parsed: ReturnType<typeof parseSource>;
+  try {
+    parsed = parseSource(source, await sourceExists(source));
+  } catch (error) {
+    return {
+      ok: false,
+      summary: (error as Error).message,
+      code: "bad_argument",
+      exitCode: 2,
+      help: error instanceof SourceParseError ? error.help : USAGE,
+    };
+  }
+
+  if (parsed.kind === "remote") {
+    let fetched: FetchedRemote;
+    try {
+      fetched = await fetchRemote(parsed, env);
+    } catch (error) {
+      return remoteFailure(parsed, error);
+    }
+    try {
+      if (!json) out(`${formatRemoteLine({ ...fetched.remote, sha: fetched.sha }, true)}\n`);
+      return await readLocalSource(fetched.path);
+    } finally {
+      await fetched.cleanup().catch(() => undefined);
+    }
+  }
+  return readLocalSource(parsed.source);
+}
+
+async function readLocalSource(source: string): Promise<SourceResult> {
   let kind: InputKind;
   try {
     kind = await classifyInput(source);
@@ -110,6 +172,27 @@ async function readSource(source: string, readInput: () => Promise<Buffer>): Pro
   }
 }
 
+function remoteFailure(remote: RemoteSource, error: unknown): SourceResult {
+  const standardFailure = remoteFetchOperatorFailure(remote, error);
+  if (standardFailure !== undefined) {
+    return {
+      ok: false,
+      summary: error instanceof Error ? error.message : String(error),
+      code: standardFailure.code,
+      exitCode: 2,
+      help: USAGE,
+      stderr: standardFailure.stderr,
+    };
+  }
+  return {
+    ok: false,
+    summary: error instanceof Error ? error.message : String(error),
+    code: error instanceof RemoteFetchError ? error.code : "operation_failed",
+    exitCode: 2,
+    help: USAGE,
+  };
+}
+
 function parseCheckArgs(argv: readonly string[]): CheckArgs | undefined {
   try {
     const { values, positionals } = parseArgs({
@@ -117,6 +200,7 @@ function parseCheckArgs(argv: readonly string[]): CheckArgs | undefined {
       options: {
         input: { type: "string", multiple: true },
         json: { type: "boolean" },
+        trust: { type: "boolean" },
       },
       allowPositionals: true,
     });
@@ -125,6 +209,7 @@ function parseCheckArgs(argv: readonly string[]): CheckArgs | undefined {
       source: positionals[0],
       inputs: values.input ?? [],
       json: values.json === true,
+      trust: values.trust === true,
     };
   } catch {
     return undefined;
@@ -168,7 +253,7 @@ function fail(
   summary: string | readonly string[],
   exitCode: 1 | 2,
   help: string,
-  code: "bad_argument" | "operation_failed" = "bad_argument",
+  code: "bad_argument" | "git_missing" | "fetch_failed" | "operation_failed" = "bad_argument",
 ): number {
   const summaries = typeof summary === "string" ? [summary] : summary;
   err(renderOperatorFailureLines(summaries, code, help, exitCode).stderr);
