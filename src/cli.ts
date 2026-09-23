@@ -137,7 +137,7 @@ export function main(
       env,
     );
   }
-  if (argv[0] === "check") return checkCommand(argv, out, err, readStdin);
+  if (argv[0] === "check") return checkCommand(argv, out, err, readStdin, env);
   if (argv[0] === "docs") return docsCommand(argv, out, err);
   if (argv[0] === "list") return listCommand(argv, out, err, env);
   if (argv[0] === "loop") {

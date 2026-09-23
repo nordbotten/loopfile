@@ -67,6 +67,7 @@ const MUTATION_EXCLUDED_TESTS = new Set([
   "src/adapters/loop-driver.test.ts",
   "src/adapters/owner-command.test.ts",
   "src/adapters/remote-fetch.test.ts",
+  "src/adapters/check-remote.test.ts",
   "src/adapters/remove-command.test.ts",
   "src/adapters/ticket-run.test.ts",
   "src/adapters/workspace.test.ts",
