@@ -186,14 +186,7 @@ async function launchRemote(
     try {
       fetched = await fetchRemote(remote, env);
     } catch (error) {
-      const message =
-        remote.bareSource === undefined
-          ? error instanceof RemoteFetchError
-            ? error.message
-            : (error as Error).message
-          : `no local path and no GitHub repo named ${remote.bareSource}`;
-      const code = error instanceof RemoteFetchError ? error.code : "operation_failed";
-      return refuse(io, message, 2, code);
+      return refuseRemoteFetch(io, remote, error);
     }
     return await launchSource(
       args,
@@ -208,6 +201,36 @@ async function launchRemote(
   } finally {
     await fetched?.cleanup().catch(() => undefined);
   }
+}
+
+function refuseRemoteFetch(
+  io: Pick<LaunchIo, "err">,
+  remote: RemoteSource,
+  error: unknown,
+): number {
+  if (error instanceof RemoteFetchError && error.code === "git_missing") {
+    return refuse(
+      io,
+      "git is not on PATH",
+      2,
+      "git_missing",
+      "Install git to run a Remote Loopfile. Local sources do not need it.",
+    );
+  }
+  if (error instanceof RemoteFetchError && error.code === "fetch_failed") {
+    io.err(
+      `error: cannot fetch ${remote.host}/${remote.repo}\n${error.stderr ? `${error.stderr}\n` : ""}code: fetch_failed\nhelp: Check the name and your access to the repository.\n`,
+    );
+    return 2;
+  }
+  const message =
+    remote.bareSource === undefined
+      ? error instanceof RemoteFetchError
+        ? error.message
+        : (error as Error).message
+      : `no local path and no GitHub repo named ${remote.bareSource}`;
+  const code = error instanceof RemoteFetchError ? error.code : "operation_failed";
+  return refuse(io, message, 2, code);
 }
 
 export type LaunchSource =

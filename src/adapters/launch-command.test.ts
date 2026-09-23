@@ -291,6 +291,93 @@ test("refused Git URL forms exit 2 with their exact bad-argument help", async ()
   }
 });
 
+test("a missing Git executable reports git_missing with install help", async () => {
+  const { repo, env } = await setup();
+  const s = session();
+  assert.equal(
+    await launchCommand(
+      ["github:acme/loops", "--trust"],
+      cli,
+      s.io,
+      { ...env, PATH: "" },
+      { repository: repo },
+    ),
+    2,
+  );
+  assert.equal(
+    s.err(),
+    "error: git is not on PATH\n" +
+      "code: git_missing\n" +
+      "help: Install git to run a Remote Loopfile. Local sources do not need it.\n",
+  );
+});
+
+test("a missing remote repository reports git stderr as fetch_failed", async () => {
+  const setupResult = await setup();
+  const fixture = await makeGitFixture(
+    { "README.md": "not the requested repository\n" },
+    "other/repo",
+  );
+  try {
+    const s = session();
+    assert.equal(
+      await launchCommand(
+        ["github:acme/missing", "--trust"],
+        cli,
+        s.io,
+        { ...setupResult.env, ...fixture.env },
+        { repository: setupResult.repo },
+      ),
+      2,
+    );
+    assert.match(s.err(), /^error: cannot fetch github\.com\/acme\/missing\n/);
+    assert.match(s.err(), /\nfatal: .*does not appear to be a git repository\n/);
+    assert.match(s.err(), /\ncode: fetch_failed\n/);
+    assert.ok(s.err().endsWith("help: Check the name and your access to the repository.\n"));
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("a Git fetch exit 128 reports fetch_failed", async () => {
+  const { base, repo, env } = await setup();
+  const fixture = await makeGitFixture({ "manifest.yaml": "formatVersion: 1\nsteps: []\n" });
+  const bin = join(base, "bin");
+  await mkdir(bin);
+  const realGit = (await run("which", ["git"])).stdout.trim();
+  await writeFile(
+    join(bin, "git"),
+    `#!/bin/sh
+if [ "$1" = fetch ]; then
+  echo 'fatal: repository access denied' >&2
+  exit 128
+fi
+exec ${realGit} "$@"
+`,
+  );
+  await chmod(join(bin, "git"), 0o755);
+  try {
+    const s = session();
+    assert.equal(
+      await launchCommand(
+        ["github:acme/loops", "--trust"],
+        cli,
+        s.io,
+        { ...env, ...fixture.env, PATH: `${bin}${delimiter}${fixture.env.PATH}` },
+        { repository: repo },
+      ),
+      2,
+    );
+    assert.match(
+      s.err(),
+      /^error: cannot fetch github\.com\/acme\/loops\nfatal: repository access denied\n/,
+    );
+    assert.match(s.err(), /\ncode: fetch_failed\n/);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
 test("Git fetch errors redact credentials from printed URLs", async () => {
   const { repo, env } = await setup();
   const bin = join(repo, "bin");
@@ -453,7 +540,7 @@ test("an existing bare path and ./ path launch locally without fetching GitHub",
   }
 });
 
-test("a missing bare repository reports that no local path or GitHub repo exists", async () => {
+test("a missing bare repository reports fetch_failed with Git stderr", async () => {
   const setupResult = await setup();
   const fixture = await makeGitFixture(
     { "README.md": "not the requested repository\n" },
@@ -468,8 +555,9 @@ test("a missing bare repository reports that no local path or GitHub repo exists
         }),
         2,
       );
-      assert.match(s.err(), /error: no local path and no GitHub repo named acme\/loops\n/);
-      assert.match(s.err(), /code: operation_failed/);
+      assert.match(s.err(), /^error: cannot fetch github\.com\/acme\/loops\n/);
+      assert.match(s.err(), /\nfatal: .*does not appear to be a git repository\n/);
+      assert.match(s.err(), /\ncode: fetch_failed\n/);
     });
     await assert.rejects(stat(join(setupResult.home, "runs")));
   } finally {
@@ -779,29 +867,6 @@ test("a remote manifest failure cleans its fetched folder", async () => {
       1,
     );
     assert.deepEqual(await remoteFolders(tmp), []);
-    await assert.rejects(stat(join(home, "runs")));
-  } finally {
-    await fixture.cleanup();
-  }
-});
-
-test("a remote git failure reports operation_failed and git stderr", async () => {
-  const { repo, home, env } = await setup();
-  const fixture = await makeGitFixture({ "manifest.yaml": "formatVersion: 1\nsteps: []\n" });
-  try {
-    const s = session();
-    assert.equal(
-      await launchCommand(
-        ["github:acme/missing", "--trust"],
-        cli,
-        s.io,
-        { ...env, ...fixture.env },
-        { repository: repo },
-      ),
-      2,
-    );
-    assert.match(s.err(), /error: "fatal: .*acme\/missing.*does not appear to be a git repository/);
-    assert.match(s.err(), /code: operation_failed/);
     await assert.rejects(stat(join(home, "runs")));
   } finally {
     await fixture.cleanup();
