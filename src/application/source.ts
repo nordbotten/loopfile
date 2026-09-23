@@ -13,13 +13,59 @@ export interface RemoteSource {
   readonly url: string;
   readonly path?: string;
   readonly ref?: string;
+  readonly browserLink?: { readonly kind: "tree" | "blob"; readonly rest: string };
   readonly bareSource?: string;
 }
 
 /** Parses explicit GitHub sources and, when absent locally, bare owner/repo sources. */
 export function parseSource(text: string, exists: boolean): ParsedSource {
   if (text.startsWith("github:")) return parseExplicitSource(text);
+  if (/^https:\/\/github\.com(?:\/|[?#]|$)/i.test(text)) return parseGitHubBrowserLink(text);
   return exists ? { kind: "local", source: text } : parseBareSource(text);
+}
+
+function parseGitHubBrowserLink(text: string): RemoteSource {
+  const { url, segments } = browserPathSegments(text);
+  const owner = segments[0];
+  const repository = segments[1].replace(/\.git$/, "");
+  if (!validGitHubRepository(owner, repository)) {
+    throw new Error(`invalid GitHub browser link ${url}`);
+  }
+
+  const suffix = segments.slice(2);
+  if (suffix.length === 0) return githubSource(owner, repository, {});
+  const [kind, ...rest] = suffix;
+  if ((kind !== "tree" && kind !== "blob") || rest.length === 0) {
+    throw new Error(`unsupported GitHub browser URL path in ${url}`);
+  }
+  const restPath = rest.join("/");
+  if (hasInvalidPathSegment(restPath)) throw new Error(`invalid path segment in ${restPath}`);
+  return { ...githubSource(owner, repository, {}), browserLink: { kind, rest: restPath } };
+}
+
+function browserPathSegments(text: string): {
+  readonly url: string;
+  readonly segments: [string, string, ...string[]];
+} {
+  const url = text.split(/[?#]/, 1)[0] ?? text;
+  const pathname = url.replace(/^https:\/\/github\.com/i, "");
+  const segments = pathname.startsWith("/") ? pathname.slice(1).split("/") : [];
+  if (segments.at(-1) === "") segments.pop();
+  if (!isBrowserPathSegments(segments)) throw new Error(`invalid GitHub browser link ${url}`);
+  return { url, segments };
+}
+
+function isBrowserPathSegments(segments: string[]): segments is [string, string, ...string[]] {
+  return segments.length >= 2 && segments.every((segment) => segment !== "");
+}
+
+function validGitHubRepository(owner: string, repository: string): boolean {
+  return (
+    /^[A-Za-z0-9_-]+$/.test(owner) &&
+    /^[A-Za-z0-9._-]+$/.test(repository) &&
+    repository !== "." &&
+    repository !== ".."
+  );
 }
 
 function parseExplicitSource(text: string): ParsedSource {

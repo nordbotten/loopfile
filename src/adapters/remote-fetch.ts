@@ -34,12 +34,14 @@ export async function fetchRemote(
   env: Record<string, string | undefined> = process.env,
 ): Promise<FetchedRemote> {
   const gitEnv = { ...env, GIT_LFS_SKIP_SMUDGE: "1" };
-  const sha = await resolveRef(source, gitEnv);
+  const refs = source.browserLink === undefined ? undefined : await advertisedRefs(source, gitEnv);
+  const resolvedSource = refs === undefined ? source : splitBrowserLink(source, refs);
+  const sha = await resolveRef(resolvedSource, gitEnv, refs);
   // The caller's TMPDIR, so a test (or a sandbox) can keep the fetch out of the shared temp folder.
   const temporary = await mkdtemp(join(env.TMPDIR || tmpdir(), "loopfile-remote-"));
   const repository = join(temporary, "repo");
   try {
-    const fetched = await checkoutRemote(source, sha, gitEnv, repository);
+    const fetched = await checkoutRemote(resolvedSource, sha, gitEnv, repository);
     return { ...fetched, cleanup: () => rm(temporary, { recursive: true, force: true }) };
   } catch (error) {
     await rm(temporary, { recursive: true, force: true });
@@ -151,6 +153,54 @@ async function assertSourcePath(source: RemoteSource, path: string, sha: string)
   }
 }
 
+async function advertisedRefs(
+  source: RemoteSource,
+  env: Record<string, string | undefined>,
+): Promise<Map<string, string>> {
+  const result = await git(["ls-remote", source.url], undefined, env);
+  return parseAdvertisedRefs(result.stdout);
+}
+
+function splitBrowserLink(source: RemoteSource, refs: Map<string, string>): RemoteSource {
+  const link = source.browserLink;
+  if (link === undefined) return source;
+  const split = splitBrowserRest(link.rest, refs);
+  if (split === undefined) {
+    throw new RemoteFetchError(
+      `no branch, tag or commit in ${link.rest}`,
+      undefined,
+      "bad_argument",
+    );
+  }
+  if (link.kind === "blob" && !split.path.endsWith(".loop")) {
+    throw new RemoteFetchError("a /blob/ link must name a .loop file", undefined, "bad_argument");
+  }
+  const { browserLink: _browserLink, ...remote } = source;
+  return { ...remote, ref: split.ref, ...(split.path === "" ? {} : { path: split.path }) };
+}
+
+function splitBrowserRest(
+  rest: string,
+  refs: Map<string, string>,
+): { readonly ref: string; readonly path: string } | undefined {
+  const ref = advertisedRefNames(refs).find((name) => rest === name || rest.startsWith(`${name}/`));
+  if (ref !== undefined) {
+    return { ref, path: rest === ref ? "" : rest.slice(ref.length + 1) };
+  }
+  const [first, ...path] = rest.split("/");
+  return /^[0-9a-f]{7,40}$/i.test(first ?? "")
+    ? { ref: first ?? "", path: path.join("/") }
+    : undefined;
+}
+
+function advertisedRefNames(refs: Map<string, string>): string[] {
+  return [...refs.keys()]
+    .filter((name) => name.startsWith("refs/heads/") || name.startsWith("refs/tags/"))
+    .filter((name) => !name.endsWith("^{}"))
+    .map((name) => name.replace(/^refs\/(?:heads|tags)\//, ""))
+    .sort((a, b) => b.length - a.length);
+}
+
 function parseAdvertisedRefs(output: string): Map<string, string> {
   const refs = new Map<string, string>();
   for (const line of output.trim().split("\n")) {
@@ -165,9 +215,9 @@ function parseAdvertisedRefs(output: string): Map<string, string> {
 async function resolveRef(
   source: RemoteSource,
   env: Record<string, string | undefined>,
+  knownRefs?: Map<string, string>,
 ): Promise<string | undefined> {
-  const result = await git(["ls-remote", source.url], undefined, env);
-  const refs = parseAdvertisedRefs(result.stdout);
+  const refs = knownRefs ?? (await advertisedRefs(source, env));
   if (source.ref === undefined) {
     const sha = refs.get("HEAD");
     if (sha !== undefined) return sha;

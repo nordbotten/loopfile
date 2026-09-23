@@ -52,6 +52,61 @@ test("parseSource reads repository paths and refs", () => {
   for (const [text, expected] of cases) assert.deepEqual(parseSource(text, false), expected, text);
 });
 
+test("GitHub browser links strip queries and fragments and accept root suffixes", () => {
+  const cases = [
+    [
+      "https://github.com/Acme/Loops?tab=readme",
+      {
+        kind: "remote",
+        host: "github.com",
+        repo: "acme/loops",
+        url: "https://github.com/acme/loops",
+      },
+    ],
+    [
+      "https://github.com/acme/loops/tree/main/sub#readme",
+      {
+        kind: "remote",
+        host: "github.com",
+        repo: "acme/loops",
+        url: "https://github.com/acme/loops",
+        browserLink: { kind: "tree", rest: "main/sub" },
+      },
+    ],
+    [
+      "https://github.com/acme/loops/tree/main/",
+      {
+        kind: "remote",
+        host: "github.com",
+        repo: "acme/loops",
+        url: "https://github.com/acme/loops",
+        browserLink: { kind: "tree", rest: "main" },
+      },
+    ],
+    [
+      "https://github.com/acme/loops.git/",
+      {
+        kind: "remote",
+        host: "github.com",
+        repo: "acme/loops",
+        url: "https://github.com/acme/loops",
+      },
+    ],
+  ] as const;
+
+  for (const [text, expected] of cases) assert.deepEqual(parseSource(text, true), expected, text);
+});
+
+test("GitHub browser links reject unsupported routes and invalid paths", () => {
+  for (const text of [
+    "https://github.com/acme/loops/issues/1",
+    "https://github.com/acme/loops/tree",
+    "https://github.com/acme/loops/tree/main/a/../b",
+  ]) {
+    assert.throws(() => parseSource(text, true));
+  }
+});
+
 test("parseSource refuses dot, dot-dot and empty path segments", () => {
   for (const text of [
     "github:acme/loops/.",
