@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { createServer, type Server } from "node:net";
+import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import { loopStatus } from "../application/loop-status.ts";
@@ -33,6 +34,23 @@ function runner() {
       return errors;
     },
   };
+}
+
+async function fakeOwner(socketPath: string, ownerId: string): Promise<{ close(): Promise<void> }> {
+  const server: Server = createServer((socket) => {
+    let pending = "";
+    socket.on("data", (chunk: Buffer) => {
+      pending += chunk.toString();
+      if (pending.includes("\n")) {
+        socket.write(`${JSON.stringify({ type: "pong", runId: ownerId })}\n`);
+      }
+    });
+  });
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(socketPath, () => resolve());
+  });
+  return { close: () => new Promise((resolve) => server.close(() => resolve())) };
 }
 
 async function makeLoop(
@@ -68,7 +86,10 @@ async function makeLoop(
       type: "loop.run_started",
       runId,
       index,
-      inputSet: { project: "loopfile", issue: `issue-${index}` },
+      inputSet: {
+        project: "loopfile",
+        issue: index === 1 ? "1234567890123456789012345" : `issue-${index}`,
+      },
       sourceIndex: index,
       retryOf: index === 2 ? (runIds[0] ?? null) : null,
     });
@@ -148,7 +169,8 @@ test("status prints a loop's facts and three newest-last child rows, and JSON ha
   const table = text.output.slice(text.output.indexOf("\n\n") + 2);
   assert.match(table, /^#\s+RUN ID\s+INPUT SET\s+STATE\s+TIME\s+COST/);
   assert.equal(table.trim().split("\n").length, 4);
-  assert.match(table, /issue-1/);
+  assert.match(table, /issue=12345678901234567890/);
+  assert.doesNotMatch(table, /1234567890123456789012345/);
   assert.match(table, /est\. \$1\.50/);
 
   const json = runner();
@@ -268,6 +290,85 @@ test("status reports a missing loop with no_such_loop", async () => {
   });
   assert.equal(code, 2);
   assert.match(r.errors, /\ncode: no_such_loop\n/);
+});
+
+test("status gets the current child step from a live child owner", async () => {
+  const { home, loopId } = await makeLoop(1, "loop-20260922-120005-ffff");
+  const runId = "20260922-120001-aaaa";
+  const loop = loopPaths(home, loopId);
+  const child = runPaths(home, runId);
+  const loopProjection = JSON.parse(await readFile(loop.status, "utf8")) as LoopStatus;
+  await writeFile(
+    loop.status,
+    JSON.stringify({
+      ...loopProjection,
+      state: "running",
+      currentRunId: runId,
+      endReason: null,
+      endedAt: null,
+    }),
+  );
+  await writeFile(
+    child.status,
+    JSON.stringify({
+      ...childStatus(runId, loopId, 1, "2026-09-22T12:00:05.000Z"),
+      state: "running",
+      endReason: null,
+      endedAt: null,
+      current: {
+        stepId: "work",
+        stepKind: "command",
+        attemptId: "001-work",
+        attempt: 1,
+        maxAttempts: 1,
+        iteration: null,
+        maxIterations: null,
+        harness: null,
+        startedAt: "2026-09-22T12:00:00.000Z",
+      },
+    }),
+  );
+  await writeFile(
+    child.events,
+    `${[
+      {
+        seq: 1,
+        at: "2026-09-22T12:00:00.000Z",
+        type: "run.created",
+        runId,
+        eventFormatVersion: 1,
+        modelDigest: "sha256:program",
+        repositoryPath: "/repo",
+        baseCommit: "0".repeat(40),
+        branch: `loopfile/${runId}`,
+        inputs: [],
+      },
+      { seq: 2, at: "2026-09-22T12:00:00.000Z", type: "owner.started", pid: 1, host: hostname() },
+    ]
+      .map((event) => JSON.stringify(event))
+      .join("\n")}\n`,
+  );
+  const loopOwner = await fakeOwner(loop.socket, loopId);
+  const childOwner = await fakeOwner(child.socket, runId);
+  try {
+    const text = runner();
+    assert.equal(
+      await statusCommand(
+        ["status", loopId],
+        text.out,
+        text.err,
+        { LOOPFILE_HOME: home },
+        {
+          pingTimeoutMs: 100,
+        },
+      ),
+      0,
+    );
+    assert.match(text.output, new RegExp(`^current: ${runId} at step work$`, "m"));
+  } finally {
+    await childOwner.close();
+    await loopOwner.close();
+  }
 });
 
 test("loop status rendering includes the current child step", () => {
