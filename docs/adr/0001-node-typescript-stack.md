@@ -14,7 +14,7 @@ Loopfile is written in TypeScript and runs on Node.js `>=24`. It supports Linux 
 - **Lint and format:** Biome.
 - **CLI parsing:** `util.parseArgs`, no framework.
 - **Monitor rendering:** plain ANSI with `node:readline` and `util.styleText`. No Ink/React.
-- **Tar:** `tar` (node-tar). **YAML:** `yaml`. **Git:** spawn the `git` binary.
+- **Tar:** `tar` (node-tar). **YAML:** `yaml`. **Git:** spawn the `git` binary for Remote Loopfiles and worktree creation. Git is optional for workspace modes: every mode works without it, and `isolate` falls back to a full copy when Git cannot make a worktree (ADR 0014). Remote Loopfiles need Git (ADR 0013).
 
 ## Considered Options
 
