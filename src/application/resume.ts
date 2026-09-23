@@ -15,7 +15,7 @@ import {
   type RunEvent,
 } from "../domain/events.ts";
 import { type EndState, isEndState, type StepId, type Workflow } from "../domain/model.ts";
-import { type RunState, replay } from "./replay.ts";
+import { isCompleted, isInternalError, type RunResult, type RunState, replay } from "./replay.ts";
 import type { AttemptEndFields } from "./workflow-run.ts";
 
 /** Where a resumed run goes on from. */
@@ -86,23 +86,19 @@ export function runModelRefusal(
 
 /** Refuse every terminal result except an `internal_error` not repeated without an attempt. */
 function endedRefusal(state: RunState, events: readonly RunEvent[]): string | undefined {
-  const { result } = state;
+  const { result, runId } = state;
   if (result === undefined) return undefined;
-  if (
-    result.result !== "cancelled" &&
-    result.reason === "internal_error" &&
-    !secondInternalErrorWithoutAttempt(events)
-  ) {
-    return undefined;
-  }
-  if (result.result === "success" && result.reason === "end_state") {
-    return `run ${state.runId} completed. Resume is only for a crashed run.`;
-  }
-  if (result.result !== "cancelled" && result.reason === "internal_error") {
-    return `run ${state.runId} has ended (internal_error). Resume is only for a crashed run.`;
-  }
+  if (!isInternalError(result)) return terminalRefusal(runId, result);
+  return secondInternalErrorWithoutAttempt(events)
+    ? `run ${runId} has ended (internal_error). Resume is only for a crashed run.`
+    : undefined;
+}
+
+/** Why a run that ended any way but `internal_error` is not resumed, and what to use instead. */
+function terminalRefusal(runId: string, result: RunResult): string {
+  if (isCompleted(result)) return `run ${runId} completed. Resume is only for a crashed run.`;
   const how = result.result === "cancelled" ? "was cancelled" : `has ended (${result.result})`;
-  return `run ${state.runId} ${how}. Continue it with \`loopfile continue ${state.runId}\`.`;
+  return `run ${runId} ${how}. Continue it with \`loopfile continue ${runId}\`.`;
 }
 
 /** True when an `internal_error` ended two owners without an attempt between them. */

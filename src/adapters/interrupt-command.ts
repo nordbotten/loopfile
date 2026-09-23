@@ -11,7 +11,13 @@ import {
   renderOperatorConfirmation,
   renderOperatorFailure,
 } from "../application/operator-error.ts";
-import { parseEventLog, replay } from "../application/replay.ts";
+import {
+  isCompleted,
+  isInternalError,
+  parseEventLog,
+  type RunResult,
+  replay,
+} from "../application/replay.ts";
 import type { RunEvent } from "../domain/events.ts";
 import { loopfileHome, pathExists, type RunPaths, runPaths } from "./run-directory.ts";
 import { requestInterrupt } from "./run-owner.ts";
@@ -134,27 +140,35 @@ async function interruptTarget(
     );
     return undefined;
   }
-  const terminal = events.findLast(
-    (event) => event.type === "run.ended" || event.type === "run.cancelled",
-  );
-  if (terminal !== undefined) {
-    const state = replay(events);
-    const completed = state.result?.result === "success" && state.result.reason === "end_state";
-    const internalError = terminal.type === "run.ended" && terminal.reason === "internal_error";
-    const command = internalError ? "resume" : "continue";
-    const help = completed
-      ? "Completed runs have no active attempt to interrupt; start a new run instead."
-      : `Use \`loopfile ${command} ${runId}\` for this ended run.`;
+  const result = endedResult(events);
+  if (result !== undefined) {
     err(
       renderOperatorFailure({
-        summary: `run ${runId} ${terminal.type === "run.cancelled" ? "was cancelled" : "has ended"}`,
+        summary: `run ${runId} ${result.result === "cancelled" ? "was cancelled" : "has ended"}`,
         code: "already_ended",
-        help,
+        help: endedHelp(result, runId),
       }).stderr,
     );
     return undefined;
   }
   return { runId, paths, events };
+}
+
+/** How the run ended, unless `continue` or `resume` took it up again since. */
+function endedResult(events: readonly RunEvent[]): RunResult | undefined {
+  const ended = events.some(
+    (event) => event.type === "run.ended" || event.type === "run.cancelled",
+  );
+  return ended ? replay(events).result : undefined;
+}
+
+/** Names the command that goes on from an ended run, when there is one. */
+function endedHelp(result: RunResult, runId: string): string {
+  if (isCompleted(result)) {
+    return "Completed runs have no active attempt to interrupt; start a new run instead.";
+  }
+  const command = isInternalError(result) ? "resume" : "continue";
+  return `Use \`loopfile ${command} ${runId}\` for this ended run.`;
 }
 
 async function readEvents(paths: RunPaths) {

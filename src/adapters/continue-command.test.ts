@@ -9,6 +9,7 @@ import { promisify } from "node:util";
 import { parseEventLog } from "../application/replay.ts";
 import type { RunEvent } from "../domain/events.ts";
 import { continueCommand } from "./continue-command.ts";
+import { interruptCommand } from "./interrupt-command.ts";
 import { type LaunchIo, launchCommand } from "./launch-command.ts";
 import type { MonitorIo } from "./monitor.ts";
 import { removeAfterOwnersExit } from "./owner-cleanup.test.ts";
@@ -323,6 +324,42 @@ steps:
     (await events(testCase.paths)).filter((event) => event.type === "run.continued").length,
     2,
   );
+});
+
+test("a continued run that is running can be interrupted", async () => {
+  const manifest = `formatVersion: 1
+steps:
+  - id: work
+    kind: command
+    maxAttempts: 3
+    onFailure: $failure
+    run: 'if [ "$LOOPFILE_ATTEMPT_ID" = "001-work" ]; then exit 1; fi; sleep 30'
+`;
+  const testCase = await launch(manifest);
+  const firstEnd = await waitForEnd(testCase.paths);
+  assert.equal((await continueRun(testCase.runId, testCase.env)).code, 0);
+  await until(
+    async () =>
+      (await events(testCase.paths)).some(
+        (event) => event.type === "attempt.started" && event.attemptId === "002-work",
+      )
+        ? true
+        : undefined,
+    "the continued attempt",
+  );
+  let err = "";
+  const code = await interruptCommand(
+    ["interrupt", testCase.runId],
+    () => undefined,
+    (text) => {
+      err += text;
+    },
+    testCase.env,
+  );
+  assert.equal(code, 0, err);
+  assert.equal(err, `interrupted: ${testCase.runId}\n`);
+  assert.equal(await requestCancel(testCase.paths.socket, testCase.runId), true);
+  assert.equal((await waitForEnd(testCase.paths, firstEnd.seq)).type, "run.cancelled");
 });
 
 test("run_timeout between attempts takes the unfinished route rather than repeating the attempt", async () => {

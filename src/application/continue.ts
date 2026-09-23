@@ -1,8 +1,8 @@
 /** The pure rules for continuing an ended run (#85, ADR 0003, ADR 0006). */
 
-import type { RunCreated, RunEvent } from "../domain/events.ts";
+import type { RunCreated, RunEnded, RunEvent } from "../domain/events.ts";
 import { isEndState, type StepId, type Workflow } from "../domain/model.ts";
-import { replay } from "./replay.ts";
+import { isCompleted, isInternalError, replay } from "./replay.ts";
 import { resumePlan, runModelRefusal } from "./resume.ts";
 import type { AttemptEndFields } from "./workflow-run.ts";
 
@@ -25,10 +25,10 @@ export function continueRefusal(
   if (result === undefined) {
     return `run ${state.runId} is crashed. Resume it with \`loopfile resume ${state.runId}\`.`;
   }
-  if (result.result === "failure" && result.reason === "internal_error") {
+  if (isInternalError(result)) {
     return `run ${state.runId} ended with internal_error. Resume it with \`loopfile resume ${state.runId}\`.`;
   }
-  if (result.result === "success" && result.reason === "end_state") {
+  if (isCompleted(result)) {
     return `run ${state.runId} completed and cannot be continued. Start a new run instead.`;
   }
   const created = events[0] as RunCreated;
@@ -40,25 +40,40 @@ export function continueRefusal(
 
 /** The step to retry, or the last attempt result whose refused move should be taken. */
 export function continuePlan(workflow: Workflow, events: readonly RunEvent[]): ContinueNext {
-  const terminal = events.findLast(
-    (event) => event.type === "run.ended" || event.type === "run.cancelled",
-  );
-  if (terminal?.type === "run.ended" && terminal.reason === "internal_error") {
-    throw new Error("internal_error runs must be resumed");
-  }
-  if (terminal?.type === "run.ended" && terminal.reason === "attempt_limit") {
-    if (terminal.stepId === undefined) throw new Error("attempt_limit is missing its step ID");
-    return { kind: "step", stepId: terminal.stepId };
-  }
-  if (terminal?.type === "run.ended" && terminal.reason === "end_state") {
-    const transition = events.findLast(
-      (event) => event.type === "transition" && isEndState(event.to),
-    );
-    if (transition?.type !== "transition") throw new Error("end_state is missing its transition");
-    return { kind: "step", stepId: transition.from };
-  }
-
+  const stepId = endedStep(events);
+  if (stepId !== undefined) return { kind: "step", stepId };
   const next = resumePlan(workflow, events).next;
   if (next.kind === "step" || next.kind === "route") return next;
   throw new Error("the ended run has no stopped step to continue");
+}
+
+/** The step a `run.ended` points at: the step at its attempt limit, or the step whose outcome went to `$failure`. */
+function endedStep(events: readonly RunEvent[]): StepId | undefined {
+  const terminal = events.findLast(
+    (event) => event.type === "run.ended" || event.type === "run.cancelled",
+  );
+  return terminal?.type === "run.ended" ? stepOfEnd(terminal, events) : undefined;
+}
+
+function stepOfEnd(end: RunEnded, events: readonly RunEvent[]): StepId | undefined {
+  switch (end.reason) {
+    case "internal_error":
+      throw new Error("internal_error runs must be resumed");
+    case "attempt_limit":
+      if (end.stepId === undefined) throw new Error("attempt_limit is missing its step ID");
+      return end.stepId;
+    case "end_state":
+      return endStateStep(events);
+    default:
+      return undefined;
+  }
+}
+
+/** The step whose move to an end state ended the run. */
+function endStateStep(events: readonly RunEvent[]): StepId {
+  const transition = events.findLast(
+    (event) => event.type === "transition" && isEndState(event.to),
+  );
+  if (transition?.type !== "transition") throw new Error("end_state is missing its transition");
+  return transition.from;
 }

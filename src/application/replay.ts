@@ -38,6 +38,16 @@ export type RunResult =
   | { readonly result: "success" | "failure"; readonly reason: RunEndReason }
   | { readonly result: "cancelled" };
 
+/** True for a run that ended with `internal_error`, which `resume` takes up and `continue` does not. */
+export function isInternalError(result: RunResult): boolean {
+  return result.result !== "cancelled" && result.reason === "internal_error";
+}
+
+/** True for a run that reached `$success`. */
+export function isCompleted(result: RunResult): boolean {
+  return result.result === "success" && result.reason === "end_state";
+}
+
 /** One transition, in the order it happened. Everything a `transition` event carries but its envelope. */
 export type TransitionRecord = Omit<Transition, "seq" | "at" | "type">;
 
@@ -239,20 +249,27 @@ function span(startedAt: number | undefined, lastAt: number): number {
 }
 
 function finalResult(events: readonly RunEvent[]): { result: RunResult } | undefined {
-  const endIndex = events.findLastIndex(
-    (event) => event.type === "run.ended" || event.type === "run.cancelled",
-  );
-  const end = events[endIndex];
-  if (end === undefined || (end.type !== "run.ended" && end.type !== "run.cancelled")) {
-    return undefined;
-  }
-  if (
-    events.findLastIndex((event) => event.type === "run.continued") > endIndex ||
+  const end = events.findLast(isRunEnd);
+  if (end === undefined || takenUpAgain(events, end)) return undefined;
+  return { result: resultOf(end) };
+}
+
+function isRunEnd(event: RunEvent): event is RunEnded | RunCancelled {
+  return event.type === "run.ended" || event.type === "run.cancelled";
+}
+
+/** True when `continue` or `resume` started the run again after `end`. */
+function takenUpAgain(events: readonly RunEvent[], end: RunEnded | RunCancelled): boolean {
+  return (
+    lastContinuationIndex(events) > events.lastIndexOf(end) ||
     resumedAfterInternalError(events, end)
-  )
-    return undefined;
-  if (end.type === "run.cancelled") return { result: { result: "cancelled" } };
-  return { result: { result: end.result, reason: end.reason } };
+  );
+}
+
+function resultOf(end: RunEnded | RunCancelled): RunResult {
+  return end.type === "run.cancelled"
+    ? { result: "cancelled" }
+    : { result: end.result, reason: end.reason };
 }
 
 function resumedAfterInternalError(

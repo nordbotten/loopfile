@@ -19,7 +19,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { parseDocument } from "yaml";
 import { checkAttemptLimit } from "../application/attempt-limit.ts";
-import { continuePlan, continueRefusal } from "../application/continue.ts";
+import { type ContinueNext, continuePlan, continueRefusal } from "../application/continue.ts";
 import { sha256 } from "../application/data-store.ts";
 import {
   CANCEL_GRACE_MS,
@@ -65,6 +65,7 @@ import {
   isEndState,
   type RalphStep,
   type Step,
+  type StepId,
   type Workflow,
 } from "../domain/model.ts";
 import { startAgentStep } from "./agent-step.ts";
@@ -310,8 +311,18 @@ async function resumeFrom(workflow: Workflow, tracked: Tracked): Promise<Moved> 
     await tracked.log.append({ type: "attempt.interrupted", attemptId: interrupted.attemptId });
   }
   if (next.kind === "end") return { event: endStateEvent(next.state) };
-  const step = workflow.steps.find((candidate) => candidate.id === next.stepId);
-  if (step === undefined) throw new WorkflowRunError(`no step ${next.stepId}`);
+  return await takeNext(workflow, next, tracked);
+}
+
+/** Adds the limit reset and either retries a step or takes its previously refused move. */
+async function continueFrom(workflow: Workflow, tracked: Tracked): Promise<Moved> {
+  await tracked.log.append({ type: "run.continued" });
+  return await takeNext(workflow, continuePlan(workflow, tracked.history), tracked);
+}
+
+/** Starts a new attempt of the step, or takes the move its ended attempt was refused. */
+async function takeNext(workflow: Workflow, next: ContinueNext, tracked: Tracked): Promise<Moved> {
+  const step = stepNamed(workflow, next.stepId);
   if (next.kind === "route") {
     return await move(
       workflow,
@@ -324,22 +335,10 @@ async function resumeFrom(workflow: Workflow, tracked: Tracked): Promise<Moved> 
   return attempts.allowed ? { to: step.id } : { event: attempts.event };
 }
 
-/** Adds the limit reset and either retries a step or takes its previously refused move. */
-async function continueFrom(workflow: Workflow, tracked: Tracked): Promise<Moved> {
-  await tracked.log.append({ type: "run.continued" });
-  const next = continuePlan(workflow, tracked.history);
-  const step = workflow.steps.find((candidate) => candidate.id === next.stepId);
-  if (step === undefined) throw new WorkflowRunError(`no step ${next.stepId}`);
-  if (next.kind === "route") {
-    return await move(
-      workflow,
-      step,
-      { kind: "ended", attemptId: next.attemptId, end: next.end },
-      tracked,
-    );
-  }
-  const attempts = checkAttemptLimit(step, replay(tracked.history));
-  return attempts.allowed ? { to: step.id } : { event: attempts.event };
+function stepNamed(workflow: Workflow, stepId: StepId): Step {
+  const step = workflow.steps.find((candidate) => candidate.id === stepId);
+  if (step === undefined) throw new WorkflowRunError(`no step ${stepId}`);
+  return step;
 }
 
 /** Loads the Loopfile, makes the workspace, and builds the `run.created` that records both. */
@@ -436,8 +435,7 @@ async function walk(
   let target = begun.to;
   while (!isEndState(target)) {
     if (owner.cancelled.aborted) return await cancelRun(tracked);
-    const step = workflow.steps.find((candidate) => candidate.id === target);
-    if (step === undefined) throw new WorkflowRunError(`no step ${target}`);
+    const step = stepNamed(workflow, target);
     const visited = await visit(options, owner, workflow, step, tracked, workspace, loopfileName);
     if (visited.kind === "interrupted") {
       const ended = await interruptedStep(step, visited, tracked);
