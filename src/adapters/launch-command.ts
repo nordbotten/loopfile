@@ -13,7 +13,7 @@ import { type ChildProcess, spawn } from "node:child_process";
 import { closeSync, openSync } from "node:fs";
 import { mkdir, open, readFile, rename, rm, stat } from "node:fs/promises";
 import { connect } from "node:net";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { isSeq, parseDocument } from "yaml";
 import {
@@ -43,7 +43,7 @@ import { ownerGoneMessage } from "../application/tail.ts";
 import { matchesTrust, parseTrustList } from "../application/trust.ts";
 import { renderTrustPrompt } from "../application/trust-prompt.ts";
 import { selectWorkspaceMode } from "../application/workspace-mode.ts";
-import type { Workflow } from "../domain/model.ts";
+import type { Workflow, WorkspaceMode } from "../domain/model.ts";
 import { loadDirectory, loadInput, loadThinText } from "./directory-loader.ts";
 import { classifyInput, type InputKind, readStdin } from "./input.ts";
 import {
@@ -631,8 +631,12 @@ async function start(
     options,
     renderLaunchConfirmation(
       started.runId,
-      request.workspaceMode ?? "isolate",
-      paths.workspace,
+      created?.type === "run.created"
+        ? (created.workspaceMode ?? request.workspaceMode ?? "isolate")
+        : (request.workspaceMode ?? "isolate"),
+      created?.type === "run.created"
+        ? (created.workspacePath ?? paths.workspace)
+        : paths.workspace,
       created?.type === "run.created" ? created.branch : undefined,
     ),
   );
@@ -676,6 +680,7 @@ export async function startRun(options: StartRunOptions): Promise<StartRunResult
   const workflow = await workflowForStart(options);
   if (!workflow.ok) return workflow;
 
+  const workspaceMode = options.workspaceMode ?? workflow.workflow.workspaceMode ?? "isolate";
   const inputs = checkAgainstDeclared(
     options.inputs,
     workflow.workflow.inputs,
@@ -697,7 +702,7 @@ export async function startRun(options: StartRunOptions): Promise<StartRunResult
   let paths: RunPaths;
   let targetFolder: string;
   try {
-    targetFolder = await targetRepository(options.repository);
+    targetFolder = await targetFolderForRun(options.repository, workspaceMode);
     paths = await createRunDirectory({
       home,
       runId: options.runId,
@@ -717,7 +722,7 @@ export async function startRun(options: StartRunOptions): Promise<StartRunResult
     ...(options.sourceText === undefined ? {} : { sourceText: options.sourceText }),
     repository: targetFolder,
     inputs: inputs.inputs,
-    workspaceMode: options.workspaceMode,
+    workspaceMode,
     loopfileName: options.loopfileName,
     ...(options.remote === undefined ? {} : { remote: options.remote }),
     ...optionalLoopFields(options.loopId, options.loopIndex),
@@ -731,6 +736,10 @@ export async function startRun(options: StartRunOptions): Promise<StartRunResult
     ownerKind: "run",
     readyTimeoutMs: options.readyTimeoutMs ?? READY_TIMEOUT_MS,
   });
+}
+
+async function targetFolderForRun(repository: string, mode: WorkspaceMode): Promise<string> {
+  return mode === "here" ? resolve(repository) : targetRepository(repository);
 }
 
 async function workflowForStart(

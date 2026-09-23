@@ -229,7 +229,7 @@ function validSourceText(value: unknown, kind: LaunchRequest["kind"]): value is 
 }
 
 function validWorkspaceMode(value: unknown): boolean {
-  return value === undefined || value === "isolate";
+  return value === undefined || value === "isolate" || value === "here";
 }
 
 function isKind(value: unknown): value is LaunchRequest["kind"] {

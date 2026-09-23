@@ -351,6 +351,7 @@ async function prepare(
     repository: options.repository,
     path: paths.workspace,
     runId: options.runId,
+    mode: selectedMode.mode,
   });
   return {
     prepared: { workflow, workspace },
@@ -362,7 +363,7 @@ async function prepare(
       targetFolder: workspace.targetFolder,
       workspacePath: workspace.path,
       workspaceMode: selectedMode.mode,
-      isolateKind: workspace.isolateKind,
+      ...(workspace.mode === "here" ? {} : { isolateKind: workspace.isolateKind }),
       ...(workspace.isolateKind === "worktree"
         ? { baseCommit: workspace.baseCommit, branch: workspace.branch }
         : {}),
@@ -408,7 +409,7 @@ async function runSteps(
       await status.flush();
       return { result: ended.result };
     }
-    if (workspace.isolateKind === "copy") {
+    if (workspace.mode === "here" || workspace.isolateKind === "copy") {
       await status.flush();
       return { result: ended.result };
     }
