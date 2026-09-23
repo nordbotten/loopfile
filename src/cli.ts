@@ -29,6 +29,7 @@ import { resultCommand as operatorResultCommand } from "./adapters/result-comman
 import { resumeCommand } from "./adapters/resume-command.ts";
 import { statusCommand } from "./adapters/status-command.ts";
 import { tailCommand } from "./adapters/tail-command.ts";
+import { terminalTrustIo } from "./adapters/trust-prompt.ts";
 import { unpackCommand } from "./adapters/unpack-command.ts";
 import { terminalUpgradeIo, upgradeCommand } from "./adapters/upgrade-command.ts";
 import { parseDataGetKey } from "./application/data-get.ts";
@@ -224,6 +225,7 @@ export function main(
         out,
         err,
         upgrade: terminalUpgradeIo(out, err),
+        trust: terminalTrustIo(err),
         monitor: { input: process.stdin, output: process.stdout },
       },
       env,
@@ -241,6 +243,7 @@ export function main(
       out,
       err,
       upgrade: terminalUpgradeIo(out, err),
+      trust: terminalTrustIo(err),
       monitor: { input: process.stdin, output: process.stdout },
     },
     env,

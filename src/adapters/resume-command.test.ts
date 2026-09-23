@@ -63,6 +63,7 @@ function session(tty = false) {
       err += text;
     },
     upgrade: { out: () => undefined, err: () => undefined, isTTY: false, ask: async () => null },
+    trust: { isTTY: false, err: () => undefined, choose: async () => null },
     monitor: { input, output } as MonitorIo,
   };
   return { io, out: () => out, err: () => err };

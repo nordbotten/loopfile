@@ -11,10 +11,11 @@
 
 import { type ChildProcess, spawn } from "node:child_process";
 import { closeSync, openSync } from "node:fs";
-import { readFile, stat } from "node:fs/promises";
+import { mkdir, open, readFile, rename, rm, stat } from "node:fs/promises";
 import { connect } from "node:net";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { parseArgs } from "node:util";
+import { isSeq, parseDocument } from "yaml";
 import {
   checkAgainstDeclared,
   encodeLaunch,
@@ -51,6 +52,7 @@ import {
 import { ownerLogHelp } from "./owner-log.ts";
 import { type FetchedRemote, fetchRemote, RemoteFetchError } from "./remote-fetch.ts";
 import { createRunDirectory, loopfileHome, newRunId, type RunPaths } from "./run-directory.ts";
+import type { TrustIo } from "./trust-prompt.ts";
 import {
   checkManifestVersion,
   checkManifestVersionText,
@@ -83,6 +85,7 @@ export interface LaunchIo {
   readonly out: Out;
   readonly err: Out;
   readonly upgrade: UpgradeIo;
+  readonly trust: TrustIo;
   readonly monitor: MonitorIo;
 }
 
@@ -137,6 +140,8 @@ export async function launchCommand(
       undefined,
       undefined,
       false,
+      undefined,
+      undefined,
       cli,
       io,
       env,
@@ -152,6 +157,8 @@ async function launchSource(
   loopfileName: string | undefined,
   remote: RemoteSource | undefined,
   trustedRemote: boolean,
+  trustPath: string | undefined,
+  trustText: string | undefined,
   cli: string,
   io: LaunchIo,
   env: Record<string, string | undefined>,
@@ -164,15 +171,15 @@ async function launchSource(
   if (!inputs.ok) {
     return refuse(io, inputs.messages, 2, "bad_argument", inputHelp(source.workflow.inputDefaults));
   }
-  if (remote !== undefined && !args.trust && !trustedRemote) {
-    return refuse(
-      io,
-      `untrusted Remote Loopfile ${remote.host}/${remote.repo}`,
-      2,
-      "untrusted",
-      "Run it in a terminal to answer the trust prompt, or pass --trust to run it once.",
-    );
-  }
+  const trustFailure = await checkRemoteTrust(
+    args,
+    remote,
+    trustedRemote,
+    trustPath,
+    trustText,
+    io,
+  );
+  if (trustFailure !== undefined) return trustFailure;
 
   const request: LaunchRequest = {
     source: sourceName,
@@ -184,6 +191,61 @@ async function launchSource(
     ...optionalLoopFields(options.loopId, options.loopIndex),
   };
   return await start(args.detach, request, source.workflow, cli, io, env, options);
+}
+
+async function checkRemoteTrust(
+  args: LaunchArgs,
+  remote: RemoteSource | undefined,
+  trustedRemote: boolean,
+  trustPath: string | undefined,
+  trustText: string | undefined,
+  io: LaunchIo,
+): Promise<number | undefined> {
+  if (remote === undefined || args.trust || trustedRemote) return undefined;
+  if (!io.trust.isTTY || trustPath === undefined) {
+    return refuse(
+      io,
+      `untrusted Remote Loopfile ${remote.host}/${remote.repo}`,
+      2,
+      "untrusted",
+      "Run it in a terminal to answer the trust prompt, or pass --trust to run it once.",
+    );
+  }
+  const repoEntry = `${remote.host}/${remote.repo}`;
+  const selected = await chooseTrustEntry(remote, repoEntry, io);
+  if (selected === undefined) {
+    return refuse(
+      io,
+      `denied trust for ${repoEntry}`,
+      2,
+      "untrusted",
+      "Nothing was written. Pass --trust to run it once.",
+    );
+  }
+  try {
+    await writeTrustEntry(trustPath, trustText, selected.list, selected.entry);
+    io.trust.err(renderOperatorConfirmation({ trusted: selected.entry, "trust list": trustPath }));
+  } catch (error) {
+    const reason = (error as Error).message.replaceAll(/\s+/g, " ").trim();
+    io.trust.err(`warning: cannot write ${trustPath}: ${reason}\n`);
+  }
+  return undefined;
+}
+
+async function chooseTrustEntry(
+  remote: RemoteSource,
+  repoEntry: string,
+  io: LaunchIo,
+): Promise<{ readonly entry: string; readonly list: "repos" | "owners" } | undefined> {
+  const ownerEntry = `${remote.host}/${remote.repo.split("/")[0]}`;
+  const choice = await io.trust.choose(
+    `? Trust this Remote Loopfile?\nSource: ${repoEntry}${remote.path === undefined ? "" : `/${remote.path}`}`,
+    [`Trust repo ${repoEntry}`, `Trust everything from ${ownerEntry}`, "Deny"],
+    2,
+  );
+  if (choice === 0) return { entry: repoEntry, list: "repos" };
+  if (choice === 1) return { entry: ownerEntry, list: "owners" };
+  return undefined;
 }
 
 async function launchRemote(
@@ -220,6 +282,8 @@ async function launchRemote(
       remote.path?.split("/").at(-1) ?? remote.repo.slice(remote.repo.lastIndexOf("/") + 1),
       remote,
       trusted,
+      trustPath,
+      trustText,
       cli,
       io,
       env,
@@ -227,6 +291,41 @@ async function launchRemote(
     );
   } finally {
     await fetched?.cleanup().catch(() => undefined);
+  }
+}
+
+async function writeTrustEntry(
+  path: string,
+  text: string | undefined,
+  list: "repos" | "owners",
+  entry: string,
+): Promise<void> {
+  const document = parseDocument(text ?? "formatVersion: 1\nrepos: []\nowners: []\n");
+  const entries = document.get(list, true);
+  if (isSeq(entries)) {
+    const existing = document.toJS() as { repos?: unknown; owners?: unknown };
+    const values = existing[list];
+    if (Array.isArray(values) && values.some((value) => value === entry)) return;
+    entries.add(entry);
+  } else {
+    document.set(list, [entry]);
+  }
+
+  const temporary = `${path}.${process.pid}.tmp`;
+  await mkdir(dirname(path), { recursive: true });
+  let created = false;
+  let file: Awaited<ReturnType<typeof open>> | undefined;
+  try {
+    file = await open(temporary, "wx");
+    created = true;
+    await file.writeFile(document.toString());
+    await file.close();
+    file = undefined;
+    await rename(temporary, path);
+  } catch (error) {
+    await file?.close().catch(() => undefined);
+    if (created) await rm(temporary, { force: true }).catch(() => undefined);
+    throw error;
   }
 }
 
