@@ -17,6 +17,8 @@ export type OperatorErrorCode =
   | "invalid_manifest"
   | "manifest_outdated"
   | "format_mismatch"
+  | "git_missing"
+  | "fetch_failed"
   | "untrusted"
   | "operation_failed";
 

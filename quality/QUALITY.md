@@ -87,37 +87,20 @@ process. A `CORE` file reaching for one of these is telling you it belongs under
 
 ## Enforcement
 
-`.github/workflows/ci.yml` runs three jobs on every pull request and every push
-to `main`: `check` (build, typecheck, lint, test), `gate` (the ratchet, then the
-four checks) and `mutation`. All run on the repository's self-hosted runners,
-labelled `self-hosted, Linux, X64`.
+`.github/workflows/ci.yml` runs four jobs on `ubuntu-latest`. `changes` runs on
+pull requests and pushes to `main`, identifies docs-only changes, and skips the
+other jobs for them. `check` runs on pull requests and pushes to `main` when
+there are code changes; it runs `npm run verify`. `gate` runs
+`npm run quality:ratchet` and `mutation` runs `npm run quality:mutation`; both
+run only on pull requests with code changes.
 
-Runs are grouped by ref and cancel their own superseded runs. There are two
-runners for the whole repository, so a run nobody is waiting for should give its
-runner back rather than make the next one queue.
-
-The workflow is advisory: nothing blocks a red merge. Branch protection and
-rulesets are the feature that would, and they are not available on a private
-repository on a free personal account. So the gate reports the truth and cannot
-stop you.
+The `Main restrictions` ruleset on `main` requires the `check`, `gate` and
+`mutation` status checks. The workflow groups runs by ref and cancels
+superseded pull-request runs.
 
 There is deliberately no `pre-push` hook. A hook in a repo where agents push
 from worktrees gets bypassed the first time it is inconvenient, and nobody sees
 it happen. CI is the honest place for this, because its result is visible.
-
-## When this repository goes public
-
-Two changes, both decided in advance:
-
-1. **Move CI to GitHub-hosted runners.** Change every `runs-on` in `ci.yml` to
-   `ubuntu-latest`. On a public repository anyone can fork and open a pull
-   request, and `pull_request` workflows run that pull request's code — running
-   a stranger's code on a self-hosted runner in someone's home is the risk
-   GitHub warns about. Public repositories get free hosted minutes, so the
-   reason for local runners disappears exactly when they become a problem.
-2. **Add a ruleset on `main`** requiring the `check`, `gate` and `mutation`
-   status checks. Rulesets are free on public repositories. This is the point
-   where the gate stops reporting and starts blocking.
 
 ## Not here on purpose
 
@@ -136,9 +119,9 @@ Adapted from a larger stack, with roughly half of it deliberately left behind:
 
 ## Coverage and CRAP
 
-`quality-coverage.mjs` runs the suite under `c8` once and answers two questions
-from the one report. Coverage asks whether the code ran. CRAP asks a sharper
-version of it:
+`quality-coverage.mjs` runs the suite under `c8` once and combines its coverage
+report with source-derived complexity. Coverage asks whether the code ran. CRAP
+asks a sharper version of it:
 
 ```text
 CRAP = complexity^2 * (1 - coverage)^3 + complexity
@@ -149,11 +132,15 @@ ways down are more tests or less branching. Note the shape: at full coverage
 CRAP equals complexity, so a ceiling of 10 is also a complexity cap of 10 for
 code that is fully tested. That is the intended reading, not a side effect.
 
-Coverage comes from `c8` in Istanbul format rather than V8's own, because CRAP
-needs the per-function statement data only the Istanbul report carries. `c8`
-writes one entry per branch *path*, not per decision, plus a `column: -1` entry
-for an `if` with no `else` and one entry at each function's own start. The
-complexity count drops those two, which is what makes it agree with a hand count.
+Complexity comes from the source, parsed with TypeScript, not from the coverage
+report. It is 1 plus one for each `if`, `?:`, non-default `case`, `for`,
+`for…of`, `for…in`, `while`, `do`, `catch`, `&&`, `||`, `??`, `&&=`, `||=` or
+`??=`. Nested functions and callbacks are counted separately. Source functions
+match c8's function records by start position.
+
+Coverage comes from `c8` in Istanbul format, whose per-function statement data
+and function locations determine what ran. Adding tests may change coverage,
+but cannot change a function's source complexity.
 
 `EXEMPT` and `TESTS` are not measured.
 

@@ -35,7 +35,7 @@ import {
 } from "../application/operator-error.ts";
 import { decodeMessage, encodeMessage, PING } from "../application/owner-protocol.ts";
 import { endedHelp, runEndFromStatus } from "../application/run-end.ts";
-import { parseSource, type RemoteSource } from "../application/source.ts";
+import { parseSource, type RemoteSource, SourceParseError } from "../application/source.ts";
 import { ownerGoneMessage } from "../application/tail.ts";
 import { selectWorkspaceMode } from "../application/workspace-mode.ts";
 import type { Workflow } from "../domain/model.ts";
@@ -67,12 +67,12 @@ type Out = (text: string) => void;
 type CheckIo = Pick<LaunchIo, "err" | "upgrade">;
 
 const USAGE =
-  "Usage: loopfile <directory|file.loop|github:owner/repo[/path][@ref]|-> [-d | --detach] [--trust] [--workspace <mode>] [--input <name>=<value>]...";
+  "Usage: loopfile <directory|file.loop|github:owner/repo[/path][@ref]|git+https://…|git+ssh://…|-> [-d | --detach] [--trust] [--workspace <mode>] [--input <name>=<value>]...";
 const HELP = `${USAGE}
 
 Run a Loopfile in the background. The source may be a directory, a thin file,
-a GitHub Remote Loopfile (github:owner/repo[/path][@ref]), or '-' for a manifest read from
-stdin. Without --detach, a terminal attaches the
+a GitHub or Git VCS Remote Loopfile, or '-' for a manifest read from stdin.
+Without --detach, a terminal attaches the
 live monitor; press d to detach while the run continues. With --detach, print
 the run ID and return immediately.
 
@@ -128,7 +128,13 @@ export async function launchCommand(
   try {
     parsed = parseSource(args.source, await sourceExists(args.source));
   } catch (error) {
-    return refuse(io, (error as Error).message, 2, "bad_argument");
+    return refuse(
+      io,
+      (error as Error).message,
+      2,
+      "bad_argument",
+      error instanceof SourceParseError ? error.help : USAGE,
+    );
   }
   if (parsed.kind === "local") {
     return await launchSource(args, parsed.source, undefined, undefined, cli, io, env, options);
@@ -192,14 +198,7 @@ async function launchRemote(
     try {
       fetched = await fetchRemote(remote, env);
     } catch (error) {
-      const message =
-        remote.bareSource === undefined
-          ? error instanceof RemoteFetchError
-            ? error.message
-            : (error as Error).message
-          : `no local path and no GitHub repo named ${remote.bareSource}`;
-      const code = error instanceof RemoteFetchError ? error.code : "operation_failed";
-      return refuse(io, message, 2, code);
+      return refuseRemoteFetch(io, remote, error);
     }
     return await launchSource(
       args,
@@ -214,6 +213,36 @@ async function launchRemote(
   } finally {
     await fetched?.cleanup().catch(() => undefined);
   }
+}
+
+function refuseRemoteFetch(
+  io: Pick<LaunchIo, "err">,
+  remote: RemoteSource,
+  error: unknown,
+): number {
+  if (error instanceof RemoteFetchError && error.code === "git_missing") {
+    return refuse(
+      io,
+      "git is not on PATH",
+      2,
+      "git_missing",
+      "Install git to run a Remote Loopfile. Local sources do not need it.",
+    );
+  }
+  if (error instanceof RemoteFetchError && error.code === "fetch_failed") {
+    io.err(
+      `error: cannot fetch ${remote.host}/${remote.repo}\n${error.stderr ? `${error.stderr}\n` : ""}code: fetch_failed\nhelp: Check the name and your access to the repository.\n`,
+    );
+    return 2;
+  }
+  const message =
+    remote.bareSource === undefined
+      ? error instanceof RemoteFetchError
+        ? error.message
+        : (error as Error).message
+      : `no local path and no GitHub repo named ${remote.bareSource}`;
+  const code = error instanceof RemoteFetchError ? error.code : "operation_failed";
+  return refuse(io, message, 2, code);
 }
 
 export type LaunchSource =
@@ -527,32 +556,39 @@ async function workflowForStart(
   try {
     const loaded = await loadDirectory(options.source);
     if (loaded.status === "loaded") return { ok: true, workflow: loaded.workflow };
-    if (loaded.status === "older") {
-      return {
-        ok: false,
-        failure: startFailure(
-          `manifest formatVersion ${loaded.formatVersion} is outdated`,
-          "operation_failed",
-          `Run: loopfile upgrade ${options.source}`,
-          2,
-        ),
-      };
-    }
-    return {
-      ok: false,
-      failure: startFailure(
-        manifestErrorMessages(loaded.errors),
-        "invalid_manifest",
-        "Fix the manifest before launching.",
-        1,
-      ),
-    };
+    return workflowLoadFailure(loaded, options.source);
   } catch (error) {
     return {
       ok: false,
       failure: startFailure((error as Error).message, "operation_failed", USAGE, 1),
     };
   }
+}
+
+function workflowLoadFailure(
+  loaded: Exclude<LoadResult, { readonly status: "loaded" }>,
+  source: string,
+): { readonly ok: false; readonly failure: StartRunFailure } {
+  if (loaded.status === "older") {
+    return {
+      ok: false,
+      failure: startFailure(
+        `manifest formatVersion ${loaded.formatVersion} is outdated`,
+        "operation_failed",
+        `Run: loopfile upgrade ${source}`,
+        2,
+      ),
+    };
+  }
+  return {
+    ok: false,
+    failure: startFailure(
+      manifestErrorMessages(loaded.errors),
+      "invalid_manifest",
+      "Fix the manifest before launching.",
+      1,
+    ),
+  };
 }
 
 function manifestErrorMessages(errors: readonly LoadError[]): readonly string[] {
