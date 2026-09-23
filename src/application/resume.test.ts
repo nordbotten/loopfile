@@ -90,7 +90,18 @@ test("a second internal error without an attempt is refused", () => {
     owner,
     { type: "run.ended", result: "failure", reason: "internal_error" },
   );
-  assert.notEqual(resumeRefusal(events, "sha256:model"), undefined);
+  assert.equal(
+    resumeRefusal(events, "sha256:model"),
+    "run r-1 has ended (internal_error). Resume is only for a crashed run.",
+  );
+});
+
+test("a completed run is refused as completed, not as merely ended", () => {
+  const events = log(created, owner, { type: "run.ended", result: "success", reason: "end_state" });
+  assert.equal(
+    resumeRefusal(events, "sha256:model"),
+    "run r-1 completed. Resume is only for a crashed run.",
+  );
 });
 
 test("an internal error after an attempt may be resumed", () => {

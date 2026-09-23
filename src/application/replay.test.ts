@@ -1,6 +1,14 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { CorruptEventLogError, nextAttemptId, parseEventLog, replay } from "./replay.ts";
+import {
+  CorruptEventLogError,
+  isCompleted,
+  isInternalError,
+  nextAttemptId,
+  parseEventLog,
+  type RunResult,
+  replay,
+} from "./replay.ts";
 
 /** Minutes past 10:00 on one day, so a log reads as a timeline. */
 function at(minute: number): string {
@@ -202,6 +210,55 @@ test("run.continued starts fresh limit counts without erasing run history", () =
   assert.equal(state.ownerTimeMs, 5 * 60_000);
   assert.equal(state.ownerTimeSinceContinueMs, 1 * 60_000);
   assert.equal(state.result, undefined);
+});
+
+test("isCompleted requires both a successful result and the end_state reason", () => {
+  assert.equal(isCompleted({ result: "success", reason: "end_state" }), true);
+  assert.equal(isCompleted({ result: "success", reason: "attempt_limit" }), false);
+  assert.equal(isCompleted({ result: "failure", reason: "end_state" }), false);
+  assert.equal(isCompleted({ result: "cancelled" }), false);
+});
+
+test("isInternalError requires the run not be cancelled, even if reason matches", () => {
+  // Not a real event shape (a cancelled result carries no reason), but the
+  // function is pure and takes whatever RunResult it is given.
+  const cancelledWithReason = {
+    result: "cancelled",
+    reason: "internal_error",
+  } as unknown as RunResult;
+  assert.equal(isInternalError(cancelledWithReason), false);
+  assert.equal(isInternalError({ result: "failure", reason: "internal_error" }), true);
+  assert.equal(isInternalError({ result: "failure", reason: "end_state" }), false);
+});
+
+test("owner time since continue starts counting from the continuation instant, not zero", () => {
+  const state = replay(
+    parseEventLog(
+      eventLog(
+        created,
+        { type: "owner.started", at: at(0), pid: 1, host: "box" },
+        { type: "run.ended", at: at(1), result: "failure", reason: "internal_error" },
+        { type: "run.continued", at: at(5) },
+        { type: "owner.started", at: at(5), pid: 2, host: "box" },
+        {
+          type: "attempt.started",
+          at: at(8),
+          attemptId: "001-fix",
+          stepId: "fix",
+          processGroupId: 91,
+        },
+        {
+          type: "attempt.ended",
+          at: at(9),
+          attemptId: "001-fix",
+          result: "success",
+          reason: "clean_exit",
+        },
+      ),
+    ),
+  );
+
+  assert.equal(state.ownerTimeSinceContinueMs, 4 * 60_000);
 });
 
 test("a transition to an end state leaves the current step alone", () => {
