@@ -54,7 +54,12 @@ async function gitRepo(repo: string, bare: string): Promise<void> {
 
 const done: FakeAction[] = [
   { do: "dataPut", key: "implement.criteria", content: "criterion 1: a.test.ts, it works" },
-  { do: "dataPut", key: "implement.title", content: "feat: ticket title" },
+  { do: "result", outcome: "done" },
+];
+
+const describe: FakeAction[] = [
+  { do: "dataPut", key: "describe.title", content: "feat: ticket title" },
+  { do: "dataPut", key: "describe.body", content: "What changes for a user." },
   { do: "result", outcome: "done" },
 ];
 
@@ -170,6 +175,7 @@ esac
       approve,
       [{ do: "savePrompt", path: "../review-3.md" }, ...approve],
     ],
+    describe: [describe, describe],
   };
   const paths = runPaths(home, runId);
   await mkdir(paths.root, { recursive: true });
@@ -219,27 +225,36 @@ esac
   assert.doesNotMatch(review, /git diff origin\/main\.\.\.HEAD/);
 });
 
-/** With ci=no, ship does not wait for checks, so a repository with no CI ends ready at once. */
+/**
+ * With ci=no, ship does not wait for checks, so a repository with no CI ends ready
+ * at once. The PR gets describe's title and description.
+ */
 test("the ticket Loopfile ships without CI when ci is no", async () => {
   const dir = join(root, "no-ci");
   const repo = join(dir, "repo");
   const bin = join(dir, "bin");
   const home = join(dir, "home");
   const runId = "20260921-120000-no-ci";
+  const title = join(dir, "pr-title");
+  const body = join(dir, "pr-body");
   await mkdir(bin, { recursive: true });
   await loopfileCommand(bin);
   await gitRepo(repo, join(dir, "origin.git"));
+  await mkdir(join(repo, "scripts"));
+  await executable(join(repo, "scripts", "check-pr-title.sh"), "exit 0\n");
+  await run("git", ["add", "."], { cwd: repo, env: gitEnv });
+  await run("git", ["commit", "-q", "-m", "title check"], { cwd: repo, env: gitEnv });
   await executable(join(bin, "npm"), "exit 0\n");
   await executable(
     join(bin, "gh"),
     `case "$1 $2" in
   "pr view") exit 1 ;;
-  "issue view") printf 'Ticket title\n' ;;
+  "pr create") printf %s "$4" > ${JSON.stringify(title)}; cat "$6" > ${JSON.stringify(body)} ;;
   "pr checks") printf 'no checks reported\n'; exit 1 ;;
 esac
 `,
   );
-  const script: FakeScript = { implement: [done], review: [approve] };
+  const script: FakeScript = { implement: [done], review: [approve], describe: [describe] };
   await mkdir(runPaths(home, runId).root, { recursive: true });
 
   const ended = await executeRun({
@@ -253,6 +268,11 @@ esac
   });
 
   assert.equal(ended.result, "success");
+  assert.equal(await readFile(title, "utf8"), "feat: ticket title");
+  assert.equal(
+    await readFile(body, "utf8"),
+    `What changes for a user.\n\nCloses #273\n\nMade by loopfile run ${runId}.\n`,
+  );
 });
 
 /** main wants an up-to-date branch, so a merge refused as behind ships again. */
@@ -276,7 +296,7 @@ test("the ticket Loopfile ships again when the merge is behind main", async () =
 esac
 `,
   );
-  const script: FakeScript = { implement: [done], review: [approve] };
+  const script: FakeScript = { implement: [done], review: [approve], describe: [describe] };
   await mkdir(runPaths(home, runId).root, { recursive: true });
 
   const ended = await executeRun({
@@ -341,6 +361,7 @@ esac
       ],
     ],
     review: [approve],
+    describe: [describe],
   };
   const paths = runPaths(home, runId);
   await mkdir(paths.root, { recursive: true });
@@ -389,7 +410,7 @@ exit 0
 esac
 `,
   );
-  const script: FakeScript = { implement: [done], review: [approve] };
+  const script: FakeScript = { implement: [done], review: [approve], describe: [describe] };
   const paths = runPaths(home, runId);
   await mkdir(paths.root, { recursive: true });
 

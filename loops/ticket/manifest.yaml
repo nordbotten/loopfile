@@ -1,6 +1,9 @@
 # Works one GitHub issue of this repository to a merged or ready PR.
 #
-# setup -> implement -> test -> review -> ship
+# setup -> implement -> test -> review -> describe -> ship
+#
+# describe writes the PR title and description from the issue and the diff, so
+# the review agent only reviews.
 #
 # Feedback goes to a fix step for its cause, not back to implement, so the agent
 # works on the feedback and does not start over. Each cause has its own budget,
@@ -39,7 +42,6 @@ steps:
     timeout: 60m
     outputs:
       criteria: [done]
-      title: [done]
     on:
       done: test
       blocked: $failure
@@ -103,8 +105,22 @@ steps:
       notes: [approved]
       sha: [approved]
     on:
-      approved: ship
+      approved: describe
       changes_requested: fix-review
+
+  - id: describe
+    kind: agent
+    harness: pi
+    model: openai-codex/gpt-6-luna
+    effort: medium
+    promptFile: prompts/describe.md
+    timeout: 15m
+    outputs:
+      title: [done]
+      body: [done]
+    on:
+      done: ship
+      blocked: $failure
 
   - id: fix-test
     kind: agent
@@ -172,19 +188,18 @@ steps:
         exit 0
       fi
       git push -u origin HEAD
+      title=$(loopfile data get describe.title | head -n 1)
+      # A bad title fails the PR title check, which is not a problem fix-ci can fix.
+      scripts/check-pr-title.sh "$title" || title="chore: $(gh issue view "$issue" --json title -q .title)"
       body="$LOOPFILE_SCRATCH/pr-body.md"
       {
-        printf 'Closes #%s\n\n## Review notes\n\n' "$issue"
-        loopfile data get review.notes
-        printf '\n\nMade by loopfile run %s.\n' "$LOOPFILE_RUN_ID"
+        loopfile data get describe.body
+        printf '\n\nCloses #%s\n\nMade by loopfile run %s.\n' "$issue" "$LOOPFILE_RUN_ID"
       } > "$body"
-      # After a red CI the PR exists, so a new review's notes replace the old body.
+      # After a red CI the PR exists, so a new description replaces the old one.
       if gh pr view --json number > /dev/null 2>&1; then
-        gh pr edit --body-file "$body"
+        gh pr edit --title "$title" --body-file "$body"
       else
-        title=$(loopfile data get implement.title | head -n 1)
-        # A bad title fails the PR title check, which is not a problem fix-ci can fix.
-        scripts/check-pr-title.sh "$title" || title="chore: $(gh issue view "$issue" --json title -q .title)"
         gh pr create --title "$title" --body-file "$body"
       fi
       ci_green=yes
