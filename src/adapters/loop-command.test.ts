@@ -533,7 +533,7 @@ test("pauses between runs and exposes the pause in status", async () => {
   try {
     const captured = io();
     const code = await loopCommand(
-      ["loop", setupResult.source, "--times", "2", "--pause", "1s", "-d"],
+      ["loop", setupResult.source, "--times", "2", "--pause", "5s", "-d"],
       cli,
       captured.value,
       setupResult.env,
@@ -553,13 +553,13 @@ test("pauses between runs and exposes the pause in status", async () => {
     );
     assert.equal(started.length, 2);
     assert.equal(events.filter((event) => event.type === "loop.paused").length, 1);
-    assert.equal(events[0]?.type === "loop.created" ? events[0].pauseMs : undefined, 1000);
+    assert.equal(events[0]?.type === "loop.created" ? events[0].pauseMs : undefined, 5000);
     const firstChild = parseEventLog(
       await readFile(runPaths(setupResult.home, started[0]?.runId ?? "").events, "utf8"),
     );
     const firstEnded = firstChild.at(-1);
     assert.equal(firstEnded?.type, "run.ended");
-    assert.ok(Date.parse(started[1]?.at ?? "") - Date.parse(firstEnded?.at ?? "") >= 1000);
+    assert.ok(Date.parse(started[1]?.at ?? "") - Date.parse(firstEnded?.at ?? "") >= 5000);
   } finally {
     await removeAfterOwnersExit(setupResult.root);
   }
