@@ -2,13 +2,13 @@
  * `loopfile status [<runid>|<loopid>] [--monitor | --json]` (#36, #71).
  *
  * Read-only. It reads `status.json` and `events.jsonl`, and pings
- * `owner.sock` (ADR 0008), through the same `discoverRun` and `discoverRuns`
- * that `list` uses, so the two never disagree about crashed or unknown. It
- * never writes a run file.
+ * `owner.sock` (ADR 0008), through the same discovery adapters that `list`
+ * uses, so the two never disagree about crashed or unknown. It never writes a
+ * run file.
  *
- * Bare `status` needs a terminal: it lists the runs and asks for a number.
- * Then, with or without a run ID, it prints the run once, or attaches the
- * monitor (#49) with `--monitor`. `--json` output is one JSON line with no ANSI.
+ * Bare `status` needs a terminal: it lists loops and runs and asks for a number.
+ * Then, with or without an ID, it prints the selected run or loop once, or
+ * attaches the monitor (#49) with `--monitor`. `--json` output is one JSON line with no ANSI.
  */
 
 import { readFile } from "node:fs/promises";
@@ -34,6 +34,7 @@ import {
 import { unknownRunMessage } from "../application/tail.ts";
 import type { LoopEvent } from "../domain/events.ts";
 import type { LoopStatus } from "../domain/status.ts";
+import { discoverLoops } from "./loop-discovery.ts";
 import { attachMonitor, hasTerminal, type MonitorIo, type MonitorOptions } from "./monitor.ts";
 import { loopfileHome, loopPaths, pathExists, runPaths } from "./run-directory.ts";
 import {
@@ -52,8 +53,8 @@ type Discovered = Awaited<ReturnType<typeof discoverRun>>;
 
 const HELP = `Usage: loopfile status [<runid>|<loopid>] [--monitor | --json]
 
-Show one run or loop. With no ID, a terminal lists runs and lets you pick one;
-without a terminal use loopfile list, then status <runid> or status <loopid>.
+Show one run or loop. With no ID, a terminal lists loops and runs and lets you
+pick one; without a terminal use loopfile list, then status <runid> or status <loopid>.
 Use --monitor for a run's live view, and --json for one structured answer.
 Status returns 0 for a readable result or 2 for a bad or unreadable call.
 `;
@@ -94,7 +95,7 @@ export async function statusCommand(
 
   let runId = args.runId;
   if (runId === undefined) {
-    const picked = await pickRun(io, processEnv, err, options);
+    const picked = await pickId(io, processEnv, err, options);
     if (typeof picked === "number") return picked;
     runId = picked;
   }
@@ -306,8 +307,8 @@ async function readStatusForCommand(
   return { entry: discovered.entry, status: discovered.status, events };
 }
 
-/** The picked run ID, or the exit code when there is nothing to pick. */
-async function pickRun(
+/** The picked run or loop ID, or the exit code when there is nothing to pick. */
+async function pickId(
   io: MonitorIo,
   env: NodeJS.ProcessEnv,
   err: Err,
@@ -321,23 +322,22 @@ async function pickRun(
     });
   }
   let entries: Awaited<ReturnType<typeof discoverRuns>>;
+  let loops: Awaited<ReturnType<typeof discoverLoops>>;
   try {
-    entries = await discoverRuns(env, options);
+    [entries, loops] = await Promise.all([discoverRuns(env, options), discoverLoops(env, options)]);
   } catch (error) {
     const runId = error instanceof EventLogReadError ? error.runId : undefined;
     return fail(err, eventLogFailure(error, runId));
   }
-  if (entries.length === 0) {
+  if (entries.length === 0 && loops.length === 0) {
     io.output.write(NO_RUNS_MESSAGE);
     return 0;
   }
 
-  io.output.write(`${renderPicker(entries, true)}\n`);
-  const runId = await askForRun(
-    io,
-    entries.map((entry) => entry.runId),
-  );
-  return runId ?? 0;
+  io.output.write(`${renderPicker(entries, true, loops)}\n`);
+  const ids = [...loops.map((entry) => entry.loopId), ...entries.map((entry) => entry.runId)];
+  const id = await askForId(io, ids);
+  return id ?? 0;
 }
 
 async function monitorRun(
@@ -365,8 +365,8 @@ async function monitorRun(
   return readFailed ? 2 : 0;
 }
 
-/** Asks until the answer names a run. `undefined` on `q` or when input ends. */
-async function askForRun(io: MonitorIo, runIds: readonly string[]): Promise<string | undefined> {
+/** Asks until the answer names a loop or run. `undefined` on q or input end. */
+async function askForId(io: MonitorIo, ids: readonly string[]): Promise<string | undefined> {
   const rl = createInterface({ input: io.input, output: io.output });
   // A pending `question` never settles when input ends, so race it with `close`.
   const closed = new Promise<string>((resolve) => rl.once("close", () => resolve("q")));
@@ -376,9 +376,9 @@ async function askForRun(io: MonitorIo, runIds: readonly string[]): Promise<stri
         rl.question("Pick a run by number (q to quit): "),
         closed,
       ]);
-      const pick = parsePick(answer, runIds.length);
+      const pick = parsePick(answer, ids.length);
       if (pick === "quit") return undefined;
-      if (pick !== undefined) return runIds[pick];
+      if (pick !== undefined) return ids[pick];
     }
   } finally {
     rl.close();

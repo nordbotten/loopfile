@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { RunEvent } from "../domain/events.ts";
-import type { RunListEntry } from "../domain/run-list.ts";
+import type { LoopListEntry, RunListEntry } from "../domain/run-list.ts";
 import type { StatusProjection } from "../domain/status.ts";
 import type { RecentTransition } from "../domain/status-view.ts";
 import { UNKNOWN_METRICS } from "./status-projection.ts";
@@ -237,6 +237,22 @@ test("renderPicker numbers each run and leaves the header unnumbered", () => {
   assert.match(lines[1] ?? "", /^1\) {2}r1/);
   assert.match(lines[2] ?? "", /^2\) {2}r2/);
   assert.equal(lines[3], "");
+});
+
+test("renderPicker lists a loop when there are no runs", () => {
+  const loop: LoopListEntry = {
+    loopId: "loop-20260917-160300-aaaa",
+    loopfileName: "x",
+    state: "completed",
+    source: { kind: "times", count: 1 },
+    runs: 0,
+    startedAt: "2026-09-17T16:03:00.000Z",
+    elapsedMs: 1000,
+  };
+  const lines = renderPicker([], false, [loop]).split("\n");
+  assert.match(lines[0] ?? "", /^ {4}LOOP ID/);
+  assert.match(lines[1] ?? "", /^1\) {2}loop-20260917-160300-aaaa/);
+  assert.equal(lines[2], "");
 });
 
 test("parsePick reads a number in range, q, and rejects the rest", () => {
