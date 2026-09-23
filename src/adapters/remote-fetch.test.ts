@@ -4,7 +4,7 @@ import { chmod, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { delimiter, dirname, join } from "node:path";
 import { test } from "node:test";
 import { promisify } from "node:util";
-import { fetchRemote } from "./remote-fetch.ts";
+import { fetchRemote, RemoteFetchError } from "./remote-fetch.ts";
 import { makeGitFixture } from "./remote-fixture.ts";
 
 const run = promisify(execFile);
@@ -20,8 +20,36 @@ test("fetchRemote reports when Git is missing", async () => {
       },
       { ...process.env, PATH: "" },
     ),
-    /spawn git ENOENT/,
+    (error: unknown) => error instanceof RemoteFetchError && error.code === "git_missing",
   );
+});
+
+test("fetchRemote disables terminal prompts when launched without a terminal", async () => {
+  const fixture = await makeGitFixture({ "manifest.yaml": "formatVersion: 1\nsteps: []\n" });
+  const bin = join(fixture.root, "bin");
+  const promptLog = join(fixture.root, "prompt-env");
+  await mkdir(bin);
+  await writeFile(
+    join(bin, "git"),
+    `#!/bin/sh
+printf '%s' "$GIT_TERMINAL_PROMPT" > "$PROMPT_LOG"
+exit 128
+`,
+  );
+  await chmod(join(bin, "git"), 0o755);
+  try {
+    const script = `import { fetchRemote } from ${JSON.stringify(new URL("./remote-fetch.ts", import.meta.url).href)}; try { await fetchRemote({ kind: "remote", host: "github.com", repo: "acme/loops", url: "https://github.com/acme/loops" }); } catch {}`;
+    await run(process.execPath, ["--input-type=module", "-e", script], {
+      env: {
+        ...fixture.env,
+        PATH: `${bin}${delimiter}${fixture.env.PATH}`,
+        PROMPT_LOG: promptLog,
+      },
+    });
+    assert.equal(await readFile(promptLog, "utf8"), "0");
+  } finally {
+    await fixture.cleanup();
+  }
 });
 
 test("fetchRemote rejects a repository without an advertised HEAD", async () => {

@@ -14,12 +14,12 @@ export interface FetchedRemote {
 /** A Git command failed before a Remote Loopfile could be returned. */
 export class RemoteFetchError extends Error {
   readonly stderr: string;
-  readonly code: "bad_argument" | "operation_failed";
+  readonly code: "bad_argument" | "git_missing" | "fetch_failed" | "operation_failed";
 
   constructor(
     message: string,
     stderr = message,
-    code: "bad_argument" | "operation_failed" = "operation_failed",
+    code: "bad_argument" | "git_missing" | "fetch_failed" | "operation_failed" = "operation_failed",
   ) {
     super(message);
     this.name = "RemoteFetchError";
@@ -33,7 +33,13 @@ export async function fetchRemote(
   source: RemoteSource,
   env: Record<string, string | undefined> = process.env,
 ): Promise<FetchedRemote> {
-  const gitEnv = { ...env, GIT_LFS_SKIP_SMUDGE: "1" };
+  const gitEnv = {
+    ...env,
+    GIT_LFS_SKIP_SMUDGE: "1",
+    ...(process.stdin.isTTY === true && process.stderr.isTTY === true
+      ? {}
+      : { GIT_TERMINAL_PROMPT: "0" }),
+  };
   const refs = source.browserLink === undefined ? undefined : await advertisedRefs(source, gitEnv);
   const resolvedSource = refs === undefined ? source : splitBrowserLink(source, refs);
   const sha = await resolveRef(resolvedSource, gitEnv, refs);
@@ -218,23 +224,33 @@ async function resolveRef(
   knownRefs?: Map<string, string>,
 ): Promise<string | undefined> {
   const refs = knownRefs ?? (await advertisedRefs(source, env));
-  if (source.ref === undefined) {
-    const sha = refs.get("HEAD");
-    if (sha !== undefined) return sha;
-    throw new RemoteFetchError(
-      `git ls-remote returned no full HEAD SHA for ${source.host}/${source.repo}`,
-    );
-  }
+  return source.ref === undefined
+    ? resolveDefaultRef(source, refs)
+    : resolveExplicitRef(source, refs, source.ref);
+}
 
-  const advertisedSha =
-    refs.get(`refs/tags/${source.ref}^{}`) ??
-    refs.get(`refs/tags/${source.ref}`) ??
-    refs.get(`refs/heads/${source.ref}`);
-  if (advertisedSha !== undefined) return advertisedSha;
-  if (/^[0-9a-f]{40}$/i.test(source.ref)) return source.ref.toLowerCase();
-  if (/^[0-9a-f]{7,39}$/i.test(source.ref)) return undefined;
+function resolveDefaultRef(source: RemoteSource, refs: Map<string, string>): string {
+  const sha = refs.get("HEAD");
+  if (sha !== undefined) return sha;
   throw new RemoteFetchError(
-    `ref ${source.ref} not found in ${source.host}/${source.repo}`,
+    `git ls-remote returned no full HEAD SHA for ${source.host}/${source.repo}`,
+  );
+}
+
+function resolveExplicitRef(
+  source: RemoteSource,
+  refs: Map<string, string>,
+  ref: string,
+): string | undefined {
+  const advertisedSha =
+    refs.get(`refs/tags/${ref}^{}`) ??
+    refs.get(`refs/tags/${ref}`) ??
+    refs.get(`refs/heads/${ref}`);
+  if (advertisedSha !== undefined) return advertisedSha;
+  if (/^[0-9a-f]{40}$/i.test(ref)) return ref.toLowerCase();
+  if (/^[0-9a-f]{7,39}$/i.test(ref)) return undefined;
+  throw new RemoteFetchError(
+    `ref ${ref} not found in ${source.host}/${source.repo}`,
     undefined,
     "bad_argument",
   );
@@ -262,7 +278,11 @@ async function git(
   if (code !== 0) {
     const output = redactCredentials(stderr.trim());
     const message = output || `git exited with code ${code ?? "unknown"}`;
-    throw new RemoteFetchError(message, message);
+    const failureCode =
+      code === 128 && (args[0] === "ls-remote" || args[0] === "fetch")
+        ? "fetch_failed"
+        : "operation_failed";
+    throw new RemoteFetchError(message, output, failureCode);
   }
   return { stdout };
 }
@@ -280,7 +300,13 @@ async function readOutput(stream: Readable): Promise<string> {
 
 function waitForExit(child: ChildProcess): Promise<number | null> {
   return new Promise((resolve, reject) => {
-    child.once("error", (error) => reject(new RemoteFetchError(error.message)));
+    child.once("error", (error: NodeJS.ErrnoException) =>
+      reject(
+        error.code === "ENOENT"
+          ? new RemoteFetchError("git is not on PATH", undefined, "git_missing")
+          : new RemoteFetchError(error.message),
+      ),
+    );
     child.once("close", resolve);
   });
 }
