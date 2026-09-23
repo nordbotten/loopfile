@@ -18,6 +18,8 @@ Use Loopfile to run a deterministic software-engineering workflow and follow it 
 6. On failure, use `loopfile continue <runid> [-d]` to retry the stopped step of an ended, non-completed run; use `loopfile interrupt <runid>` to replace an active attempt, `loopfile resume <runid>` for a crashed or `internal_error` run, or `loopfile resume <loopid>` for a crashed loop.
 7. Remove the run with `loopfile remove <runid>`. Continuing keeps the same run, branch and workspace.
 
+When an agent launches a Remote Loopfile, pass `--trust` only if the user asked for that source.
+
 ## Claude Code step permissions
 
 For Claude Code Agent and Ralph steps, the adapter loads only project and local
