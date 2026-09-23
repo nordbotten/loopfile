@@ -67,7 +67,7 @@ Commands:
   logs <runid> --owner
   status [<runid>|<loopid>] [--monitor | --json]
   tail <runid|loopid> [--json]
-  result <runid> [--json]
+  result <runid|loopid> [--json]
   unpack <file.loop> [<destination>]
   upgrade <source>
 
