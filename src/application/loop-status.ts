@@ -55,6 +55,15 @@ function statusSource(source: LoopSource): LoopStatusSource {
 
 function applyEvent(status: MutableLoopStatus, event: LoopEvent): void {
   switch (event.type) {
+    case "owner.started":
+      if (status.endReason === "internal_error") {
+        status.state = "running";
+        status.endReason = null;
+        status.detail = null;
+        status.endedAt = null;
+        status.currentRunId = status.runIds.at(-1) ?? null;
+      }
+      return;
     case "loop.run_started":
       runStarted(status, event);
       return;

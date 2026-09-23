@@ -11,12 +11,19 @@ import type { HarnessAdapters } from "../application/harness.ts";
 import { parseEventLog, replay } from "../application/replay.ts";
 import { endedHelp, runEndFromEvent } from "../application/run-end.ts";
 import type { RunEvent } from "../domain/events.ts";
+import type { WorkspaceMode } from "../domain/model.ts";
 import { type EventLog, openEventLog } from "./event-log.ts";
 import { type FakeScript, fakeHarnessAdapters } from "./fake-harness.test.ts";
 import { groupAlive, localExecutor } from "./local-executor.ts";
+import { pruneCommand } from "./prune-command.ts";
 import { pathExists, runPaths } from "./run-directory.ts";
 import { requestCancel, requestInterrupt } from "./run-owner.ts";
-import { appendInternalError, executeRun, WorkflowRunError } from "./workflow-run.ts";
+import {
+  appendInternalError,
+  type ExecuteRunOptions,
+  executeRun,
+  WorkflowRunError,
+} from "./workflow-run.ts";
 
 const run = promisify(execFile);
 const gitEnv = {
@@ -50,7 +57,7 @@ async function setup(manifest: string) {
   await run("git", ["add", "."], { cwd: repo, env: gitEnv });
   await run("git", ["commit", "-q", "-m", "first"], { cwd: repo, env: gitEnv });
   await writeFile(join(source, "manifest.yaml"), manifest);
-  const runId = `20260918-120000-w${count}`;
+  const runId = "20260918-120000-aaaa";
   await mkdir(runPaths(home, runId).root, { recursive: true });
   return { repo, source, home, runId };
 }
@@ -68,6 +75,56 @@ async function execute(manifest: string, adapters?: HarnessAdapters) {
   const paths = runPaths(home, runId);
   const events = parseEventLog(await readFile(paths.events, "utf8"));
   return { ended, events, paths, runId, repo };
+}
+
+const WORKSPACE_CASES = [
+  { name: "isolate worktree", mode: "isolate" },
+  { name: "isolate copy", mode: "isolate", target: "copy" },
+  { name: "empty", mode: "empty" },
+  { name: "here", mode: "here" },
+] as const satisfies readonly {
+  name: string;
+  mode: WorkspaceMode;
+  target?: "copy";
+}[];
+
+async function setupWorkspaceRun(
+  manifest: string,
+  workspaceCase: (typeof WORKSPACE_CASES)[number],
+) {
+  const run = await setup(manifest);
+  let repository = run.repo;
+  if ("target" in workspaceCase && workspaceCase.target === "copy") {
+    repository = join(run.repo, "..", "plain-target");
+    await mkdir(repository);
+    await writeFile(join(repository, "README.md"), "copy source\n");
+  }
+  const paths = runPaths(run.home, run.runId);
+  return {
+    ...run,
+    paths,
+    repository,
+    workspaceMode: workspaceCase.mode,
+    workspace: workspaceCase.mode === "here" ? repository : paths.workspace,
+  };
+}
+
+async function executeWorkspaceRun(
+  manifest: string,
+  workspaceCase: (typeof WORKSPACE_CASES)[number],
+  options: Pick<ExecuteRunOptions, "cancelSignal" | "adapters" | "eventLog"> = {},
+) {
+  const run = await setupWorkspaceRun(manifest, workspaceCase);
+  const ended = await executeRun({
+    home: run.home,
+    runId: run.runId,
+    source: run.source,
+    repository: run.repository,
+    workspaceMode: run.workspaceMode,
+    executor: localExecutor(),
+    ...options,
+  });
+  return { ...run, ended };
 }
 
 const STRAIGHT = (test: string) => `formatVersion: 1
@@ -219,6 +276,47 @@ test("a successful run removes its worktree and keeps the run branch", async () 
   assert.equal(await git(repo, "branch", "--list", `loopfile/${runId}`), `loopfile/${runId}`);
 });
 
+test("a successful isolate run outside Git keeps its copy", async () => {
+  const { ended, workspace, repository } = await executeWorkspaceRun(
+    `formatVersion: 1
+steps:
+  - id: save
+    kind: command
+    run: echo saved > result.txt
+`,
+    WORKSPACE_CASES[1],
+  );
+
+  assert.equal(ended.result, "success");
+  assert.equal(await readFile(join(workspace, "result.txt"), "utf8"), "saved\n");
+  assert.equal(await readFile(join(repository, "README.md"), "utf8"), "copy source\n");
+});
+
+test("a successful empty run keeps its folder", async () => {
+  const { ended, workspace } = await executeWorkspaceRun(
+    `formatVersion: 1
+steps:
+  - id: save
+    kind: command
+    run: echo saved > result.txt
+`,
+    WORKSPACE_CASES[2],
+  );
+
+  assert.equal(ended.result, "success");
+  assert.equal(await readFile(join(workspace, "result.txt"), "utf8"), "saved\n");
+});
+
+test("a successful here run leaves the user's folder unchanged", async () => {
+  const { ended, paths, repo } = await executeWorkspaceRun(CLEAN, WORKSPACE_CASES[3]);
+
+  assert.equal(ended.result, "success");
+  await assert.rejects(stat(paths.workspace), { code: "ENOENT" });
+  assert.equal(await readFile(join(repo, "README.md"), "utf8"), "hello\n");
+  assert.equal(await git(repo, "status", "--porcelain"), "");
+  assert.equal(await git(repo, "rev-parse", "--abbrev-ref", "HEAD"), "main");
+});
+
 test("a successful run with uncommitted work keeps its worktree and says why", async () => {
   const { ended, paths } = await execute(STRAIGHT("echo dirty > leftover.txt"));
   assert.equal(ended.result, "success");
@@ -227,11 +325,96 @@ test("a successful run with uncommitted work keeps its worktree and says why", a
   assert.equal((await readFile(join(paths.workspace, "leftover.txt"), "utf8")).trim(), "dirty");
 });
 
-test("a failed run keeps its clean worktree", async () => {
-  const { ended, paths } = await execute(CLEAN.replace("exit 0", "exit 3"));
-  assert.equal(ended.result, "failure");
-  assert.equal(ended.workspaceKept, undefined);
-  assert.equal((await stat(paths.workspace)).isDirectory(), true);
+test("failed, cancelled and crashed runs keep workspaces in every mode", async (t) => {
+  for (const workspaceCase of WORKSPACE_CASES) {
+    await t.test(`${workspaceCase.name}: failed`, async () => {
+      const { ended, workspace } = await executeWorkspaceRun(
+        CLEAN.replace("exit 0", "echo retained > retained.txt && exit 3"),
+        workspaceCase,
+      );
+      assert.equal(ended.result, "failure");
+      assert.equal(await readFile(join(workspace, "retained.txt"), "utf8"), "retained\n");
+    });
+
+    await t.test(`${workspaceCase.name}: cancelled`, async () => {
+      const { ended, workspace } = await executeWorkspaceRun(CLEAN, workspaceCase, {
+        cancelSignal: AbortSignal.abort(),
+      });
+      assert.equal(ended.result, "cancelled");
+      assert.equal((await stat(workspace)).isDirectory(), true);
+    });
+
+    await t.test(`${workspaceCase.name}: crashed`, async () => {
+      const run = await setupWorkspaceRun(
+        `formatVersion: 1
+steps:
+  - id: bug
+    kind: agent
+    harness: claude
+    prompt: Work.
+    on:
+      done: $success
+`,
+        workspaceCase,
+      );
+      const paths = runPaths(run.home, run.runId);
+      const underlying = await openEventLog(paths.events);
+      const eventLog: EventLog = {
+        append: async (event) => {
+          if (event.type === "run.ended" && event.reason === "internal_error") {
+            throw new Error("events unavailable");
+          }
+          return underlying.append(event);
+        },
+        close: () => underlying.close(),
+      };
+      const adapter = {
+        prepare: () => {
+          throw new Error("harness bug");
+        },
+      };
+
+      await assert.rejects(
+        executeRun({
+          home: run.home,
+          runId: run.runId,
+          source: run.source,
+          repository: run.repository,
+          workspaceMode: run.workspaceMode,
+          executor: localExecutor(),
+          eventLog,
+          adapters: { claude: adapter, pi: adapter } as unknown as HarnessAdapters,
+        }),
+        /harness bug/,
+      );
+      const events = parseEventLog(await readFile(paths.events, "utf8"));
+      assert.equal(
+        events.some((event) => event.type === "run.ended"),
+        false,
+      );
+      assert.equal((await stat(run.workspace)).isDirectory(), true);
+    });
+  }
+});
+
+test("a retained workspace is removed when prune is requested", async () => {
+  const { ended, home, paths, workspace } = await executeWorkspaceRun(CLEAN, WORKSPACE_CASES[2]);
+  assert.equal(ended.result, "success");
+  assert.equal((await stat(workspace)).isDirectory(), true);
+
+  let report = "";
+  const code = await pruneCommand(
+    ["prune"],
+    () => undefined,
+    (text) => {
+      report += text;
+    },
+    { LOOPFILE_HOME: home },
+  );
+
+  assert.equal(code, 0);
+  assert.match(report, /removed: 1/);
+  assert.equal(await pathExists(paths.root), false);
 });
 
 test("a failing step goes to onFailure and the run ends in failure", async () => {
@@ -320,53 +503,6 @@ steps:
   const status = JSON.parse(await readFile(paths.status, "utf8"));
   assert.equal(status.state, "failed");
   assert.equal(status.endReason, "internal_error");
-});
-
-test("a run stays crashed when the internal_error append fails", async () => {
-  const { repo, source, home, runId } = await setup(`formatVersion: 1
-steps:
-  - id: bug
-    kind: agent
-    harness: claude
-    prompt: Work.
-    on:
-      done: $success
-`);
-  const paths = runPaths(home, runId);
-  const underlying = await openEventLog(paths.events);
-  const eventLog: EventLog = {
-    append: async (event) => {
-      if (event.type === "run.ended" && event.reason === "internal_error") {
-        throw new Error("events unavailable");
-      }
-      return underlying.append(event);
-    },
-    close: () => underlying.close(),
-  };
-  const adapter = {
-    prepare: () => {
-      throw new Error("harness bug");
-    },
-  };
-
-  await assert.rejects(
-    executeRun({
-      home,
-      runId,
-      source,
-      repository: repo,
-      executor: localExecutor(),
-      adapters: { claude: adapter, pi: adapter } as unknown as HarnessAdapters,
-      eventLog,
-    }),
-    /harness bug/,
-  );
-  const events = parseEventLog(await readFile(paths.events, "utf8"));
-  assert.equal(
-    events.some((event) => event.type === "run.ended"),
-    false,
-  );
-  assert.equal(await pathExists(paths.socket), false);
 });
 
 test("an internal error is not appended after a terminal event", async () => {
