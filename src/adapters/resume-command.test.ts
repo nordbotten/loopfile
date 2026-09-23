@@ -7,7 +7,6 @@ import {
   readdir,
   readFile,
   realpath,
-  rm,
   stat,
   symlink,
   writeFile,
@@ -273,7 +272,12 @@ steps:
   const resumed = await resume([runId, "--kill-leftovers"], env);
   assert.equal(resumed.code, 0, resumed.err);
   assert.equal(resumed.out, `${runId}\n`);
-  assert.match(resumed.err, new RegExp(`^resumed: ${runId}\\n`));
+  assert.match(
+    resumed.err,
+    new RegExp(
+      `^resumed: ${runId}\\nworkspace: isolate · ${paths.workspace}\\nbranch: loopfile/${runId}\\n`,
+    ),
+  );
   assert.match(resumed.err, new RegExp(`ended: ${runId} completed\\n`));
   await ended(paths);
 
@@ -414,16 +418,17 @@ steps:
  * A crashed run made by hand: a Materialized Loopfile, a workspace folder and
  * a log with `run.created` and `owner.started`. No run owner is started for it.
  */
-async function crashedRun(extra: readonly Record<string, unknown>[] = [], digest?: string) {
+async function crashedRun(
+  extra: readonly Record<string, unknown>[] = [],
+  digest?: string,
+  manifest = "formatVersion: 1\nsteps:\n  - id: only\n    kind: command\n    run: 'true'\n",
+) {
   const { home, env } = await base();
   const runId = "20260919-120000-abcd";
   const paths = runPaths(home, runId);
   await mkdir(paths.loopfile, { recursive: true });
   await mkdir(paths.workspace);
-  await writeFile(
-    join(paths.loopfile, "manifest.yaml"),
-    "formatVersion: 1\nsteps:\n  - id: only\n    kind: command\n    run: 'true'\n",
-  );
+  await writeFile(join(paths.loopfile, "manifest.yaml"), manifest);
   const model = digest ?? modelDigest(await loadMaterialized(paths));
   const at = new Date().toISOString();
   const lines = [
@@ -482,7 +487,10 @@ test("without -d the monitor attaches to the resumed run until it ends", async (
   });
   assert.equal(code, 0, s.err());
   assert.equal(s.out(), `${runId}\n`);
-  assert.equal(s.err(), `resumed: ${runId}\n`);
+  assert.equal(
+    s.err(),
+    `resumed: ${runId}\nworkspace: isolate · ${paths.workspace}\nbranch: loopfile/${runId}\n`,
+  );
   await ended(paths);
   const types = (await events(paths)).map((e) => e.type);
   assert.deepEqual(types.slice(2, 4), ["owner.started", "attempt.started"]);
@@ -523,13 +531,85 @@ test("an ended or cancelled run is refused with its state", async () => {
   assert.match(cancelled.err, /was cancelled\. Continue it with `loopfile continue/);
 });
 
-test("a run whose workspace is gone is refused, and resume never makes a new one", async () => {
-  const { env, runId, paths } = await crashedRun();
-  await rm(paths.workspace, { recursive: true });
+async function recordWorkspace(
+  paths: RunPaths,
+  mode: "here" | "isolate" | "empty",
+  workspacePath: string,
+  isolateKind?: "worktree" | "copy",
+): Promise<void> {
+  const [first, ...rest] = (await readFile(paths.events, "utf8")).trimEnd().split("\n");
+  const created = JSON.parse(first ?? "{}") as Record<string, unknown>;
+  created.workspacePath = workspacePath;
+  created.workspaceMode = mode;
+  for (const field of ["targetFolder", "isolateKind", "branch", "baseCommit"])
+    delete created[field];
+  if (mode !== "empty") created.targetFolder = workspacePath;
+  if (mode === "isolate") {
+    created.isolateKind = isolateKind ?? "copy";
+    if (isolateKind === "worktree") {
+      created.branch = `loopfile/${String(created.runId)}`;
+      created.baseCommit = "0".repeat(40);
+    }
+  }
+  await writeFile(paths.events, `${[JSON.stringify(created), ...rest].join("\n")}\n`);
+}
+
+test("resume checks the recorded workspace and never creates one in every mode", async () => {
+  for (const mode of ["here", "isolate", "empty"] as const) {
+    const { env, runId, paths } = await crashedRun();
+    const workspacePath = join(paths.root, `missing-${mode}`);
+    await recordWorkspace(paths, mode, workspacePath);
+
+    const result = await resume([runId], env);
+    assert.equal(result.code, 2, `${mode}: ${result.err}`);
+    assert.match(result.err, /\ncode: workspace_missing\n/);
+    assert.match(result.err, new RegExp(`Workspace path: ${workspacePath}`));
+    await assert.rejects(stat(workspacePath), { code: "ENOENT" });
+    assert.equal((await stat(paths.workspace)).isDirectory(), true);
+  }
+});
+
+test("a here resume succeeds in the changed, dirty launch folder", async () => {
+  const manifest = `formatVersion: 1
+workspace: here
+steps:
+  - id: inspect
+    kind: command
+    run: 'test "$(cat tracked.txt)" = changed && test -f untracked.txt && : > resumed.marker'
+`;
+  const { env, runId, paths } = await crashedRun([], undefined, manifest);
+  const launchFolder = join(paths.root, "launch-folder");
+  await mkdir(launchFolder);
+  await run("git", ["init", "-q", "-b", "main"], { cwd: launchFolder, env });
+  await writeFile(join(launchFolder, "tracked.txt"), "committed\n");
+  await run("git", ["add", "tracked.txt"], { cwd: launchFolder, env });
+  await run("git", ["commit", "-q", "-m", "initial"], { cwd: launchFolder, env });
+  await writeFile(join(launchFolder, "tracked.txt"), "changed\n");
+  await writeFile(join(launchFolder, "untracked.txt"), "dirty\n");
+  await recordWorkspace(paths, "here", launchFolder);
+
   const result = await resume([runId], env);
-  assert.equal(result.code, 2);
-  assert.match(result.err, /the workspace of run .* is gone/);
-  assert.match(result.err, /\ncode: workspace_missing\n/);
+  assert.equal(result.code, 0, result.err);
+  assert.equal(await readFile(join(launchFolder, "resumed.marker"), "utf8"), "");
+  assert.ok(result.err.startsWith(`resumed: ${runId}\nworkspace: here · ${launchFolder}\n`));
+  assert.doesNotMatch(result.err, /\nbranch:/);
+});
+
+test("resume confirmations show workspace mode and path without non-worktree branches", async () => {
+  for (const [mode, isolateKind] of [
+    ["isolate", "copy"],
+    ["empty", undefined],
+  ] as const) {
+    const { env, runId, paths } = await crashedRun();
+    await recordWorkspace(paths, mode, paths.workspace, isolateKind);
+
+    const result = await resume([runId], env);
+    assert.equal(result.code, 0, result.err);
+    assert.ok(
+      result.err.startsWith(`resumed: ${runId}\nworkspace: ${mode} · ${paths.workspace}\n`),
+    );
+    assert.doesNotMatch(result.err, /\nbranch:/);
+  }
 });
 
 test("an unknown run, bad arguments and an empty home", async () => {
