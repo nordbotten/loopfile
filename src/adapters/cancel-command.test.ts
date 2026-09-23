@@ -59,6 +59,7 @@ async function launch(command: string) {
     },
     err: () => undefined,
     upgrade: { out: () => undefined, err: () => undefined, isTTY: false, ask: async () => null },
+    trust: { isTTY: false, err: () => undefined, choose: async () => null },
     monitor: { input: new PassThrough(), output: new PassThrough() } as unknown as MonitorIo,
   };
   assert.equal(await launchCommand([source, "-d"], cli, io, env, { repository: repo }), 0);
