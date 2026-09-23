@@ -12,7 +12,6 @@
 
 import { HARNESSES, isHarnessName } from "../domain/harnesses.ts";
 import {
-  DURATION_PATTERN,
   FORMAT_VERSION,
   type HarnessName,
   isEndState,
@@ -26,6 +25,7 @@ import {
   type Target,
   type Workflow,
 } from "../domain/model.ts";
+import { durationMillis } from "./duration.ts";
 import { checkPrompt, EACH_ITEM_SCOPE, HISTORY_ROOT, type PromptRead } from "./prompt-check.ts";
 
 /** One thing wrong with a manifest, and where. */
@@ -81,7 +81,6 @@ const OWNED_FLAG_FIELDS = new Map([
   ["--effort", "effort"],
 ]);
 const HOUR_MS = 3_600_000;
-const UNIT_MS: Readonly<Record<string, number>> = { s: 1000, m: 60_000, h: HOUR_MS };
 
 type Raw = Readonly<Record<string, unknown>>;
 type Report = (path: string, message: string) => void;
@@ -320,12 +319,6 @@ function optionalDuration(value: unknown, path: string, report: Report): Millis 
     );
   }
   return ms;
-}
-
-function durationMillis(text: string): Millis | undefined {
-  if (!DURATION_PATTERN.test(text)) return undefined;
-  const ms = Math.round(Number.parseFloat(text) * (UNIT_MS[text.slice(-1)] as number));
-  return ms > 0 ? ms : undefined;
 }
 
 function readStep(raw: unknown, index: number, ctx: Context): Step | undefined {

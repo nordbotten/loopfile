@@ -6,6 +6,7 @@ import { parseInputSet } from "../application/launch-inputs.ts";
 import { loopStatus } from "../application/loop-status.ts";
 import {
   type LastChild,
+  type NextLoopActionOptions,
   type NextSourceResult,
   nextLoopAction,
 } from "../application/next-loop-action.ts";
@@ -117,10 +118,18 @@ async function driveLoop(
       loopId,
       workflow,
       history,
+      created.pauseMs,
     );
 
     if (action.kind === "wait") {
-      await waitForChild(home, status.currentRunId ?? status.runIds.at(-1) ?? "", deps.pollMs);
+      await waitForChild(home, currentRunId(status), deps.pollMs);
+      continue;
+    }
+    if (action.kind === "pause") {
+      await appendLoopEvent(log, history, statusPath, {
+        type: "loop.paused",
+        until: action.until,
+      });
       continue;
     }
     if (action.kind === "end") return await appendEnd(log, history, statusPath, action);
@@ -212,12 +221,18 @@ async function nextAction(
   loopId: string,
   workflow: Workflow | undefined,
   history: readonly LoopEvent[],
+  pauseMs: number | null,
 ): Promise<ReturnType<typeof nextLoopAction>> {
+  const options: NextLoopActionOptions = { pauseMs };
   if (status.maxRuns !== null && status.runs >= status.maxRuns) {
-    return nextLoopAction(status, child, source, undefined, workflow, history);
+    return nextLoopAction(status, child, source, undefined, workflow, history, options);
+  }
+  const action = nextLoopAction(status, child, source, undefined, workflow, history, options);
+  if (source.kind !== "next" || action.kind !== "end" || action.reason !== "source_failed") {
+    return action;
   }
   const nextResult = await nextResultFor(source, child, repositoryPath, ownerEnv, loopId);
-  return nextLoopAction(status, child, source, nextResult, workflow, history);
+  return nextLoopAction(status, child, source, nextResult, workflow, history, options);
 }
 
 async function nextResultFor(
@@ -283,6 +298,10 @@ async function waitForPause(until: string | null): Promise<void> {
   if (until === null) return;
   const delay = Date.parse(until) - Date.now();
   if (delay > 0) await new Promise((resolve) => setTimeout(resolve, delay));
+}
+
+function currentRunId(status: LoopStatus): string {
+  return status.currentRunId ?? status.runIds.at(-1) ?? "";
 }
 
 async function lastChild(home: string, status: LoopStatus): Promise<LastChild> {

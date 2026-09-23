@@ -3,6 +3,7 @@
 import { readFile, rm } from "node:fs/promises";
 import { basename } from "node:path";
 import { parseArgs } from "node:util";
+import { durationMillis } from "../application/duration.ts";
 import {
   checkAgainstDeclared,
   checkDeclaredInputs,
@@ -47,7 +48,7 @@ import {
 import { pingOwner } from "./run-owner.ts";
 
 const USAGE =
-  "Usage: loopfile loop <source> (--times N | --list <file> | --next <command>) [--input k=v]... [--retry N] [--max-runs N] [-d]";
+  "Usage: loopfile loop <source> (--times N | --list <file> | --next <command>) [--input k=v]... [--retry N] [--max-runs N] [--pause <duration>] [-d]";
 const HELP = `${USAGE}
 
 Run a Loopfile repeatedly in the background. Each non-empty JSON Lines input
@@ -73,6 +74,7 @@ interface LoopArgs {
   readonly next: string[];
   readonly retry: string[];
   readonly maxRuns: string[];
+  readonly pause: string | undefined;
   readonly inputs: readonly string[];
   readonly detach: boolean;
   readonly help: boolean;
@@ -104,6 +106,7 @@ interface ValidLoopArgs {
   readonly next: string | undefined;
   readonly retry: number;
   readonly maxRuns: number | undefined;
+  readonly pauseMs: number | null;
   readonly inputs: readonly string[];
   readonly detach: boolean;
 }
@@ -215,7 +218,7 @@ async function createAndStartLoop(
         fixedInputs,
         retry: args.retry,
         maxRuns: args.maxRuns ?? null,
-        pauseMs: null,
+        pauseMs: args.pauseMs,
         program,
       });
     } finally {
@@ -520,6 +523,7 @@ function parseLoopArgs(argv: readonly string[]): LoopArgs | undefined {
         next: { type: "string", multiple: true },
         retry: { type: "string", multiple: true },
         "max-runs": { type: "string", multiple: true },
+        pause: { type: "string" },
         input: { type: "string", multiple: true },
         detach: { type: "boolean", short: "d" },
         help: { type: "boolean", short: "h" },
@@ -534,6 +538,7 @@ function parseLoopArgs(argv: readonly string[]): LoopArgs | undefined {
       next: values.next ?? [],
       retry: values.retry ?? [],
       maxRuns: values["max-runs"] ?? [],
+      pause: values.pause,
       inputs: values.input ?? [],
       detach: values.detach === true,
       help: values.help === true,
@@ -545,7 +550,11 @@ function parseLoopArgs(argv: readonly string[]): LoopArgs | undefined {
 
 function loopSourceArgs(
   args: LoopArgs,
-  limits: { readonly retry: number; readonly maxRuns: number | undefined },
+  limits: {
+    readonly retry: number;
+    readonly maxRuns: number | undefined;
+    readonly pauseMs: number | null;
+  },
   io: LoopIo,
 ): ValidLoopArgs | number {
   if (args.times.length > 0) {
@@ -586,16 +595,34 @@ function loopSourceArgs(
 function parseLoopLimits(
   args: LoopArgs,
   io: LoopIo,
-): { readonly retry: number; readonly maxRuns: number | undefined } | undefined {
+):
+  | {
+      readonly retry: number;
+      readonly maxRuns: number | undefined;
+      readonly pauseMs: number | null;
+    }
+  | undefined {
   const retry = parseOptionalRetry(args.retry, io);
   if (retry === undefined) return undefined;
   const maxRuns = parseOptionalCount(args.maxRuns, "--max-runs", io);
   if (maxRuns === undefined && args.maxRuns.length > 0) return undefined;
-  return { retry, maxRuns };
+  const pauseMs = parseOptionalPause(args.pause, io);
+  if (pauseMs === undefined) return undefined;
+  return { retry, maxRuns, pauseMs };
 }
 
 function parseTimes(value: string, io: LoopIo): number | undefined {
   return parseCount(value, "--times", io);
+}
+
+function parseOptionalPause(value: string | undefined, io: LoopIo): number | null | undefined {
+  if (value === undefined) return null;
+  const pauseMs = durationMillis(value);
+  if (pauseMs === undefined) {
+    refuse(io, "--pause must be a positive duration with the unit s, m or h, such as 30m");
+    return undefined;
+  }
+  return pauseMs;
 }
 
 function parseOptionalRetry(values: readonly string[], io: LoopIo): number | undefined {
