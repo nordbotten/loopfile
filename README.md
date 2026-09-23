@@ -94,6 +94,12 @@ loopfile docs manifest   # print one topic
 - `runtime` ([How a run works](docs/runtime.md)): steps, routing, attempts,
   limits, the execution context, step commands, handoffs, inputs and the
   workspace.
+- `skill`: an agent skill for writing loops. Install it with:
+
+  ```sh
+  mkdir -p ~/.claude/skills/loopfile
+  loopfile docs skill > ~/.claude/skills/loopfile/SKILL.md
+  ```
 - `patterns` ([Loop patterns](docs/loop-patterns.md)): patterns that keep a
   loop running unattended, such as fix budgets, flaky checks and shared locks.
 - `skill`: an agent skill for writing loops. Install it with
