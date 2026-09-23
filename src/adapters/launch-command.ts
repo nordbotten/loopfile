@@ -11,8 +11,9 @@
 
 import { type ChildProcess, spawn } from "node:child_process";
 import { closeSync, openSync } from "node:fs";
-import { stat } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { connect } from "node:net";
+import { join } from "node:path";
 import { parseArgs } from "node:util";
 import {
   checkAgainstDeclared,
@@ -36,6 +37,7 @@ import { decodeMessage, encodeMessage, PING } from "../application/owner-protoco
 import { endedHelp, runEndFromStatus } from "../application/run-end.ts";
 import { parseSource, type RemoteSource, SourceParseError } from "../application/source.ts";
 import { ownerGoneMessage } from "../application/tail.ts";
+import { matchesTrust, parseTrustList } from "../application/trust.ts";
 import type { Workflow } from "../domain/model.ts";
 import { loadDirectory, loadInput, loadThinText } from "./directory-loader.ts";
 import { classifyInput, type InputKind, readStdin } from "./input.ts";
@@ -129,7 +131,17 @@ export async function launchCommand(
     );
   }
   if (parsed.kind === "local") {
-    return await launchSource(args, parsed.source, undefined, undefined, cli, io, env, options);
+    return await launchSource(
+      args,
+      parsed.source,
+      undefined,
+      undefined,
+      false,
+      cli,
+      io,
+      env,
+      options,
+    );
   }
   return await launchRemote(args, parsed, cli, io, env, options);
 }
@@ -139,6 +151,7 @@ async function launchSource(
   sourceName: string,
   loopfileName: string | undefined,
   remote: RemoteSource | undefined,
+  trustedRemote: boolean,
   cli: string,
   io: LaunchIo,
   env: Record<string, string | undefined>,
@@ -151,7 +164,7 @@ async function launchSource(
   if (!inputs.ok) {
     return refuse(io, inputs.messages, 2, "bad_argument", inputHelp(source.workflow.inputDefaults));
   }
-  if (remote !== undefined && !args.trust) {
+  if (remote !== undefined && !args.trust && !trustedRemote) {
     return refuse(
       io,
       `untrusted Remote Loopfile ${remote.host}/${remote.repo}`,
@@ -181,6 +194,19 @@ async function launchRemote(
   env: Record<string, string | undefined>,
   options: LaunchOptions,
 ): Promise<number> {
+  const trustPath = join(loopfileHome(env as NodeJS.ProcessEnv), "trust.yaml");
+  let trustText: string | undefined;
+  try {
+    trustText = await readFile(trustPath, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      return refuseTrustList(io, trustPath, (error as Error).message);
+    }
+  }
+  const trust = parseTrustList(trustText);
+  if (trust.status === "broken") return refuseTrustList(io, trustPath, trust.reason);
+  const trusted = matchesTrust(trust, `${remote.host}/${remote.repo}`);
+
   let fetched: FetchedRemote | undefined;
   try {
     try {
@@ -193,6 +219,7 @@ async function launchRemote(
       fetched.path,
       remote.path?.split("/").at(-1) ?? remote.repo.slice(remote.repo.lastIndexOf("/") + 1),
       remote,
+      trusted,
       cli,
       io,
       env,
@@ -201,6 +228,16 @@ async function launchRemote(
   } finally {
     await fetched?.cleanup().catch(() => undefined);
   }
+}
+
+function refuseTrustList(io: Pick<LaunchIo, "err">, path: string, reason: string): number {
+  return refuse(
+    io,
+    `cannot read trust list ${path}: ${reason.replaceAll(/\s+/g, " ").trim()}`,
+    2,
+    "untrusted",
+    `Fix or remove ${path}.`,
+  );
 }
 
 function refuseRemoteFetch(
