@@ -87,6 +87,27 @@ test("removes a clean workspace and keeps the run branch", async () => {
   assert.match(branches, new RegExp(`loopfile/${run.runId}`));
 });
 
+test("removes a copy without Git and does not report a branch", async () => {
+  const run = await setup();
+  await rm(run.paths.workspace, { recursive: true, force: true });
+  await mkdir(run.paths.workspace);
+  await writeFile(join(run.paths.workspace, "output.txt"), "keep until explicit removal\n");
+  const lines = (await readFile(run.paths.events, "utf8")).trimEnd().split("\n");
+  const created = JSON.parse(lines[0] ?? "{}") as Record<string, unknown>;
+  created.workspacePath = run.paths.workspace;
+  created.workspaceMode = "isolate";
+  created.isolateKind = "copy";
+  delete created.branch;
+  delete created.baseCommit;
+  lines[0] = JSON.stringify(created);
+  await writeFile(run.paths.events, `${lines.join("\n")}\n`);
+
+  const result = await remove({ ...run.env, PATH: "" }, run.runId);
+  assert.equal(result.code, 0, result.err);
+  assert.equal(result.err, `removed: ${run.runId}\n`);
+  await assert.rejects(stat(run.paths.root));
+});
+
 test("does not remove a run with a live owner", async () => {
   const run = await setup();
   const owner = await startRunOwner({ home: run.home, runId: run.runId });
@@ -138,7 +159,7 @@ test("removes a run with a missing repository and warns once", async () => {
   const result = await remove(run.env, run.runId);
   assert.equal(result.code, 0, result.err);
   assert.equal((result.err.match(/^warning:/gm) ?? []).length, 1);
-  assert.match(result.err, /warning: target repository is gone/);
+  assert.match(result.err, /warning: target folder is gone/);
   assert.match(result.err, new RegExp(`removed: ${run.runId}`));
   await assert.rejects(stat(run.paths.root));
 });

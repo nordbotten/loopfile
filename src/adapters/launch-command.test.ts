@@ -9,6 +9,7 @@ import {
   readFile,
   realpath,
   stat,
+  symlink,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -75,6 +76,82 @@ async function setup(manifest = MANIFEST) {
   await writeFile(join(source, "manifest.yaml"), manifest);
   const env = { ...process.env, ...gitEnv, LOOPFILE_HOME: home };
   return { base, repo, source, home, env };
+}
+
+const COPY_MANIFEST = `formatVersion: 1
+steps:
+  - id: copied
+    kind: command
+    run: 'test -f .claude/settings.local.json'
+`;
+
+async function makeCopyTarget(
+  path: string,
+  initializeGit: boolean,
+  commit: boolean,
+): Promise<void> {
+  await mkdir(path);
+  if (initializeGit) {
+    await run("git", ["init", "-q", "-b", "main"], {
+      cwd: path,
+      env: { ...process.env, ...gitEnv },
+    });
+  }
+  await writeFile(join(path, ".gitignore"), ".claude/settings.local.json\n");
+  await writeFile(join(path, "tracked-or-local.txt"), "complete\n");
+  if (commit) {
+    await run("git", ["add", "."], { cwd: path, env: { ...process.env, ...gitEnv } });
+    await run("git", ["commit", "-q", "-m", "first"], {
+      cwd: path,
+      env: { ...process.env, ...gitEnv },
+    });
+  }
+  await mkdir(join(path, ".claude"));
+  await writeFile(join(path, ".claude/settings.local.json"), "ignored\n");
+}
+
+async function launchCopy(
+  source: string,
+  target: string,
+  env: NodeJS.ProcessEnv,
+  withoutGit = false,
+) {
+  const s = session();
+  let output: string;
+  let confirmation: string;
+  if (withoutGit) {
+    const launched = await run(process.execPath, [cli, source, "-d"], { cwd: target, env });
+    output = launched.stdout;
+    confirmation = launched.stderr;
+  } else {
+    assert.equal(
+      await launchCommand([source, "-d"], cli, s.io, env, { repository: target }),
+      0,
+      s.err(),
+    );
+    output = s.out();
+    confirmation = s.err();
+  }
+  const runId = output.trim();
+  const events = await waitForEnd(env.LOOPFILE_HOME as string, runId);
+  assert.equal(resultOf(events), "success");
+  const created = events[0];
+  assert.equal(created?.type, "run.created");
+  if (created?.type !== "run.created") throw new Error("run.created is missing");
+  const paths = runPaths(env.LOOPFILE_HOME as string, runId);
+  assert.deepEqual(
+    [created.targetFolder, created.workspacePath, created.isolateKind],
+    [target, paths.workspace, "copy"],
+  );
+  assert.equal(Object.hasOwn(created, "branch"), false);
+  assert.equal(Object.hasOwn(created, "baseCommit"), false);
+  assert.equal(
+    await readFile(join(paths.workspace, ".claude/settings.local.json"), "utf8"),
+    "ignored\n",
+  );
+  assert.equal(await readFile(join(paths.workspace, "tracked-or-local.txt"), "utf8"), "complete\n");
+  assert.equal(confirmation, `started: ${runId}\nworkspace: isolate · ${paths.workspace}\n`);
+  return { runId, events, paths, session: s };
 }
 
 function terminal(tty: boolean) {
@@ -996,10 +1073,7 @@ test("Deny writes nothing and refuses an untrusted Remote Loopfile", async () =>
     );
     assert.equal(s.out(), "");
     assert.equal(s.choices.length, 1);
-    assert.equal(
-      s.choices[0]?.header,
-      "? Trust this Remote Loopfile?\nSource: github.com/acme/loops",
-    );
+    assert.match(s.choices[0]?.header ?? "", /Source {3}github:acme\/loops/);
     assert.deepEqual(s.choices[0]?.options, [
       "Trust repo github.com/acme/loops",
       "Trust everything from github.com/acme",
@@ -1235,19 +1309,38 @@ test("a read-only home trust-list write warns and still starts the run", async (
 
 test("--detach asks before the run owner starts; denying creates no run folder", async () => {
   const { repo, home, env } = await setup();
-  const fixture = await makeGitFixture({ "manifest.yaml": markerManifest("no-run") });
+  const source = "git+https://user:secret@git.example.test/acme/loops@main#subdirectory=loops";
+  const fixture = await makeGitFixture(
+    { "loops/manifest.yaml": markerManifest("no-run") },
+    "acme/loops",
+    "https://user:secret@git.example.test/",
+  );
   try {
+    const sha = (
+      await run("git", ["rev-parse", "HEAD"], { cwd: fixture.repository })
+    ).stdout.trim();
     const s = session(true, 2, async (header) => {
-      assert.equal(header, "? Trust this Remote Loopfile?\nSource: github.com/acme/loops");
+      assert.match(header, /^DANGER {2}This Loopfile can run any shell command/);
+      assert.ok(
+        header.includes("Source   git+https://git.example.test/acme/loops@main#subdirectory=loops"),
+      );
+      assert.ok(
+        header.includes(
+          `Full text: loopfile unpack git+https://git.example.test/acme/loops@${sha.slice(0, 7)}#subdirectory=loops ./look`,
+        ),
+      );
+      assert.match(header, /Steps {4}1/);
+      assert.equal(header.includes("\x1b"), false);
+      assert.doesNotMatch(header, /user|secret/);
       await assert.rejects(stat(join(home, "runs")));
       return 2;
     });
     assert.equal(
       await launchCommand(
-        ["github:acme/loops", "-d"],
+        [source, "-d"],
         cli,
         s.io,
-        { ...env, ...fixture.env },
+        { ...env, ...fixture.env, NO_COLOR: "1" },
         {
           repository: repo,
         },
@@ -1381,9 +1474,11 @@ test("a directory, a thin .loop and a packed .loop run the same and give input.i
   assert.deepEqual(shapes[2], shapes[0]);
 });
 
-test("--workspace selects the run mode and confirms its workspace and branch", async () => {
+test("a nested Git launch records its top level and creates an isolate worktree branch", async () => {
   const manifest = MANIFEST.replace("formatVersion: 1", "formatVersion: 1\nworkspace: isolate");
   const { repo, source, home, env } = await setup(manifest);
+  const launchFolder = join(repo, "nested");
+  await mkdir(launchFolder);
   const s = session();
   assert.equal(
     await launchCommand(
@@ -1391,7 +1486,7 @@ test("--workspace selects the run mode and confirms its workspace and branch", a
       cli,
       s.io,
       env,
-      { repository: repo },
+      { repository: launchFolder },
     ),
     0,
     s.err(),
@@ -1402,13 +1497,91 @@ test("--workspace selects the run mode and confirms its workspace and branch", a
     s.err(),
     `started: ${runId}\nworkspace: isolate · ${paths.workspace}\nbranch: loopfile/${runId}\n`,
   );
-  const created = (await waitForEnd(home, runId)).find((event) => event.type === "run.created");
+  const events = await waitForEnd(home, runId);
+  const created = events.find((event) => event.type === "run.created");
   assert.deepEqual(
     created?.type === "run.created"
-      ? [created.workspacePath, created.workspaceMode, created.isolateKind]
+      ? [created.targetFolder, created.workspacePath, created.workspaceMode, created.isolateKind]
       : undefined,
-    [paths.workspace, "isolate", "worktree"],
+    [repo, paths.workspace, "isolate", "worktree"],
   );
+  if (created?.type !== "run.created") throw new Error("run.created is missing");
+  assert.equal(created.branch, `loopfile/${runId}`);
+  assert.ok(created.baseCommit);
+  assert.equal(
+    (await run("git", ["branch", "--list", `loopfile/${runId}`], { cwd: repo })).stdout.trim(),
+    `loopfile/${runId}`,
+  );
+});
+
+test("launch outside Git copies the nested launch folder, including ignored files", async () => {
+  const { base, source, env } = await setup(COPY_MANIFEST);
+  const parent = join(base, "plain-parent");
+  const target = join(parent, "launch-folder");
+  await mkdir(parent);
+  await makeCopyTarget(target, false, false);
+  await writeFile(join(parent, "outside.txt"), "not the Target folder\n");
+
+  const { paths } = await launchCopy(source, target, env);
+  await assert.rejects(stat(join(paths.workspace, "outside.txt")));
+});
+
+test("launch in a Git repository with no commits creates a complete copy", async () => {
+  const { base, source, env } = await setup(COPY_MANIFEST);
+  const target = join(base, "unborn-target");
+  await makeCopyTarget(target, true, false);
+
+  const { paths } = await launchCopy(source, target, env);
+  assert.ok(await stat(paths.workspace));
+});
+
+test("launch without a git binary creates a complete copy including ignored files", async () => {
+  const { base, source, env } = await setup(COPY_MANIFEST);
+  const target = join(base, "no-git-target");
+  await makeCopyTarget(target, true, true);
+  const bin = join(base, "no-git-bin");
+  await mkdir(bin);
+  await symlink("/bin/sh", join(bin, "sh"));
+  const noGitEnv = { ...env, PATH: bin };
+
+  const { paths } = await launchCopy(source, target, noGitEnv, true);
+  assert.deepEqual(await readdir(bin), ["sh"]);
+  assert.ok(await stat(paths.workspace));
+});
+
+test("copy results hide branch facts but keep empty JSON fields", async () => {
+  const { base, source, env } = await setup(COPY_MANIFEST);
+  const target = join(base, "result-target");
+  await makeCopyTarget(target, false, false);
+  const { runId } = await launchCopy(source, target, env);
+
+  let text = "";
+  assert.equal(
+    await resultCommand(
+      ["result", runId],
+      (value) => (text += value),
+      () => {},
+      env,
+    ),
+    0,
+  );
+  assert.match(text, new RegExp(`^target +${target}$`, "m"));
+  assert.doesNotMatch(text, /^branch(?:\s|$)/m);
+  assert.doesNotMatch(text, /^base commit(?:\s|$)/m);
+
+  let json = "";
+  assert.equal(
+    await resultCommand(
+      ["result", runId, "--json"],
+      (value) => (json += value),
+      () => {},
+      env,
+    ),
+    0,
+  );
+  const result = JSON.parse(json) as { branch: string; baseCommit: string };
+  assert.equal(result.branch, "");
+  assert.equal(result.baseCommit, "");
 });
 
 test("launch rejects unsupported workspace modes before making a run", async () => {
@@ -1616,19 +1789,22 @@ test("a source that is neither a directory nor text is an input error, not an un
 });
 
 test("a run owner that exits before ready exits 2 and gives the end of owner.log", async () => {
-  const { base, source, home, env } = await setup();
-  const notARepository = join(base, "plain");
-  await mkdir(notARepository);
+  const { base, repo, source, home, env } = await setup();
+  const fakeOwner = join(base, "fake-owner.js");
+  await writeFile(fakeOwner, 'console.error("fake owner failed"); process.exit(1);\n');
   const s = session();
-  const code = await launchCommand([source, "-d", "--input", "issue=1"], cli, s.io, env, {
-    repository: notARepository,
+  const code = await launchCommand([source, "-d", "--input", "issue=1"], fakeOwner, s.io, env, {
+    repository: repo,
   });
   assert.equal(code, 2);
   assert.equal(s.out(), "");
   assert.match(s.err(), /exited before it was ready/);
   assert.match(s.err(), /owner\.log/);
   const [runId] = await readdir(join(home, "runs"));
-  assert.match(await readFile(runPaths(home, runId as string).ownerLog, "utf8"), /loopfile:/);
+  assert.match(
+    await readFile(runPaths(home, runId as string).ownerLog, "utf8"),
+    /fake owner failed/,
+  );
 });
 
 test("a run folder that cannot be made stops the launch", async () => {

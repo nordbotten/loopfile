@@ -393,26 +393,30 @@ overrides it. `isolate` is the only accepted mode in this version and is the
 default. `loopfile check` validates the mode word without inspecting Git or the
 target folder.
 
-An isolated workspace is a Git worktree of the target repository, the Git
-repository that holds the current directory when you launch.
+The **Target folder** is the Git top level when the launch folder is inside a
+Git repository, otherwise it is the launch folder. An isolated workspace lives
+at `runs/<runid>/workspace` and follows one of two paths:
 
-1. The run owner creates the workspace at `runs/<runid>/workspace`. It starts from
-   the `HEAD` of the target repository, on a new branch `loopfile/<runid>`.
-   This is the run branch. The launch confirmation names the selected workspace
-   (`workspace: <mode> · <path>`) and branch.
-2. Uncommitted changes in the target repository are not carried across. Launch
-   prints one warning with the count of changed files and goes on.
-3. When the run ends in success, the run owner removes the workspace with
-   `git worktree remove`. If Git refuses, for example because of uncommitted
-   work, the workspace stays and the end message says where and why.
-4. A run that ends in failure, is cancelled, or crashes keeps its workspace.
-5. Loopfile never deletes the run branch. Commit inside the workspace, in a step,
-   if you want the work to survive on the branch.
+1. When Git can make a worktree, it starts from the Target folder's `HEAD` on a
+   new branch `loopfile/<runid>`. Uncommitted changes are not carried across;
+   launch prints the existing dirty-target warning. Gitignored files are not
+   brought into the worktree.
+2. Outside Git, in a repository with no commits, or when Git is unavailable,
+   Loopfile makes a full copy of the Target folder. This includes gitignored
+   files such as `.claude/settings.local.json`. The copy has no branch or base
+   commit.
 
-`run.created` records the target folder, workspace path and mode, plus
-`isolateKind: worktree`, branch and base commit. `loopfile result <runid>`
-shows target, workspace, branch and base commit; `loopfile result <runid> --json`
-adds `workspace` and `workspaceMode` without changing its format version.
+The launch confirmation names the workspace and prints `branch:` only for a
+worktree. A successful run removes only a worktree; a copy stays for inspection.
+A run that fails, is cancelled, or crashes keeps either workspace. Loopfile
+never deletes a run branch; commit inside a worktree if you want the work to
+survive on that branch.
+
+`run.created` records `targetFolder`, workspace path and mode, and
+`isolateKind: worktree` or `copy`. Only a worktree records `branch` and
+`baseCommit`. `loopfile result <runid>` hides those two lines when absent;
+`result --json` keeps both fields as empty strings. The JSON format version does
+not change.
 
 ## Operator commands
 

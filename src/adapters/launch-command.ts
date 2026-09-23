@@ -36,10 +36,12 @@ import {
   renderOperatorFailureLines,
 } from "../application/operator-error.ts";
 import { decodeMessage, encodeMessage, PING } from "../application/owner-protocol.ts";
+import { parseEventLog } from "../application/replay.ts";
 import { endedHelp, runEndFromStatus } from "../application/run-end.ts";
 import { parseSource, type RemoteSource, SourceParseError } from "../application/source.ts";
 import { ownerGoneMessage } from "../application/tail.ts";
 import { matchesTrust, parseTrustList } from "../application/trust.ts";
+import { renderTrustPrompt } from "../application/trust-prompt.ts";
 import { selectWorkspaceMode } from "../application/workspace-mode.ts";
 import type { Workflow } from "../domain/model.ts";
 import { loadDirectory, loadInput, loadThinText } from "./directory-loader.ts";
@@ -66,6 +68,7 @@ import {
   checkManifestVersionText,
   type UpgradeIo,
 } from "./upgrade-command.ts";
+import { targetRepository } from "./workspace.ts";
 
 type Out = (text: string) => void;
 type CheckIo = Pick<LaunchIo, "err" | "upgrade">;
@@ -150,6 +153,8 @@ export async function launchCommand(
       false,
       undefined,
       undefined,
+      undefined,
+      undefined,
       cli,
       io,
       env,
@@ -167,6 +172,8 @@ async function launchSource(
   trustedRemote: boolean,
   trustPath: string | undefined,
   trustText: string | undefined,
+  fetchedRemote: FetchedRemote | undefined,
+  printableSource: string | undefined,
   cli: string,
   io: LaunchIo,
   env: Record<string, string | undefined>,
@@ -182,12 +189,14 @@ async function launchSource(
   if (!inputs.ok) {
     return refuse(io, inputs.messages, 2, "bad_argument", inputHelp(source.workflow.inputDefaults));
   }
+  const trustHeader = renderTrustHeader(source.workflow, fetchedRemote, printableSource, env);
   const trustFailure = await checkRemoteTrust(
     args,
     remote,
     trustedRemote,
     trustPath,
     trustText,
+    trustHeader,
     io,
   );
   if (trustFailure !== undefined) return trustFailure;
@@ -205,12 +214,40 @@ async function launchSource(
   return await start(args.detach, request, source.workflow, cli, io, env, options);
 }
 
+function renderTrustHeader(
+  workflow: Workflow,
+  fetchedRemote: FetchedRemote | undefined,
+  source: string | undefined,
+  env: Record<string, string | undefined>,
+): string {
+  if (fetchedRemote === undefined || source === undefined) return "";
+  return renderTrustPrompt(
+    workflow,
+    { ...fetchedRemote.remote, sha: fetchedRemote.sha },
+    source,
+    env.NO_COLOR === undefined || env.NO_COLOR === "",
+  );
+}
+
+function printableSource(source: string): string {
+  const authorityStart = source.indexOf("://") + 3;
+  if (authorityStart < 3) return source;
+  const pathStart = source.indexOf("/", authorityStart);
+  const authorityEnd = pathStart < 0 ? source.length : pathStart;
+  const authority = source.slice(authorityStart, authorityEnd);
+  const at = authority.lastIndexOf("@");
+  return at < 0
+    ? source
+    : `${source.slice(0, authorityStart)}${authority.slice(at + 1)}${source.slice(authorityEnd)}`;
+}
+
 async function checkRemoteTrust(
   args: LaunchArgs,
   remote: RemoteSource | undefined,
   trustedRemote: boolean,
   trustPath: string | undefined,
   trustText: string | undefined,
+  trustHeader: string,
   io: LaunchIo,
 ): Promise<number | undefined> {
   if (remote === undefined || args.trust || trustedRemote) return undefined;
@@ -224,7 +261,7 @@ async function checkRemoteTrust(
     );
   }
   const repoEntry = `${remote.host}/${remote.repo}`;
-  const selected = await chooseTrustEntry(remote, repoEntry, io);
+  const selected = await chooseTrustEntry(remote, repoEntry, trustHeader, io);
   if (selected === undefined) {
     return refuse(
       io,
@@ -247,11 +284,12 @@ async function checkRemoteTrust(
 async function chooseTrustEntry(
   remote: RemoteSource,
   repoEntry: string,
+  header: string,
   io: LaunchIo,
 ): Promise<{ readonly entry: string; readonly list: "repos" | "owners" } | undefined> {
   const ownerEntry = `${remote.host}/${remote.repo.split("/")[0]}`;
   const choice = await io.trust.choose(
-    `? Trust this Remote Loopfile?\nSource: ${repoEntry}${remote.path === undefined ? "" : `/${remote.path}`}`,
+    header,
     [`Trust repo ${repoEntry}`, `Trust everything from ${ownerEntry}`, "Deny"],
     2,
   );
@@ -296,6 +334,8 @@ async function launchRemote(
       trusted,
       trustPath,
       trustText,
+      fetched,
+      printableSource(args.source ?? ""),
       cli,
       io,
       env,
@@ -576,6 +616,8 @@ async function start(
     readyTimeoutMs: options.readyTimeoutMs,
   });
   if (!started.ok) return refuseStart(io, started.failure);
+  const paths = runPaths(loopfileHome(env as NodeJS.ProcessEnv), started.runId);
+  const created = parseEventLog(await readFile(paths.events, "utf8"))[0];
   return await continueAfterReady(
     started.runId,
     detach,
@@ -586,7 +628,8 @@ async function start(
     renderLaunchConfirmation(
       started.runId,
       request.workspaceMode ?? "isolate",
-      runPaths(loopfileHome(env as NodeJS.ProcessEnv), started.runId).workspace,
+      paths.workspace,
+      created?.type === "run.created" ? created.branch : undefined,
     ),
   );
 }
@@ -647,11 +690,13 @@ export async function startRun(options: StartRunOptions): Promise<StartRunResult
 
   const home = loopfileHome(options.env as NodeJS.ProcessEnv);
   let paths: RunPaths;
+  let targetFolder: string;
   try {
+    targetFolder = await targetRepository(options.repository);
     paths = await createRunDirectory({
       home,
       runId: options.runId,
-      targetRepository: options.repository,
+      targetRepository: targetFolder,
       stepIds: workflow.workflow.steps.map((step) => step.id),
     });
   } catch (error) {
@@ -665,7 +710,7 @@ export async function startRun(options: StartRunOptions): Promise<StartRunResult
     source: options.source,
     kind: options.sourceKind ?? "directory",
     ...(options.sourceText === undefined ? {} : { sourceText: options.sourceText }),
-    repository: options.repository,
+    repository: targetFolder,
     inputs: inputs.inputs,
     workspaceMode: options.workspaceMode,
     loopfileName: options.loopfileName,
