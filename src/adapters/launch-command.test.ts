@@ -1073,10 +1073,7 @@ test("Deny writes nothing and refuses an untrusted Remote Loopfile", async () =>
     );
     assert.equal(s.out(), "");
     assert.equal(s.choices.length, 1);
-    assert.equal(
-      s.choices[0]?.header,
-      "? Trust this Remote Loopfile?\nSource: github.com/acme/loops",
-    );
+    assert.match(s.choices[0]?.header ?? "", /Source {3}github:acme\/loops/);
     assert.deepEqual(s.choices[0]?.options, [
       "Trust repo github.com/acme/loops",
       "Trust everything from github.com/acme",
@@ -1312,19 +1309,38 @@ test("a read-only home trust-list write warns and still starts the run", async (
 
 test("--detach asks before the run owner starts; denying creates no run folder", async () => {
   const { repo, home, env } = await setup();
-  const fixture = await makeGitFixture({ "manifest.yaml": markerManifest("no-run") });
+  const source = "git+https://user:secret@git.example.test/acme/loops@main#subdirectory=loops";
+  const fixture = await makeGitFixture(
+    { "loops/manifest.yaml": markerManifest("no-run") },
+    "acme/loops",
+    "https://user:secret@git.example.test/",
+  );
   try {
+    const sha = (
+      await run("git", ["rev-parse", "HEAD"], { cwd: fixture.repository })
+    ).stdout.trim();
     const s = session(true, 2, async (header) => {
-      assert.equal(header, "? Trust this Remote Loopfile?\nSource: github.com/acme/loops");
+      assert.match(header, /^DANGER {2}This Loopfile can run any shell command/);
+      assert.ok(
+        header.includes("Source   git+https://git.example.test/acme/loops@main#subdirectory=loops"),
+      );
+      assert.ok(
+        header.includes(
+          `Full text: loopfile unpack git+https://git.example.test/acme/loops@${sha.slice(0, 7)}#subdirectory=loops ./look`,
+        ),
+      );
+      assert.match(header, /Steps {4}1/);
+      assert.equal(header.includes("\x1b"), false);
+      assert.doesNotMatch(header, /user|secret/);
       await assert.rejects(stat(join(home, "runs")));
       return 2;
     });
     assert.equal(
       await launchCommand(
-        ["github:acme/loops", "-d"],
+        [source, "-d"],
         cli,
         s.io,
-        { ...env, ...fixture.env },
+        { ...env, ...fixture.env, NO_COLOR: "1" },
         {
           repository: repo,
         },
