@@ -206,18 +206,34 @@ export function loadManifest(text: string, label: string, root: LoopfileRoot | n
 }
 
 /** Copies the source into `destination`, which must not exist yet. */
-export async function materializeDirectory(source: string, destination: string): Promise<void> {
-  await checkLinks(source);
+export function materializeDirectory(source: string, destination: string): Promise<void> {
+  return copyDirectory(source, destination, false);
+}
+
+/** Copies a remote source folder without its root Git metadata. */
+export function materializeRemoteDirectory(source: string, destination: string): Promise<void> {
+  return copyDirectory(source, destination, true);
+}
+
+async function copyDirectory(
+  source: string,
+  destination: string,
+  omitRootGit: boolean,
+): Promise<void> {
+  await checkLinks(source, omitRootGit);
   if (await pathExists(destination)) {
     throw new DirectoryLoadError(`copy destination already exists: ${destination}`);
   }
-  await cp(source, destination, { recursive: true, dereference: true, errorOnExist: true }).catch(
-    (error: NodeJS.ErrnoException) => {
-      throw new DirectoryLoadError(`cannot copy ${source} to ${destination} (${error.code})`, {
-        cause: error,
-      });
-    },
-  );
+  await cp(source, destination, {
+    recursive: true,
+    dereference: true,
+    errorOnExist: true,
+    filter: (path) => !omitRootGit || path !== join(source, ".git"),
+  }).catch((error: NodeJS.ErrnoException) => {
+    throw new DirectoryLoadError(`cannot copy ${source} to ${destination} (${error.code})`, {
+      cause: error,
+    });
+  });
 }
 
 async function readManifest(directory: string, manifestPath: string): Promise<string> {
@@ -255,30 +271,41 @@ function isRanged(node: unknown): node is { range: [number, number, number] } {
 }
 
 /** Throws on the first link under `directory` whose target is outside it. */
-async function checkLinks(directory: string): Promise<void> {
+async function checkLinks(directory: string, omitRootGit = false): Promise<void> {
   const base = await realpath(directory).catch((error: NodeJS.ErrnoException) => {
     throw new DirectoryLoadError(`cannot read directory ${directory} (${error.code})`, {
       cause: error,
     });
   });
-  await walk(directory, base);
+  await walk(directory, base, directory, omitRootGit);
 }
 
-async function walk(directory: string, base: string): Promise<void> {
+async function walk(
+  directory: string,
+  base: string,
+  root: string,
+  omitRootGit: boolean,
+): Promise<void> {
   for (const entry of await readdir(directory)) {
+    if (omitRootGit && directory === root && entry === ".git") continue;
     const path = join(directory, entry);
     const info = await lstat(path);
-    if (info.isSymbolicLink()) await checkLink(path, base);
-    else if (info.isDirectory()) await walk(path, base);
+    if (info.isSymbolicLink()) await checkLink(path, base, root, omitRootGit);
+    else if (info.isDirectory()) await walk(path, base, root, omitRootGit);
   }
 }
 
-async function checkLink(path: string, base: string): Promise<void> {
+async function checkLink(
+  path: string,
+  base: string,
+  root: string,
+  omitRootGit: boolean,
+): Promise<void> {
   const target = await realpath(path).catch(() => undefined);
   const inside = target === undefined ? undefined : relative(base, target);
   if (inside === undefined || inside.startsWith("..") || isAbsolute(inside)) {
     throw new DirectoryLoadError(`symbolic link points outside the directory: ${path}`);
   }
   // A link to a directory is followed by the copy, so what is under it counts too.
-  if ((await lstat(target as string)).isDirectory()) await walk(path, base);
+  if ((await lstat(target as string)).isDirectory()) await walk(path, base, root, omitRootGit);
 }

@@ -71,7 +71,7 @@ Commands:
   status [<runid>|<loopid>] [--monitor | --json]
   tail <runid|loopid> [--json]
   result <runid|loopid> [--json]
-  unpack <file.loop> [<destination>]
+  unpack <file.loop|remote> [<destination>]
   upgrade <source>
 
 Options:
@@ -165,7 +165,7 @@ export function main(
   }
   if (argv[0] === "status") return statusCommand(argv, out, err, env);
   if (argv[0] === "tail") return tailCommand(argv, out, err, env);
-  if (argv[0] === "unpack") return unpackCommand(argv, out, err);
+  if (argv[0] === "unpack") return unpackCommand(argv, out, err, env);
   if (argv[0] === "upgrade")
     return upgradeCommand(argv, terminalUpgradeIo(out, err), undefined, readStdin);
 
