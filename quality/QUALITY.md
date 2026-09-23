@@ -63,7 +63,10 @@ Every check is also its own command: `quality:zones`, `quality:suppressions`,
 
 `quality-suppressions.mjs` fails if `@ts-ignore`, `@ts-expect-error`,
 `@ts-nocheck`, `biome-ignore`, `eslint-disable`, an `istanbul`/`c8`/`v8` ignore,
-or a skipped, focused or todo test appears anywhere under `src/`.
+a skipped, focused or todo test, or a `Stryker disable` comment (including
+`disable next-line` and a mutator-name form like `Stryker disable
+EqualityOperator: reason`) appears anywhere under `src/`. A bare `Stryker
+restore` is not flagged — it is harmless without a matching `disable`.
 
 Unlike every other check it has no exception list, no allowlist and no
 environment escape. A suppression comment disables the very measurement the
