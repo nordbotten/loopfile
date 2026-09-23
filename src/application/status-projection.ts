@@ -119,6 +119,7 @@ export function projectStatus(
     runId: state.runId,
     loopfileName: context.loopfileName,
     ...loopFields(events[0]),
+    ...remoteField(events[0]),
     state: lifecycle.state,
     endReason: lifecycle.endReason,
     startedAt: state.createdAt,
@@ -132,6 +133,12 @@ export function projectStatus(
     maxTransitions: context.workflow.maxTransitions ?? null,
     metrics: open === undefined ? endedMetrics : addMetrics(endedMetrics, harnessData.metrics),
   };
+}
+
+function remoteField(event: RunEvent | undefined): Pick<StatusProjection, "remote"> {
+  return event?.type === "run.created" && event.remote !== undefined
+    ? { remote: event.remote }
+    : {};
 }
 
 function loopFields(event: RunEvent | undefined): Pick<StatusProjection, "loopId" | "loopIndex"> {
