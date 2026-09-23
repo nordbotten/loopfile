@@ -1,4 +1,4 @@
-/** `loopfile result <runid> [--json]`: read a run without its owner (#226, #228). */
+/** `loopfile result <runid|loopid> [--json]`: read a run or collect a loop (#76, #226, #228). */
 
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -12,19 +12,21 @@ import {
   type ResultView,
   renderResultView,
 } from "../application/result-view.ts";
+import { isLoopId } from "../application/run-list.ts";
 import { parseStatusProjection } from "../application/status.ts";
 import type { RunEvent } from "../domain/events.ts";
 import type { Workflow } from "../domain/model.ts";
 import { appendedDataFile, dataFile } from "./data-store.ts";
 import { loadDirectory } from "./directory-loader.ts";
+import { loopResultCommand } from "./loop-result-command.ts";
 import { ownerLogHelp } from "./owner-log.ts";
 import { loopfileHome, pathExists, runPaths } from "./run-directory.ts";
 import { eventLogFailure, readEventLog } from "./run-discovery.ts";
 
-const HELP = `Usage: loopfile result <runid> [--json]
+const HELP = `Usage: loopfile result <runid|loopid> [--json]
 
-Read the facts recorded for a run. Exit 0 for a completed run, 1 for a failed
-or cancelled run, and 2 for a live, unknown or unreadable run.
+Read the facts recorded for a run or loop. Exit 0 for a completed result, 1 for a
+failed or cancelled result, and 2 for a running, unknown or unreadable result.
 `;
 
 type Out = (text: string) => void;
@@ -45,6 +47,10 @@ export async function resultCommand(
   const args = parseResultCommandArgs(argv);
   if (!args.ok) {
     return fail(err, { summary: args.message, code: "bad_argument", help: HELP.trim() });
+  }
+
+  if (isLoopId(args.runId)) {
+    return await loopResultCommand(args.runId, args.json, out, err, env);
   }
 
   const result = await readResult(args.runId, env);

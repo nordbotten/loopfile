@@ -38,6 +38,7 @@ test("operator result arguments accept text and JSON forms", () => {
     json: true,
   });
   assert.match(failureMessage(["result", "--json"]), /needs a run ID/);
+  assert.ok(failureMessage(["result"]).includes("Usage: loopfile result <runid|loopid> [--json]"));
   assert.match(failureMessage(["result", "--bad", "--json"]), /needs a run ID/);
   assert.match(failureMessage(["result", "run-1", "extra", "--json"]), /unknown argument: extra/);
 });
