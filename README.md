@@ -34,7 +34,7 @@ before 1.0.
 
 ## Install
 
-Needs Node.js 24 or later and Git.
+Needs Node.js 24 or later. Git is needed only for Remote Loopfiles.
 
 ```sh
 npm install -g loopfile
@@ -104,6 +104,8 @@ loopfile docs manifest   # print one topic
   loop running unattended, such as fix budgets, flaky checks and shared locks.
 - `skill`: an agent skill for writing loops. Install it with
   `loopfile docs skill > ~/.claude/skills/loopfile/SKILL.md`.
+
+For remote sources and trust, see [Remote Loopfiles](docs/remote-loopfiles.md).
 
 ## License
 
