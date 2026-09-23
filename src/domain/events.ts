@@ -109,17 +109,17 @@ export interface LaunchInputRecord {
 /**
  * The run's first event. It fixes what the rest of the log is read against:
  * the event format version, the digest of the built model that resume checks
- * (ADR 0006), and the target folder the run started from. The base commit is
- * that folder's `HEAD` at launch, which moves, so the log must hold the commit
- * the run actually started from.
+ * (ADR 0006), and the target folder the run started from when it has one. The
+ * base commit is that folder's `HEAD` at launch, which moves, so the log must
+ * hold the commit the run actually started from.
  */
 export interface RunCreated extends EventBase {
   readonly type: "run.created";
   readonly runId: string;
   readonly eventFormatVersion: number;
   readonly modelDigest: string;
-  readonly targetFolder: string;
-  /** Older run logs omit workspace fields; non-worktree workspaces omit Git facts. */
+  readonly targetFolder?: string;
+  /** Empty mode omits the target folder; older run logs omit workspace fields. */
   readonly workspacePath?: string;
   readonly workspaceMode?: WorkspaceMode;
   readonly isolateKind?: "worktree" | "copy";

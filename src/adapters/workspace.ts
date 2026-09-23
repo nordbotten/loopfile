@@ -1,15 +1,16 @@
 /**
  * Creates the workspace selected for a run (#16, ADR 0014). `here` returns
- * the launch folder without running Git or creating a folder. `isolate` uses
- * a worktree from `HEAD` when possible, otherwise a full copy. Steps only see
- * the path, as `LOOPFILE_WORKSPACE` and as their working directory (ADR 0005).
+ * the launch folder without running Git or creating a folder. `empty` creates
+ * a new folder without reading the Target. `isolate` uses a worktree from
+ * `HEAD` when possible, otherwise a full copy. Steps only see the workspace
+ * path, as `LOOPFILE_WORKSPACE` and as their working directory (ADR 0005).
  *
  * A worktree does not carry uncommitted target changes; a full copy carries
  * them, including gitignored files. Successful runs remove only worktrees.
  */
 
 import { execFile } from "node:child_process";
-import { cp } from "node:fs/promises";
+import { cp, mkdir } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { promisify } from "node:util";
 import type { RunCreated } from "../domain/events.ts";
@@ -21,14 +22,17 @@ const run = promisify(execFile);
 export class WorkspaceError extends Error {}
 
 /** A run's workspace, and the facts `run.created` records (ADR 0003). */
-export type Workspace = WorktreeWorkspace | CopyWorkspace | HereWorkspace;
+export type Workspace = WorktreeWorkspace | CopyWorkspace | HereWorkspace | EmptyWorkspace;
 
 interface WorkspaceBase {
   readonly path: string;
+}
+
+interface TargetWorkspaceBase extends WorkspaceBase {
   readonly targetFolder: string;
 }
 
-export interface WorktreeWorkspace extends WorkspaceBase {
+export interface WorktreeWorkspace extends TargetWorkspaceBase {
   readonly mode?: "isolate";
   readonly isolateKind: "worktree";
   readonly repositoryPath: string;
@@ -36,40 +40,46 @@ export interface WorktreeWorkspace extends WorkspaceBase {
   readonly branch: string;
 }
 
-export interface CopyWorkspace extends WorkspaceBase {
+export interface CopyWorkspace extends TargetWorkspaceBase {
   readonly mode?: "isolate";
   readonly isolateKind: "copy";
 }
 
-export interface HereWorkspace extends WorkspaceBase {
+export interface HereWorkspace extends TargetWorkspaceBase {
   readonly mode: "here";
   readonly isolateKind?: undefined;
 }
 
+export interface EmptyWorkspace extends WorkspaceBase {
+  readonly mode: "empty";
+  readonly isolateKind?: undefined;
+}
+
 export function workspaceFromCreated(created: RunCreated, fallbackPath: string): Workspace {
+  const targetFolder = created.targetFolder ?? fallbackPath;
   const path =
-    created.workspacePath ??
-    (created.workspaceMode === "here" ? created.targetFolder : fallbackPath);
+    created.workspacePath ?? (created.workspaceMode === "here" ? targetFolder : fallbackPath);
   if (created.workspaceMode === "here") {
-    return { path, targetFolder: created.targetFolder, mode: "here" };
+    return { path, targetFolder, mode: "here" };
   }
+  if (created.workspaceMode === "empty") return { path, mode: "empty" };
   if (created.isolateKind === "copy") {
-    return { path, targetFolder: created.targetFolder, isolateKind: "copy" };
+    return { path, targetFolder, isolateKind: "copy" };
   }
   return {
     path,
-    targetFolder: created.targetFolder,
+    targetFolder,
     isolateKind: "worktree",
-    repositoryPath: created.targetFolder,
+    repositoryPath: targetFolder,
     baseCommit: created.baseCommit ?? "",
     branch: created.branch ?? "",
   };
 }
 
 export interface CreateWorkspaceOptions {
-  /** The launch folder from which to resolve the Target folder. */
-  readonly repository: string;
-  /** The isolated workspace path, `RunPaths.workspace`; ignored in `here` mode. */
+  /** The launch folder used to resolve the Target folder; unused by `empty`. */
+  readonly repository?: string;
+  /** `RunPaths.workspace`, used by `isolate` and `empty`; ignored in `here`. */
   readonly path: string;
   readonly runId: string;
   readonly mode?: WorkspaceMode;
@@ -99,6 +109,15 @@ export async function targetRepository(directory: string): Promise<string> {
  * the two calls.
  */
 export async function createWorkspace(options: CreateWorkspaceOptions): Promise<Workspace> {
+  if (options.mode === "empty") {
+    await mkdir(options.path);
+    return { path: options.path, mode: "empty" };
+  }
+  if (options.repository === undefined) {
+    throw new WorkspaceError(
+      `cannot make ${options.mode ?? "isolate"} workspace without a Target folder`,
+    );
+  }
   if (options.mode === "here") {
     const path = resolve(options.repository);
     return { path, targetFolder: path, mode: "here" };

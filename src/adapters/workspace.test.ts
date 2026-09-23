@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -64,6 +64,25 @@ test("the target repository is the one containing the directory", async () => {
   const { repo } = await repository();
   await mkdir(join(repo, "src"));
   assert.equal(await targetRepository(join(repo, "src")), repo);
+});
+
+test("empty makes a new, empty workspace without reading or copying the target", async () => {
+  const root = await scratch();
+  const target = join(root, "target");
+  const path = join(root, "runs", "run-empty", "workspace");
+  await mkdir(join(target, ".claude", "skills"), { recursive: true });
+  await writeFile(join(target, "CLAUDE.md"), "project instructions\n");
+  await writeFile(join(target, ".claude", "settings.json"), "{}\n");
+  await writeFile(join(target, ".claude", "settings.local.json"), "{}\n");
+  await writeFile(join(target, ".claude", "skills", "skill.md"), "skill\n");
+  await writeFile(join(target, ".claude", "hooks.json"), "{}\n");
+  await mkdir(join(root, "runs", "run-empty"), { recursive: true });
+
+  assert.deepEqual(
+    await createWorkspace({ repository: target, path, runId: "run-empty", mode: "empty" }),
+    { path, mode: "empty" },
+  );
+  assert.deepEqual(await readdir(path), []);
 });
 
 test("here uses the launch folder without creating a workspace", async () => {

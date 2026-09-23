@@ -7,7 +7,6 @@ export interface RunFacts extends PromptDataView {
   readonly runId: string;
   readonly loopfileName: string;
   readonly startedAt: string;
-  readonly targetFolder: string;
   readonly workspace: string;
   readonly workspaceMode: WorkspaceMode | "";
   readonly branch: string;
@@ -78,8 +77,11 @@ export function runFacts(
   steps: readonly Step[] = [step],
   workflow?: Pick<Workflow, "maxTransitions" | "declaredRunTimeout">,
 ): RunFacts {
+  const details = runDetails(history, loopfileName);
+  const { targetFolder, ...detailsWithoutTarget } = details;
   return {
-    ...runDetails(history, loopfileName),
+    ...detailsWithoutTarget,
+    ...(details.workspaceMode === "empty" ? {} : { targetFolder }),
     ...runLimits(history, workflow),
     attempts: earlierAttempts(history, current.attemptId),
     attempt: attemptFacts(history, step, current),

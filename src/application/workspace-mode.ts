@@ -12,7 +12,7 @@ export function selectWorkspaceMode(
   manifest: WorkspaceMode | undefined,
 ): WorkspaceModeSelection {
   if (flag === undefined) return { ok: true, mode: manifest ?? DEFAULT_WORKSPACE_MODE };
-  return flag === "isolate" || flag === "here"
+  return flag === "isolate" || flag === "here" || flag === "empty"
     ? { ok: true, mode: flag }
-    : { ok: false, message: "--workspace must be one of: isolate, here" };
+    : { ok: false, message: "--workspace must be one of: isolate, here, empty" };
 }

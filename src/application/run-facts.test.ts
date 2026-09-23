@@ -136,6 +136,27 @@ test("run facts expose workspace details and fill absent branch facts", () => {
   assert.equal(missing.baseCommit, "");
 });
 
+test("empty workspace run facts expose no Target folder", () => {
+  const emptyRun: RunEvent = {
+    type: "run.created",
+    runId: "empty-run",
+    eventFormatVersion: 1,
+    modelDigest: "digest",
+    workspacePath: "/runs/empty-run/workspace",
+    workspaceMode: "empty",
+    inputs: [],
+    seq: 1,
+    at: "created",
+  };
+  const facts = runFacts([emptyRun], step, {
+    attemptId: "001-work",
+    stepId: "work",
+    startedAt: "started",
+  });
+  assert.equal(Object.hasOwn(facts, "targetFolder"), false);
+  assert.equal(facts.workspace, "/runs/empty-run/workspace");
+});
+
 test("run facts list earlier attempts and declared run limits", () => {
   const history = [
     created,

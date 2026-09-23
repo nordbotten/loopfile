@@ -222,12 +222,12 @@ async function removeRunWorkspace(
   force: boolean,
 ): Promise<RemoveResult | undefined> {
   if (workspace.mode === "here") return undefined;
-  if (workspace.isolateKind === "copy") {
+  if (workspace.mode === "empty" || workspace.isolateKind === "copy") {
     await rm(workspace.path, { recursive: true, force: true });
     return undefined;
   }
   if (!(await pathExists(workspace.path))) {
-    await pruneWorktrees(created.targetFolder);
+    await pruneWorktrees(workspace.repositoryPath);
     return undefined;
   }
   const removed = await removeWorkspace(workspace, force);
@@ -249,7 +249,7 @@ async function removeFiles(
   try {
     const workspace = workspaceFromCreated(created, paths.workspace);
     const branch = workspace.isolateKind === "worktree" ? workspace.branch : undefined;
-    if (!(await pathExists(created.targetFolder))) {
+    if (created.targetFolder !== undefined && !(await pathExists(created.targetFolder))) {
       await rm(paths.root, { recursive: true, force: true });
       return {
         ok: true,

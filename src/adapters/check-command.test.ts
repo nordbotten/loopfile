@@ -57,7 +57,7 @@ test("a valid manifest and its inputs produce an empty JSON result without a run
   await assert.rejects(stat(join(root, "runs")));
 });
 
-test("check rejects unsupported workspace modes without inspecting the target or invoking Git", async () => {
+test("check accepts empty workspace mode without inspecting the target or invoking Git", async () => {
   const directory = await source(`formatVersion: 1
 workspace: empty
 steps:
@@ -79,10 +79,8 @@ steps:
   process.env.PATH = `${bin}${oldPath === undefined ? "" : `:${oldPath}`}`;
   try {
     const io = capture();
-    assert.equal(await checkCommand(["check", directory, "--json"], io.out, io.err), 1);
-    assert.deepEqual(JSON.parse(io.output), [
-      { path: "workspace", line: 2, message: "workspace must be one of: isolate, here" },
-    ]);
+    assert.equal(await checkCommand(["check", directory, "--json"], io.out, io.err), 0);
+    assert.deepEqual(JSON.parse(io.output), []);
     assert.equal(io.errors, "");
     assert.deepEqual(await readdir(target), []);
     await assert.rejects(stat(gitCalled), { code: "ENOENT" });
