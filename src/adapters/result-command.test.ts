@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { after, test } from "node:test";
 import { STATUS_FORMAT_VERSION } from "../domain/status.ts";
 import { resultCommand } from "./result-command.ts";
-import { runPaths } from "./run-directory.ts";
+import { loopPaths, runPaths } from "./run-directory.ts";
 
 const home = await mkdtemp(join(tmpdir(), "loopfile-result-"));
 const env = { LOOPFILE_HOME: home };
@@ -419,3 +419,152 @@ test("result help and unknown runs use their separate output paths", async () =>
   assert.equal(missing.output, "");
   assert.match(missing.errors, /\ncode: no_such_run\n/);
 });
+
+test("result collects every run from a completed loop in text and JSON", async () => {
+  const loopId = "loop-20260921-140100-abcd";
+  const runs = [
+    { runId: "20260921-140101-aaaa", inputSet: { issue: "41" } },
+    { runId: "20260921-140102-bbbb", inputSet: { issue: "42" } },
+  ];
+  for (const run of runs) await makeRun(run.runId, true);
+  await makeLoopResult(loopId, runs, "source_empty");
+
+  const json = capture();
+  assert.equal(await resultCommand(["result", loopId, "--json"], json.out, json.err, env), 0);
+  assert.deepEqual(JSON.parse(json.output), {
+    loopId,
+    state: "completed",
+    endReason: "source_empty",
+    cancelMode: null,
+    detail: null,
+    runs: runs.map(({ runId, inputSet }, position) => ({
+      index: position + 1,
+      runId,
+      inputSet,
+      retryOf: null,
+      state: "completed",
+      endReason: "success",
+      branch: `loopfile/${runId}`,
+    })),
+  });
+  assert.equal(json.errors, "");
+
+  const text = capture();
+  assert.equal(await resultCommand(["result", loopId], text.out, text.err, env), 0);
+  assert.equal(
+    text.output,
+    `loop: ${loopId}\nstate: completed\nended: source_empty\n\n` +
+      `run 1: ${runs[0]?.runId}\n  input set: issue=41\n  state: completed\n` +
+      `  end reason: success\n  branch: loopfile/${runs[0]?.runId}\n\n` +
+      `run 2: ${runs[1]?.runId}\n  input set: issue=42\n  state: completed\n` +
+      `  end reason: success\n  branch: loopfile/${runs[1]?.runId}\n`,
+  );
+  assert.equal(text.errors, "");
+});
+
+test("result for a loop ended with run_failed exits 1", async () => {
+  const loopId = "loop-20260921-140200-cccc";
+  const runId = "20260921-140201-cccc";
+  await makeRun(runId, true, "failure");
+  await makeLoopResult(loopId, [{ runId, inputSet: {} }], "run_failed", {
+    detail: `run ${runId} failed`,
+  });
+
+  const output = capture();
+  assert.equal(await resultCommand(["result", loopId, "--json"], output.out, output.err, env), 1);
+  assert.equal(JSON.parse(output.output).endReason, "run_failed");
+  assert.equal(JSON.parse(output.output).runs[0].state, "failed");
+  assert.equal(output.errors, "");
+});
+
+test("a cancelled loop result shows its cancel mode and detail", async () => {
+  const loopId = "loop-20260921-140250-eeee";
+  await makeLoopResult(loopId, [], "cancelled", {
+    cancelMode: "after_run",
+    detail: "stopped after the current run",
+  });
+
+  const output = capture();
+  assert.equal(await resultCommand(["result", loopId], output.out, output.err, env), 1);
+  assert.equal(
+    output.output,
+    `loop: ${loopId}\nstate: cancelled\nended: cancelled (after_run) - stopped after the current run\n`,
+  );
+  assert.equal(output.errors, "");
+});
+
+test("a running loop result matches a running run result's exit and output behavior", async () => {
+  const loopId = "loop-20260921-140300-dddd";
+  const runId = "20260921-140301-dddd";
+  await makeLoopResult(loopId, [{ runId, inputSet: {} }], null);
+
+  const output = capture();
+  assert.equal(await resultCommand(["result", loopId, "--json"], output.out, output.err, env), 2);
+  assert.equal(JSON.parse(output.output).state, "running");
+  assert.equal(JSON.parse(output.output).endReason, null);
+  assert.equal(output.errors, "");
+});
+
+test("result for a missing loop uses no_such_loop", async () => {
+  const output = capture();
+  assert.equal(
+    await resultCommand(["result", "loop-20260921-140400-eeee"], output.out, output.err, env),
+    2,
+  );
+  assert.equal(output.output, "");
+  assert.match(output.errors, /\ncode: no_such_loop\n/);
+});
+
+async function makeLoopResult(
+  loopId: string,
+  runs: readonly {
+    readonly runId: string;
+    readonly inputSet: Readonly<Record<string, string>>;
+    readonly retryOf?: string | null;
+  }[],
+  endReason: string | null,
+  end: { readonly cancelMode?: string; readonly detail?: string } = {},
+): Promise<void> {
+  const paths = loopPaths(home, loopId);
+  await mkdir(paths.root, { recursive: true });
+  const events = [
+    {
+      seq: 1,
+      at: "2026-09-21T14:00:00.000Z",
+      type: "loop.created",
+      loopId,
+      eventFormatVersion: 1,
+      repositoryPath: "/repo",
+      loopfileName: "review-loop",
+      source: { kind: "times", count: runs.length },
+      fixedInputs: {},
+      retry: 0,
+      maxRuns: null,
+      pauseMs: null,
+      program: { version: "0.2.0", digest: "sha256:program" },
+    },
+    ...runs.map((run, position) => ({
+      seq: position + 2,
+      at: `2026-09-21T14:00:0${position + 1}.000Z`,
+      type: "loop.run_started",
+      runId: run.runId,
+      index: position + 1,
+      inputSet: run.inputSet,
+      sourceIndex: position + 1,
+      retryOf: run.retryOf ?? null,
+    })),
+    ...(endReason === null
+      ? []
+      : [
+          {
+            seq: runs.length + 2,
+            at: "2026-09-21T14:01:00.000Z",
+            type: "loop.ended",
+            result: endReason === "source_empty" ? "success" : "failure",
+            reason: endReason,
+            ...end,
+          },
+        ]),
+  ];
+  await writeFile(paths.events, `${events.map((event) => JSON.stringify(event)).join("\n")}\n`);
+}

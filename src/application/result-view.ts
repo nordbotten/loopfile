@@ -18,7 +18,7 @@ export interface ResultArgsFailure {
   readonly message: string;
 }
 
-const USAGE = "Usage: loopfile result <runid> [--json]";
+const USAGE = "Usage: loopfile result <runid|loopid> [--json]";
 
 /** Parses the operator form; the step form has its own grammar in result.ts. */
 export function parseResultCommandArgs(argv: readonly string[]): ResultArgs | ResultArgsFailure {
