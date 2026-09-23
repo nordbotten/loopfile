@@ -298,7 +298,7 @@ test("Git fetch errors redact credentials from printed URLs", async () => {
   const wrapper = join(bin, "git");
   await writeFile(
     wrapper,
-    "#!/bin/sh\\nprintf '%s\\n' \"fatal: unable to access 'https://user:token@git.example.test/org/repo': denied\" >&2\\nexit 1\\n",
+    "#!/bin/sh\nprintf '%s\\n' \"fatal: unable to access 'https://user:token@git.example.test/org/repo': denied\" >&2\nexit 1\n",
   );
   await chmod(wrapper, 0o755);
 
