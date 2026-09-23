@@ -1,4 +1,10 @@
-import type { InputSet, LoopEndReason, LoopSource } from "../domain/events.ts";
+import type {
+  InputSet,
+  LoopEndReason,
+  LoopEvent,
+  LoopRunStarted,
+  LoopSource,
+} from "../domain/events.ts";
 import type { Workflow } from "../domain/model.ts";
 import type { LoopStatus } from "../domain/status.ts";
 import { checkAgainstDeclared, type InputsCheck, mergeInputSet } from "./launch-inputs.ts";
@@ -41,10 +47,11 @@ export function nextLoopAction(
   source?: LoopSource,
   nextResult?: NextSourceResult,
   workflow?: Pick<Workflow, "inputs" | "inputDefaults">,
+  history: readonly LoopEvent[] = [],
   options: NextLoopActionOptions = {},
 ): LoopAction {
   if (lastChild.state === "running") return { kind: "wait" };
-  const failed = failedChildAction(status, lastChild, options);
+  const failed = failedChildAction(status, lastChild, history, options);
   if (failed !== undefined) return failed;
   const childEnd = childEndAction(lastChild);
   if (childEnd !== undefined) return childEnd;
@@ -54,10 +61,12 @@ export function nextLoopAction(
 function failedChildAction(
   status: LoopStatus,
   child: LastChild,
+  history: readonly LoopEvent[],
   options: NextLoopActionOptions,
 ): LoopAction | undefined {
   if (child.state !== "failed") return undefined;
-  if (status.lastRetryCount >= status.retry) {
+  const details = retryDetails(child.runId, history);
+  if (details === undefined || details.retriesSoFar >= status.retry) {
     return { kind: "end", reason: "run_failed", detail: `run ${child.runId} failed` };
   }
   if (atRunCap(status)) return { kind: "end", reason: "max_runs" };
@@ -65,12 +74,31 @@ function failedChildAction(
     status,
     {
       kind: "start",
-      inputSet: status.lastInputSet ?? status.fixedInputs,
-      sourceIndex: status.lastSourceIndex,
+      inputSet: details.run.inputSet,
+      sourceIndex: details.run.sourceIndex,
       retryOf: child.runId,
     },
     options,
   );
+}
+
+type RetryDetails = { readonly run: LoopRunStarted; readonly retriesSoFar: number };
+
+function retryDetails(runId: string, history: readonly LoopEvent[]): RetryDetails | undefined {
+  const started = history.filter(
+    (event): event is LoopRunStarted => event.type === "loop.run_started",
+  );
+  const run = started.findLast((event) => event.runId === runId);
+  if (run === undefined) return undefined;
+
+  const byId = new Map(started.map((event) => [event.runId, event]));
+  let retriesSoFar = 0;
+  let parentId = run.retryOf;
+  while (parentId !== null) {
+    retriesSoFar += 1;
+    parentId = byId.get(parentId)?.retryOf ?? null;
+  }
+  return { run, retriesSoFar };
 }
 
 function uncappedSourceAction(
