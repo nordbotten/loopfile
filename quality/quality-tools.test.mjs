@@ -1,9 +1,10 @@
 /**
  * The quality tools check the codebase, so something has to check them.
  *
- * These tests cover the four pieces of real logic: which zone a path lands in,
+ * These tests cover the five pieces of real logic: which zone a path lands in,
  * which module specifiers `CORE` may not import, which text counts as a
- * suppression, and how a CRAP score is read out of a coverage report. Each one
+ * suppression, how a CRAP score is read out of a coverage report, and which
+ * lines mutation testing mutates. Each one
  * is tested on data, not on the working tree, so a green repository cannot hide
  * a check that never fires.
  */
@@ -15,6 +16,7 @@ import { forbiddenReason, importsOf } from "./quality-imports.mjs";
 import { quietDiagnostics } from "./quality-runner.mjs";
 import { findSuppressions } from "./quality-suppressions.mjs";
 import { zoneOf } from "./quality-zones.mjs";
+import { changedCore } from "./stryker.config.mjs";
 
 /** A minimal Istanbul report shaped the way c8 writes one. */
 function report({ statements, branches, functions }) {
@@ -188,4 +190,27 @@ test("a nested callback owns its own branches, and is not charged to its parent"
   const byName = Object.fromEntries(scores.map((score) => [score.name, score]));
   assert.equal(byName.outer.complexity, 2);
   assert.equal(byName.callback.complexity, 2);
+});
+
+test("mutation covers the changed CORE lines, and all of an untracked CORE file", () => {
+  const diff = [
+    "diff --git a/src/application/load-workflow.ts b/src/application/load-workflow.ts",
+    "--- a/src/application/load-workflow.ts",
+    "+++ b/src/application/load-workflow.ts",
+    "@@ -10,3 +10,4 @@ export function loadWorkflow() {",
+    "@@ -40 +41 @@ function one() {",
+    "@@ -60,5 +61,0 @@ function gone() {",
+    "--- a/src/adapters/loop-command.ts",
+    "+++ b/src/adapters/loop-command.ts",
+    "@@ -1,2 +1,2 @@",
+    "--- a/src/application/removed.ts",
+    "+++ /dev/null",
+    "@@ -1,9 +0,0 @@",
+  ];
+  const untracked = ["src/application/next-loop-action.ts", "src/adapters/loop-run.ts", ""];
+  assert.deepEqual(changedCore(diff, untracked), [
+    "src/application/next-loop-action.ts",
+    "src/application/load-workflow.ts:10-13",
+    "src/application/load-workflow.ts:41-41",
+  ]);
 });
