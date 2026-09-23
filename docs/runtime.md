@@ -430,8 +430,13 @@ branch and base commit as empty strings. The JSON format version does not change
 of the same step; it fails when the run has ended, crashed, or has no attempt
 running. `loopfile resume <runid>` continues a crashed run after the owner is
 startable again. `loopfile resume <loopid>` resumes a crashed loop, keeping its
-input-source position and waiting for any child that is still running; ended
-loops must be started again.
+input-source position. It waits for a child that is still running, resumes a
+crashed or `internal_error` child first, retries a failed child within the
+loop's `--retry` limit, and ends cancelled with detail `run <runid> cancelled` and
+no cancel mode if the child was cancelled. Pass
+`--kill-leftovers` to kill leftover child processes during that resume. A
+pending loop cancellation is honoured before another run starts. Ended loops
+must be started again.
 
 ## Running from a script
 
