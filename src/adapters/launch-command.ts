@@ -58,11 +58,11 @@ type Out = (text: string) => void;
 type CheckIo = Pick<LaunchIo, "err" | "upgrade">;
 
 const USAGE =
-  "Usage: loopfile <directory|file.loop|github:owner/repo|-> [-d | --detach] [--trust] [--input <name>=<value>]...";
+  "Usage: loopfile <directory|file.loop|github:owner/repo[/path][@ref]|-> [-d | --detach] [--trust] [--input <name>=<value>]...";
 const HELP = `${USAGE}
 
 Run a Loopfile in the background. The source may be a directory, a thin file,
-a GitHub Remote Loopfile (github:owner/repo), or '-' for a manifest read from
+a GitHub Remote Loopfile (github:owner/repo[/path][@ref]), or '-' for a manifest read from
 stdin. Without --detach, a terminal attaches the
 live monitor; press d to detach while the run continues. With --detach, print
 the run ID and return immediately.
@@ -115,7 +115,12 @@ export async function launchCommand(
   }
   if (args.source === undefined) return refuse(io, USAGE, 2);
 
-  const parsed = parseSource(args.source);
+  let parsed: ReturnType<typeof parseSource>;
+  try {
+    parsed = parseSource(args.source);
+  } catch (error) {
+    return refuse(io, (error as Error).message, 2, "bad_argument");
+  }
   if (parsed.kind === "local") {
     return await launchSource(args, parsed.source, undefined, undefined, cli, io, env, options);
   }
@@ -175,12 +180,13 @@ async function launchRemote(
       fetched = await fetchRemote(remote, env);
     } catch (error) {
       const message = error instanceof RemoteFetchError ? error.message : (error as Error).message;
-      return refuse(io, message, 2, "operation_failed");
+      const code = error instanceof RemoteFetchError ? error.code : "operation_failed";
+      return refuse(io, message, 2, code);
     }
     return await launchSource(
       args,
       fetched.path,
-      remote.repo.slice(remote.repo.lastIndexOf("/") + 1),
+      remote.path?.split("/").at(-1) ?? remote.repo.slice(remote.repo.lastIndexOf("/") + 1),
       remote,
       cli,
       io,

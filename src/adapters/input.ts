@@ -7,6 +7,7 @@
  */
 
 import { open, stat } from "node:fs/promises";
+import { createInterface } from "node:readline/promises";
 
 /** What a launch input path is. */
 export type InputKind = "directory" | "thin" | "packed";
@@ -25,6 +26,19 @@ export function readStdin(): Promise<Buffer> {
     process.stdin.on("end", () => resolve(Buffer.concat(chunks)));
     process.stdin.on("error", reject);
   });
+}
+
+/** Asks one line on the terminal. `null` on EOF. */
+export async function askOnTerminal(question: string): Promise<string | null> {
+  const lines = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    return await new Promise<string | null>((resolve) => {
+      lines.once("close", () => resolve(null));
+      void lines.question(question).then(resolve);
+    });
+  } finally {
+    lines.close();
+  }
 }
 
 /** Classifies `path` as a source directory, a thin `.loop` or a packed `.loop`. */
