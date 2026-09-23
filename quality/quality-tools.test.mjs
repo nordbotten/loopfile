@@ -113,6 +113,28 @@ test("ordinary code is not mistaken for a suppression", () => {
   assert.deepEqual(findSuppressions(source), []);
 });
 
+test("every Stryker disable form is found", () => {
+  const source = [
+    "// Stryker disable all",
+    "// Stryker disable next-line all",
+    "// Stryker disable EqualityOperator: reason",
+  ].join("\n");
+  const found = findSuppressions(source);
+  assert.deepEqual(
+    found.map((hit) => hit.line),
+    [1, 2, 3],
+  );
+  assert.deepEqual(
+    found.map((hit) => hit.reason),
+    ["mutation testing suppressed", "mutation testing suppressed", "mutation testing suppressed"],
+  );
+});
+
+test("mentioning Stryker without disabling it is not a suppression", () => {
+  const source = ["// uses Stryker for mutation testing", "// Stryker restore"].join("\n");
+  assert.deepEqual(findSuppressions(source), []);
+});
+
 test("complexity counts decisions, not the paths c8 writes for them", () => {
   const [score] = crapScores(
     report({
