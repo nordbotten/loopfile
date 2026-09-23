@@ -8,6 +8,7 @@ import type { RemoteSource } from "../application/source.ts";
 export interface FetchedRemote {
   readonly path: string;
   readonly sha: string;
+  readonly remote: Pick<RemoteSource, "host" | "repo" | "path" | "ref">;
   readonly cleanup: () => Promise<void>;
 }
 
@@ -48,7 +49,17 @@ export async function fetchRemote(
   const repository = join(temporary, "repo");
   try {
     const fetched = await checkoutRemote(resolvedSource, sha, gitEnv, repository);
-    return { ...fetched, cleanup: () => rm(temporary, { recursive: true, force: true }) };
+    const { host, repo, path, ref } = resolvedSource;
+    return {
+      ...fetched,
+      remote: {
+        host,
+        repo,
+        ...(path === undefined ? {} : { path }),
+        ...(ref === undefined ? {} : { ref }),
+      },
+      cleanup: () => rm(temporary, { recursive: true, force: true }),
+    };
   } catch (error) {
     await rm(temporary, { recursive: true, force: true });
     throw error;
