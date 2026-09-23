@@ -6,10 +6,13 @@ import {
   checkAttemptCall,
   confirmsCancel,
   confirmsInterrupt,
+  confirmsLoopCancel,
   controlReply,
   decodeMessage,
   encodeMessage,
   INTERRUPT,
+  LOOP_CANCEL,
+  loopCancelRequest,
   PING,
   readyMessage,
   refusesInterrupt,
@@ -66,6 +69,31 @@ test("interrupt replies identify success and no attempt", () => {
   assert.equal(confirmsInterrupt(line({ type: "interrupting", runId: "other" }), RUN), false);
   assert.equal(refusesInterrupt(line({ type: "error", message: "no attempt is running" })), true);
   assert.equal(refusesInterrupt(line({ type: "ready", runId: RUN })), false);
+});
+
+test("loop cancellation requests preserve the mode and identify the owner reply", () => {
+  assert.equal(LOOP_CANCEL, "loop_cancel");
+  for (const mode of ["now", "after_run"] as const) {
+    const request = line({ type: LOOP_CANCEL, mode });
+    assert.deepEqual(loopCancelRequest(request), { type: LOOP_CANCEL, mode });
+    assert.equal(
+      confirmsLoopCancel(
+        line({ type: "loop_cancelling", loopId: "loop-one", mode }),
+        "loop-one",
+        mode,
+      ),
+      true,
+    );
+    assert.equal(
+      confirmsLoopCancel(
+        line({ type: "loop_cancelling", loopId: "other", mode }),
+        "loop-one",
+        mode,
+      ),
+      false,
+    );
+  }
+  assert.equal(loopCancelRequest(line({ type: LOOP_CANCEL, mode: "later" })), undefined);
 });
 
 test("only this run's cancelling reply confirms a cancel", () => {
