@@ -825,6 +825,106 @@ test("--trust does not change a local launch", async () => {
   assert.equal(resultOf(await waitForEnd(home, s.out().trim())), "success");
 });
 
+test("a mixed-case repo trust entry launches without --trust", async () => {
+  const { base, repo, home, env } = await setup();
+  const fixture = await makeGitFixture({ "manifest.yaml": markerManifest("trusted-repo") });
+  const tmp = await privateTmp(base);
+  await mkdir(home, { recursive: true });
+  await writeFile(
+    join(home, "trust.yaml"),
+    "formatVersion: 1\nrepos:\n  - GITHUB.COM/ACME/LOOPS\n",
+  );
+  try {
+    const s = session();
+    assert.equal(
+      await launchCommand(
+        ["github:acme/loops", "-d"],
+        cli,
+        s.io,
+        { ...env, ...fixture.env, TMPDIR: tmp },
+        { repository: repo },
+      ),
+      0,
+      s.err(),
+    );
+    assert.equal(resultOf(await waitForEnd(home, s.out().trim())), "success");
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("an owner trust entry launches a repository below that owner", async () => {
+  const { base, repo, home, env } = await setup();
+  const fixture = await makeGitFixture(
+    { "manifest.yaml": markerManifest("trusted-owner") },
+    "a/b/x",
+    "https://gitlab.com/",
+  );
+  const tmp = await privateTmp(base);
+  await mkdir(home, { recursive: true });
+  await writeFile(join(home, "trust.yaml"), "formatVersion: 1\nowners:\n  - gitlab.com/a\n");
+  try {
+    const s = session();
+    assert.equal(
+      await launchCommand(
+        ["git+https://gitlab.com/a/b/x", "-d"],
+        cli,
+        s.io,
+        { ...env, ...fixture.env, TMPDIR: tmp },
+        { repository: repo },
+      ),
+      0,
+      s.err(),
+    );
+    assert.equal(resultOf(await waitForEnd(home, s.out().trim())), "success");
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("a broken trust list refuses remote launches even with --trust and stays unchanged", async () => {
+  const { repo, home, env } = await setup();
+  await mkdir(home, { recursive: true });
+  const path = join(home, "trust.yaml");
+  for (const contents of [
+    "formatVersion: [\n",
+    "formatVersion: 2\n",
+    "formatVersion: 1\nunknown: true\n",
+  ]) {
+    await writeFile(path, contents);
+    const s = session();
+    assert.equal(
+      await launchCommand(["github:acme/loops", "--trust"], cli, s.io, env, {
+        repository: repo,
+      }),
+      2,
+    );
+    assert.ok(s.err().startsWith(`error: cannot read trust list ${path}: `), s.err());
+    assert.match(s.err(), /\ncode: untrusted\n/);
+    assert.ok(s.err().endsWith(`help: Fix or remove ${path}.\n`), s.err());
+    assert.equal(await readFile(path, "utf8"), contents);
+    assert.equal(s.out(), "");
+  }
+  await assert.rejects(stat(join(home, "runs")));
+});
+
+test("a local launch ignores a broken trust list", async () => {
+  const { repo, source, home, env } = await setup();
+  await mkdir(home, { recursive: true });
+  const path = join(home, "trust.yaml");
+  await writeFile(path, "formatVersion: [\n");
+  const s = session();
+  assert.equal(
+    await launchCommand([source, "-d", "--input", "issue=42"], cli, s.io, env, {
+      repository: repo,
+    }),
+    0,
+    s.err(),
+  );
+  assert.equal(resultOf(await waitForEnd(home, s.out().trim())), "success");
+  assert.equal(await readFile(path, "utf8"), "formatVersion: [\n");
+});
+
 test("an untrusted GitHub Remote Loopfile refuses without making a run", async () => {
   const { repo, home, env } = await setup();
   const fixture = await makeGitFixture({
