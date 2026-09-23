@@ -100,6 +100,10 @@ loopfile docs manifest   # print one topic
   mkdir -p ~/.claude/skills/loopfile
   loopfile docs skill > ~/.claude/skills/loopfile/SKILL.md
   ```
+- `patterns` ([Loop patterns](docs/loop-patterns.md)): patterns that keep a
+  loop running unattended, such as fix budgets, flaky checks and shared locks.
+- `skill`: an agent skill for writing loops. Install it with
+  `loopfile docs skill > ~/.claude/skills/loopfile/SKILL.md`.
 
 ## License
 

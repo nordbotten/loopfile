@@ -316,7 +316,11 @@ allowed. A name is an `input.<name>`, a `<step>.<output>`, `$history.<key>`, or
 a field of the current `each` or `with` item. `$history.<key>` is allowed only
 for a declared input or output. Its entries are oldest first; `value`,
 `attemptId`, `outcome`, `index`, `newest`, and `new` are always set. `new` marks
-a value put since the step's prior attempt. `$history.input.<name>` has one entry
+a value put since the step's prior attempt. The prior attempt is the reading
+step's own, so when several steps read the same history, for example one fix
+step for each cause, `new` also marks values that another step has already
+handled. Test `$run.previous.data.<step>.<output>` to find the value that sent
+the run here, and `newest` to find it in the history. `$history.input.<name>` has one entry
 with empty `attemptId` and `outcome`. `$run` gives `runId`, `loopfileName`,
 `startedAt`, `repositoryPath`, `branch`, `baseCommit`, `transitions`,
 `maxTransitions`, and `runTimeout`; its two limits are `""` when omitted.

@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { RemoteSource } from "../application/source.ts";
@@ -13,11 +13,17 @@ export interface FetchedRemote {
 /** A Git command failed before a Remote Loopfile could be returned. */
 export class RemoteFetchError extends Error {
   readonly stderr: string;
+  readonly code: "bad_argument" | "operation_failed";
 
-  constructor(message: string, stderr = message) {
+  constructor(
+    message: string,
+    stderr = message,
+    code: "bad_argument" | "operation_failed" = "operation_failed",
+  ) {
     super(message);
     this.name = "RemoteFetchError";
     this.stderr = stderr;
+    this.code = code;
   }
 }
 
@@ -27,40 +33,84 @@ export async function fetchRemote(
   env: Record<string, string | undefined> = process.env,
 ): Promise<FetchedRemote> {
   const gitEnv = { ...env, GIT_LFS_SKIP_SMUDGE: "1" };
-  const sha = await defaultBranchSha(source.url, gitEnv);
+  const sha = await resolveRef(source, gitEnv);
   // The caller's TMPDIR, so a test (or a sandbox) can keep the fetch out of the shared temp folder.
   const temporary = await mkdtemp(join(env.TMPDIR || tmpdir(), "loopfile-remote-"));
-  const path = join(temporary, "repo");
+  const repository = join(temporary, "repo");
   try {
-    await mkdir(path);
-    await git(["init", "-q"], path, gitEnv);
-    await git(
-      ["fetch", "-q", "--depth", "1", "--filter=blob:none", "--no-tags", source.url, sha],
-      path,
-      gitEnv,
-    );
-    await git(["-c", "advice.detachedHead=false", "checkout", "-q", "FETCH_HEAD"], path, gitEnv);
+    const path = await checkoutRemote(source, sha, gitEnv, repository);
+    return { path, sha, cleanup: () => rm(temporary, { recursive: true, force: true }) };
   } catch (error) {
     await rm(temporary, { recursive: true, force: true });
     throw error;
   }
-  return {
-    path,
-    sha,
-    cleanup: () => rm(temporary, { recursive: true, force: true }),
-  };
 }
 
-async function defaultBranchSha(
-  url: string,
+async function checkoutRemote(
+  source: RemoteSource,
+  sha: string,
+  env: Record<string, string | undefined>,
+  repository: string,
+): Promise<string> {
+  await mkdir(repository);
+  await git(["init", "-q"], repository, env);
+  if (source.path !== undefined) {
+    await git(["sparse-checkout", "set", "--no-cone", `/${source.path}`], repository, env);
+  }
+  await git(
+    ["fetch", "-q", "--depth", "1", "--filter=blob:none", "--no-tags", source.url, sha],
+    repository,
+    env,
+  );
+  await git(["-c", "advice.detachedHead=false", "checkout", "-q", "FETCH_HEAD"], repository, env);
+  const path = source.path === undefined ? repository : join(repository, source.path);
+  if (source.path !== undefined) await assertSourcePath(source, path, sha);
+  return path;
+}
+
+async function assertSourcePath(source: RemoteSource, path: string, sha: string): Promise<void> {
+  try {
+    await stat(path);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code !== "ENOENT" && code !== "ENOTDIR") throw error;
+    throw new RemoteFetchError(
+      `path ${source.path} not found in ${source.host}/${source.repo} at ${sha.slice(0, 7)}`,
+      undefined,
+      "bad_argument",
+    );
+  }
+}
+
+async function resolveRef(
+  source: RemoteSource,
   env: Record<string, string | undefined>,
 ): Promise<string> {
-  const result = await git(["ls-remote", url, "HEAD"], undefined, env);
-  const sha = result.stdout.trim().split(/\s+/, 1)[0];
-  if (sha === undefined || !/^[0-9a-f]{40}$/i.test(sha)) {
-    throw new RemoteFetchError(`git ls-remote returned no full HEAD SHA for ${url}`);
+  const result = await git(["ls-remote", source.url], undefined, env);
+  const refs = new Map<string, string>();
+  for (const line of result.stdout.trim().split("\n")) {
+    const [sha, ref] = line.trim().split(/\s+/, 2);
+    if (sha !== undefined && ref !== undefined && /^[0-9a-f]{40}$/i.test(sha)) {
+      refs.set(ref, sha.toLowerCase());
+    }
   }
-  return sha;
+  if (source.ref === undefined) {
+    const sha = refs.get("HEAD");
+    if (sha !== undefined) return sha;
+    throw new RemoteFetchError(`git ls-remote returned no full HEAD SHA for ${source.url}`);
+  }
+
+  const tag = `refs/tags/${source.ref}`;
+  const tagSha = refs.get(tag);
+  if (tagSha !== undefined) return refs.get(`${tag}^{}`) ?? tagSha;
+  const branchSha = refs.get(`refs/heads/${source.ref}`);
+  if (branchSha !== undefined) return branchSha;
+  if (/^[0-9a-f]{40}$/i.test(source.ref)) return source.ref.toLowerCase();
+  throw new RemoteFetchError(
+    `ref ${source.ref} not found in ${source.host}/${source.repo}`,
+    undefined,
+    "bad_argument",
+  );
 }
 
 interface GitResult {

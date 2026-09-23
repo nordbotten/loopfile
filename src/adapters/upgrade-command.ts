@@ -13,7 +13,6 @@
 import { chmod, mkdtemp, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createInterface } from "node:readline/promises";
 import { parseArgs } from "node:util";
 import type { LoadResult, LoopfileRoot } from "../application/load-workflow.ts";
 import {
@@ -36,7 +35,7 @@ import {
   MANIFEST_NAME,
   materializePacked,
 } from "./directory-loader.ts";
-import { classifyInput, InputError, type InputKind, readStdin } from "./input.ts";
+import { askOnTerminal, classifyInput, InputError, type InputKind, readStdin } from "./input.ts";
 import { writeArchive } from "./pack-command.ts";
 
 export interface UpgradeIo {
@@ -71,18 +70,6 @@ export function terminalUpgradeIo(
     isTTY: process.stdin.isTTY === true && process.stdout.isTTY === true,
     ask: askOnTerminal,
   };
-}
-
-async function askOnTerminal(question: string): Promise<string | null> {
-  const lines = createInterface({ input: process.stdin, output: process.stdout });
-  try {
-    return await new Promise<string | null>((resolve) => {
-      lines.once("close", () => resolve(null));
-      void lines.question(question).then(resolve);
-    });
-  } finally {
-    lines.close();
-  }
 }
 
 /** The foreground check a launch calls before it starts a run. */
