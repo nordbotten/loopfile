@@ -133,6 +133,8 @@ steps:
   assert.equal(result.code, 0, result.err);
   assert.equal(result.out, `${testCase.runId}\n`);
   assert.match(result.err, new RegExp(`^continued: ${testCase.runId}\\n`));
+  const end = await waitForEnd(testCase.paths, parseEventLog(logBefore).at(-1)?.seq);
+  assert.equal(end.type, "run.ended");
   const all = await events(testCase.paths);
   const added = all.slice(parseEventLog(logBefore).length);
   assert.deepEqual(
@@ -148,10 +150,6 @@ steps:
   assert.ok(workspace.startsWith(testCase.paths.root));
   assert.equal(all.filter((event) => event.type === "attempt.started").length, 2);
   assert.equal(all.filter((event) => event.type === "run.continued").length, 1);
-  assert.equal(
-    (await waitForEnd(testCase.paths, parseEventLog(logBefore).at(-1)?.seq)).type,
-    "run.ended",
-  );
 });
 
 test("continue replaces a cancelled attempt even when its prior attempt limit was reached", async () => {
@@ -252,7 +250,7 @@ steps:
     on:
       blocked: $failure
       done: $success
-    run: 'if [ "$LOOPFILE_ATTEMPT_ID" = "001-work" ]; then loopfile result blocked; else loopfile result done; fi'
+    run: 'if [ "$LOOPFILE_ATTEMPT_ID" = "001-work" ]; then node ${cli} result blocked; else node ${cli} result done; fi'
 `;
   const testCase = await launch(manifest);
   const stopped = await waitForEnd(testCase.paths);
@@ -281,7 +279,7 @@ steps:
     on:
       again: work
       done: $success
-    run: 'if [ "$LOOPFILE_ATTEMPT_ID" = "001-work" ]; then loopfile result again; else loopfile result done; fi'
+    run: 'if [ "$LOOPFILE_ATTEMPT_ID" = "001-work" ]; then node ${cli} result again; else node ${cli} result done; fi'
 `;
   const testCase = await launch(manifest);
   const stopped = await waitForEnd(testCase.paths);
@@ -516,7 +514,7 @@ test("the replacement prompt keeps the previous transition and data, changing on
 steps:
   - id: prep
     kind: command
-    run: 'printf same-data > saved.txt; loopfile data put prep.note saved.txt'
+    run: 'printf same-data > saved.txt; node ${cli} data put prep.note saved.txt'
     outputs: [note]
   - id: review
     kind: agent
