@@ -105,7 +105,10 @@ async function remoteFolders(): Promise<readonly string[]> {
 async function waitForRemoteFolders(expected: readonly string[]): Promise<void> {
   for (let tries = 0; tries < 100; tries += 1) {
     const actual = await remoteFolders();
-    if (actual.length === expected.length && actual.every((name, index) => name === expected[index]))
+    if (
+      actual.length === expected.length &&
+      actual.every((name, index) => name === expected[index])
+    )
       return;
     await new Promise((resolve) => setTimeout(resolve, 20));
   }
