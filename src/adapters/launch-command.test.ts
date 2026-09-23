@@ -183,6 +183,89 @@ async function detached(source: string, home: string, env: NodeJS.ProcessEnv, re
   return { runId, events, paths: runPaths(home, runId) };
 }
 
+test("GitHub browser links launch the default branch, folders, slash refs, blobs and SHAs", async () => {
+  const setupResult = await setup();
+  const fixture = await makeGitFixture({
+    "manifest.yaml": markerManifest("root-link"),
+    "sub/manifest.yaml": markerManifest("main-folder"),
+    "sub/dir/manifest.yaml": markerManifest("nested-folder"),
+    "a/x.loop": markerManifest("blob-file"),
+    "a/readme.txt": "not a Loopfile\n",
+  });
+  const tmp = await privateTmp(setupResult.base);
+  try {
+    const baseSha = (
+      await run("git", ["rev-parse", "HEAD"], { cwd: fixture.repository })
+    ).stdout.trim();
+    await run("git", ["tag", "v1", baseSha], { cwd: fixture.repository, env: fixture.env });
+    await run("git", ["switch", "-q", "-c", "feature/x"], {
+      cwd: fixture.repository,
+      env: fixture.env,
+    });
+    await writeFile(join(fixture.repository, "sub/manifest.yaml"), markerManifest("slash-branch"));
+    await run("git", ["commit", "-a", "-q", "-m", "slash branch"], {
+      cwd: fixture.repository,
+      env: fixture.env,
+    });
+    const branchSha = (
+      await run("git", ["rev-parse", "HEAD"], { cwd: fixture.repository })
+    ).stdout.trim();
+    await run("git", ["switch", "-q", "main"], { cwd: fixture.repository, env: fixture.env });
+
+    for (const [source, marker] of [
+      ["https://github.com/acme/loops", "root-link"],
+      ["https://github.com/acme/loops/tree/main/sub/dir", "nested-folder"],
+      ["https://github.com/acme/loops/tree/feature/x/sub", "slash-branch"],
+      ["https://github.com/acme/loops/blob/v1/a/x.loop", "blob-file"],
+      [`https://github.com/acme/loops/tree/${branchSha}/sub`, "slash-branch"],
+      [`https://github.com/acme/loops/tree/${branchSha.slice(0, 7)}/sub`, "slash-branch"],
+    ] as const) {
+      const paths = await launchRemoteAndWait(source, setupResult, fixture.env, tmp);
+      assert.equal(await readFile(join(paths.workspace, "marker.txt"), "utf8"), marker, source);
+    }
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("GitHub browser links refuse unsupported paths, non-.loop blobs and unknown refs", async () => {
+  const setupResult = await setup();
+  const fixture = await makeGitFixture({
+    "manifest.yaml": markerManifest("unused"),
+    "a/readme.txt": "not a Loopfile\n",
+  });
+  try {
+    for (const [source, message] of [
+      [
+        "https://github.com/acme/loops/blob/main/a/readme.txt",
+        "a /blob/ link must name a .loop file",
+      ],
+      ["https://github.com/acme/loops/issues/1", "unsupported GitHub browser URL path"],
+      [
+        "https://github.com/acme/loops/tree/no-such-ref/sub",
+        "no branch, tag or commit in no-such-ref/sub",
+      ],
+    ] as const) {
+      const s = session();
+      assert.equal(
+        await launchCommand(
+          [source, "--trust"],
+          cli,
+          s.io,
+          { ...setupResult.env, ...fixture.env },
+          { repository: setupResult.repo },
+        ),
+        2,
+        source,
+      );
+      assert.ok(s.err().includes(`error: ${message}`), s.err());
+      assert.match(s.err(), /code: bad_argument/);
+    }
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
 test("a trusted GitHub Remote Loopfile runs and uses the repository name", async () => {
   const { base, repo, home, env } = await setup();
   const fixture = await makeGitFixture({
