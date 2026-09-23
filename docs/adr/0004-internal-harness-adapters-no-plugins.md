@@ -22,7 +22,7 @@ v1 loads no third-party code. There is no plugin API. Harnesses are added as har
 - **Public dynamic plugin API in v1:** each later change breaks outside code, and there are no outside users to design for.
 - **Interfaces for all four parts:** workspace and data store have only one version each, so the interfaces would only guess at the future.
 - **Adapter returns the outcome:** each adapter would need its own output parsing, and agent steps would route differently from command steps.
-- **Hook files in the workspace (as firstmate does):** puts run files in the target repository's worktree, where the agent can change or commit them.
+- **Hook files in the workspace (as firstmate does):** would make run files part of the workspace, where the agent can change or commit them.
 - **Pseudo-terminal support in the executor:** needed only for harnesses that must be typed into (Kimi and Rovo in firstmate). It makes the executor, and a later Docker executor, much larger.
 - **Per-adapter stop step:** harnesses that run without a terminal stop on a signal.
 

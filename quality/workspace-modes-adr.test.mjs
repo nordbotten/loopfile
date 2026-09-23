@@ -4,6 +4,27 @@ import { test } from "node:test";
 
 const ADR = new URL("../docs/adr/0014-workspace-modes.md", import.meta.url);
 const text = await readFile(ADR, "utf8");
+const context = await readFile(new URL("../CONTEXT.md", import.meta.url), "utf8");
+const adr0001 = await readFile(
+  new URL("../docs/adr/0001-node-typescript-stack.md", import.meta.url),
+  "utf8",
+);
+const adr0002 = await readFile(
+  new URL("../docs/adr/0002-normalized-runtime-model.md", import.meta.url),
+  "utf8",
+);
+const adr0003 = await readFile(
+  new URL("../docs/adr/0003-event-log-run-state.md", import.meta.url),
+  "utf8",
+);
+const adr0004 = await readFile(
+  new URL("../docs/adr/0004-internal-harness-adapters-no-plugins.md", import.meta.url),
+  "utf8",
+);
+const adr0011 = await readFile(
+  new URL("../docs/adr/0011-operator-contract.md", import.meta.url),
+  "utf8",
+);
 
 test("ADR 0014 exists and follows the neighboring ADR structure", () => {
   assert.match(text, /^# Workspace modes\n\n[\s\S]+?\n## Decisions\n/m);
@@ -24,7 +45,8 @@ test("the ADR defines each mode, the isolate fallback, defaults, records and cle
   assert.match(text, /`run\.created` records `workspacePath` and `workspaceMode` for every run/);
   assert.match(text, /`empty` omits it/);
   assert.match(text, /Only an `isolate` worktree records `branch` and `baseCommit`/);
-  assert.match(text, /a successful run removes only an `isolate` worktree/);
+  assert.match(text, /a successful run attempts to remove only an `isolate` worktree/);
+  assert.match(text, /If Git refuses, it stays and the reason is reported/);
   assert.match(text, /An `isolate` copy and an `empty` folder stay/);
   assert.match(text, /removed only when asked through `remove` or `prune`/);
 });
@@ -46,4 +68,47 @@ test("the ADR records that here runs may share a folder", () => {
   assert.match(text, /Loopfile has no lock/);
   assert.match(text, /two `here` runs in one folder are allowed/);
   assert.match(text, /write to the same folder/);
+});
+
+test("CONTEXT defines Workspace mode and Target folder", () => {
+  assert.match(context, /^\*\*Workspace mode\*\*:/m);
+  assert.match(context, /`here`, `isolate` or `empty`/);
+  assert.match(context, /^\*\*Target folder\*\*:/m);
+  assert.doesNotMatch(context, /^\*\*Target repository\*\*:/m);
+});
+
+test("CONTEXT workspace lifecycle terms match the shipped modes", () => {
+  assert.match(
+    context,
+    /In `isolate`, it is a worktree when Git can make one, otherwise a full copy/,
+  );
+  assert.match(context, /exists only for an `isolate` worktree/);
+  assert.match(context, /same workspace and, if it has one, the same Run branch/);
+  assert.match(context, /successful run attempts to remove its isolate worktree/);
+  assert.match(context, /In `here`, only the run folder is deleted/);
+  assert.match(
+    context,
+    /an isolate worktree with uncommitted changes refuses removal unless `remove --force`/,
+  );
+});
+
+test("the workspace-related ADR edits match shipped behavior", () => {
+  assert.match(adr0003, /every run records `workspacePath` and `workspaceMode`/);
+  assert.match(adr0003, /Only an `isolate` worktree records `branch`[^.]*`baseCommit`/);
+  assert.match(adr0003, /A successful run attempts to remove its isolate worktree/);
+  assert.match(adr0011, /`workspace: <mode> · <path>`/);
+  assert.match(adr0011, /Target folder when it has one/);
+  assert.match(adr0011, /successful run attempts to remove its isolate worktree/);
+  assert.match(
+    adr0011,
+    /an isolate worktree with uncommitted changes refuses removal unless `remove --force`/,
+  );
+  assert.match(adr0001, /Git is optional for workspace modes: every mode works without it/);
+  assert.match(adr0002, /outside the run's workspace/);
+  assert.match(adr0004, /part of the workspace/);
+});
+
+test("Isolate kind stays an event field, not a glossary term", () => {
+  assert.doesNotMatch(context, /^\*\*Isolate kind\*\*:/im);
+  assert.match(adr0003, /An `isolate` run also records `isolateKind` as `worktree` or `copy`/);
 });

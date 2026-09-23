@@ -1,6 +1,6 @@
 # Loaders build one normalized model from a materialized Loopfile
 
-Directory, thin `.loop` and packed `.loop` inputs are all loaded into one internal model. Workflow execution, routing, executors and run state depend only on that model. They never read YAML or know which input type a run came from. At launch, the input is first turned into a materialized Loopfile: a run-owned, fixed copy outside the target repository. The model is built from it. This keeps manifest syntax and versioning changes inside the loaders, and makes "which Loopfile did this run use?" exact.
+Directory, thin `.loop` and packed `.loop` inputs are all loaded into one internal model. Workflow execution, routing, executors and run state depend only on that model. They never read YAML or know which input type a run came from. At launch, the input is first turned into a materialized Loopfile: a run-owned, fixed copy outside the run's workspace. The model is built from it. This keeps manifest syntax and versioning changes inside the loaders, and makes "which Loopfile did this run use?" exact.
 
 ## Decisions
 

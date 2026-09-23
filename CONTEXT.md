@@ -127,7 +127,7 @@ Stop the current attempt of a running run from outside it, with `loopfile interr
 _Avoid_: Retry, restart, kill
 
 **Continue**:
-Make an ended run go on, with `loopfile continue`. It is the same run, on the same branch and workspace. The step that stopped the run gets a new attempt with the same inputs, as after an interrupt, and the run's limits count again from the continue. A completed run cannot continue. A crashed run resumes instead.
+Make an ended run go on, with `loopfile continue`. It is the same run and uses the same workspace and, if it has one, the same Run branch. The step that stopped the run gets a new attempt with the same inputs, as after an interrupt, and the run's limits count again from the continue. A completed run cannot continue. A crashed run resumes instead.
 _Avoid_: Retry (a loop's new run for a failed run), restart, rerun
 
 **Materialized Loopfile**:
@@ -145,18 +145,21 @@ The one process that carries out a run's steps and the only one that writes its 
 The one process that carries out a loop: it starts each run and is the only writer of the loop's event log. It runs in the background, attached or detached.
 
 **Target folder**:
-The folder a run works from: the launch folder in `here` mode; in `isolate`, the Git top level when the launch folder is inside a repository, or the launch folder otherwise. `empty` runs have no Target folder. Run state never lives inside it.
+The folder a run works from: the launch folder in `here` mode; in `isolate`, the Git top level when the launch folder is inside a repository and Git is available, or the launch folder otherwise. `empty` runs have no Target folder. Run state never lives inside it.
 _Avoid_: Target repository
 
+**Workspace mode**:
+The choice of where all steps in a run work: `here`, `isolate` or `empty`. It can be set by the optional top-level `workspace:` field in a Manifest or overridden with `--workspace <mode>` at launch or for a loop. The default is `isolate`.
+
 **Workspace**:
-Where all steps in a run work, selected by its workspace mode. In `here`, it is the Target folder itself. In `isolate`, it is a Git worktree when Git can make one, otherwise a full copy of the Target folder. In `empty`, it is a new empty folder with no Target files.
+Where all steps in a run work. In `here`, it is the Target folder itself. In `isolate`, it is a worktree when Git can make one, otherwise a full copy of the Target folder. In `empty`, it is a new empty folder with no Target files.
 _Avoid_: Checkout, sandbox
 
 **Run branch**:
-The branch `loopfile/<runid>` for an isolate worktree. It is the run's product and Loopfile never deletes it; `here` and `empty` runs have none.
+The branch `loopfile/<runid>` exists only for an `isolate` worktree. It is the run's product and Loopfile never deletes it; other workspace modes and isolate copies have none.
 
 **Remove**:
-Deleting one run's folder and any workspace Loopfile made because someone asked for it. In `here`, only the run folder is deleted. The run branch stays. Loopfile never removes a run on its own.
+Deleting a run's folder and any retained workspace folder Loopfile made, with `remove` or `prune`. A successful run attempts to remove its isolate worktree; if Git refuses, it stays. In `here`, only the run folder is deleted; the Target folder is left alone. An isolate copy or empty workspace is deleted directly; an isolate worktree with uncommitted changes refuses removal unless `remove --force`. The run branch stays. Loopfile never removes a run on its own.
 _Avoid_: Delete, clean, abandon
 
 **Prune**:
