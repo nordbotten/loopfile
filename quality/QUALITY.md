@@ -166,9 +166,13 @@ and any change no test complains about is a hole a coverage number cannot see.
 
 `node --test` writes TAP, so it uses Stryker's tap runner with per-test
 coverage. Each test file counts as one test, and a mutant runs only the test
-files that reach it. End-to-end tests that start processes or build git
-repositories are left out, because a mutant that makes a run hang costs a full
-timeout. If it stops being fast, scope the run rather than lower the bar.
+files that reach it. End-to-end tests that start processes, import the fake
+harness, build git repositories or wait on real timers are left out, because a
+mutant that makes a run hang costs a full timeout. The exclusion list in
+`stryker.config.mjs` includes every tracked test importing `node:child_process`
+or `./fake-harness.test.ts`; `quality-tools.test.mjs` checks that rule. `gate`
+and `check` still run these files. If mutation testing stops being fast, scope
+the run rather than lower the bar.
 
 A branch that changes no `CORE` file mutates nothing and passes, and the bar
 applies to the changed files only. So a change that only removes or weakens
