@@ -166,12 +166,14 @@ async function printLoop(
   const read = await readLoopForCommand(loopId, env);
   if ("code" in read) return fail(err, read);
 
-  const state = await derivedLoopState(read.status, env, options);
+  const now = currentTime(options);
+  const state = await derivedLoopState(read.status, env, options, now);
   const observed = await observeLoopRuns(read.runs, env, options);
   const view = buildLoopStatusView(
     read.status,
     state,
     observed.map(({ run }) => run),
+    now,
   );
   const currentStep = observed.find(
     ({ run }) => run.runId === read.status.currentRunId && run.state === "running",
@@ -186,19 +188,20 @@ type ObservedLoopRun = {
   readonly step: string | null;
 };
 
+function currentTime(options: StatusOptions): string {
+  return (options.now?.() ?? new Date()).toISOString();
+}
+
 async function derivedLoopState(
   status: LoopStatus,
   env: NodeJS.ProcessEnv,
   options: StatusOptions,
+  now: string,
 ) {
   const alive =
     status.state !== "running" ||
     (await pingLoopOwner(status.loopId, env, options.pingTimeoutMs)) === status.loopId;
-  return deriveLoopListEntry({
-    status,
-    alive,
-    now: (options.now?.() ?? new Date()).toISOString(),
-  }).state;
+  return deriveLoopListEntry({ status, alive, now }).state;
 }
 
 async function observeLoopRuns(
