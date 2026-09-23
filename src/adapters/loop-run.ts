@@ -14,7 +14,7 @@ import { parseEventLog } from "../application/replay.ts";
 import { parseStatusProjection } from "../application/status.ts";
 import type { LoopCancelMode, LoopEvent, LoopRunStarted, LoopSource } from "../domain/events.ts";
 import type { Workflow } from "../domain/model.ts";
-import type { LoopStatus } from "../domain/status.ts";
+import type { LoopStatus, StatusProjection } from "../domain/status.ts";
 import { loadDirectory } from "./directory-loader.ts";
 import { type EventLog, type NewEvent, openEventLog } from "./event-log.ts";
 import { type StartRunOptions, type StartRunResult, startRun } from "./launch-command.ts";
@@ -28,6 +28,8 @@ export interface RunLoopDeps {
   readonly cli: string;
   /** The loop owner's environment, passed unchanged to every child owner. */
   readonly env: Record<string, string | undefined>;
+  /** Pass `--kill-leftovers` through when resuming a crashed child. */
+  readonly killLeftovers?: boolean;
   /** Overridable for tests and for another owner implementation. */
   readonly startRun?: (options: StartRunOptions) => Promise<StartRunResult>;
   /** Overridable for tests; production checks children every 500 ms. */
@@ -129,6 +131,7 @@ export async function runLoop(
       deps,
       log,
       history,
+      resuming: history.filter((event) => event.type === "owner.started").length > 1,
       loopfilePath: paths.loopfile,
       statusPath: paths.status,
     });
@@ -168,11 +171,13 @@ interface LoopDriver {
   readonly deps: RunLoopDeps;
   readonly log: EventLog<LoopEvent>;
   readonly history: LoopEvent[];
+  readonly resuming: boolean;
   readonly loopfilePath: string;
   readonly statusPath: string;
 }
 
 async function driveLoop(driver: LoopDriver): Promise<LoopStatus> {
+  let resumeCrashedChild = driver.resuming;
   for (;;) {
     if (await recordCancellation(driver)) continue;
     const status = loopStatus(driver.history);
@@ -191,7 +196,9 @@ async function driveLoop(driver: LoopDriver): Promise<LoopStatus> {
       driver.workflow,
       driver.history,
       driver.created.pauseMs,
+      resumeCrashedChild,
     );
+    resumeCrashedChild = false;
     if (driver.deps.cancelRequests?.hasPending()) continue;
     const ended = await performLoopAction(action, status, driver);
     if (ended !== undefined) return ended;
@@ -218,6 +225,7 @@ async function performLoopAction(
   status: LoopStatus,
   driver: LoopDriver,
 ): Promise<LoopStatus | undefined> {
+  if (action.kind === "resume_child") return await resumeChild(action.runId, driver);
   if (action.kind === "wait") {
     await waitForChild(
       driver.home,
@@ -318,6 +326,45 @@ async function launchStartedChild(
   return undefined;
 }
 
+async function resumeChild(runId: string, driver: LoopDriver): Promise<LoopStatus | undefined> {
+  const args = [driver.deps.cli, "resume", runId, "-d"];
+  if (driver.deps.killLeftovers === true) args.push("--kill-leftovers");
+  const error = await resumeRunOwner(args, driver);
+  if (error !== undefined) {
+    return await appendEnd(driver.log, driver.history, driver.statusPath, {
+      kind: "end",
+      reason: "internal_error",
+      detail: error,
+    });
+  }
+  await waitForChild(driver.home, runId, driver.deps.pollMs, driver.deps.cancelRequests);
+  return undefined;
+}
+
+function resumeRunOwner(args: readonly string[], driver: LoopDriver): Promise<string | undefined> {
+  return new Promise((resolve) => {
+    const child = spawn(process.execPath, args, {
+      cwd: driver.created.repositoryPath,
+      env: driver.deps.env,
+      stdio: ["ignore", "ignore", "pipe"],
+    });
+    let stderr = "";
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (chunk: string) => {
+      stderr += chunk;
+    });
+    child.once("error", (error) => resolve(error.message));
+    child.once("close", (code, signal) => {
+      if (code === 0) return resolve(undefined);
+      const summary = stderr.split("\n").find((line) => line.startsWith("error: "));
+      resolve(
+        summary?.slice("error: ".length) ??
+          `loopfile resume ${args[2]} exited ${signal ?? String(code)}`,
+      );
+    });
+  });
+}
+
 async function appendEnd(
   log: EventLog<LoopEvent>,
   history: LoopEvent[],
@@ -362,8 +409,12 @@ async function nextAction(
   workflow: Workflow | undefined,
   history: readonly LoopEvent[],
   pauseMs: number | null,
+  resuming: boolean,
 ): Promise<ReturnType<typeof nextLoopAction>> {
-  const options: NextLoopActionOptions = { pauseMs };
+  const options: NextLoopActionOptions = {
+    pauseMs,
+    resumeCrashedChild: resuming,
+  };
   if (status.maxRuns !== null && status.runs >= status.maxRuns) {
     return nextLoopAction(status, child, source, undefined, workflow, history, options);
   }
@@ -477,15 +528,25 @@ async function childState(home: string, runId: string): Promise<LastChild> {
   if (!(await pathExists(paths.root))) return { state: "not_started", runId };
   const childStatus = await readChildStatus(paths.status);
   if (childStatus !== undefined && childStatus.state !== "running") {
-    return { state: childStatus.state, runId };
+    return lastChildFromStatus(childStatus, runId);
   }
   if ((await pingOwner(paths.socket)) === runId) return { state: "running", runId };
   // The run may have ended while the ping waited: its owner writes the final
   // status before it closes the socket, so read the status again before
   // calling the run crashed.
   const final = await readChildStatus(paths.status);
-  if (final !== undefined && final.state !== "running") return { state: final.state, runId };
+  if (final !== undefined && final.state !== "running") return lastChildFromStatus(final, runId);
   return { state: "crashed", runId };
+}
+
+function lastChildFromStatus(status: StatusProjection, runId: string): LastChild {
+  return {
+    state:
+      status.state === "failed" && status.endReason === "internal_error"
+        ? "internal_error"
+        : status.state,
+    runId,
+  };
 }
 
 async function waitForChild(

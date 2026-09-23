@@ -350,7 +350,7 @@ test("ADR 0011 records cancel without a mode as a second no-terminal exception",
   );
 });
 
-test("cancelling a child run ends its loop as failed with run_failed", async () => {
+test("cancelling a child run ends its loop as cancelled without a mode", async () => {
   const setupResult = await setup("sleep 60");
   try {
     const loopId = await startLoop(setupResult);
@@ -362,8 +362,10 @@ test("cancelling a child run ends its loop as failed with run_failed", async () 
     const end = events.at(-1);
     assert.equal(end?.type, "loop.ended");
     if (end?.type === "loop.ended") {
-      assert.equal(end.reason, "run_failed");
+      assert.equal(end.reason, "cancelled");
       assert.equal(end.result, "failure");
+      assert.equal(end.detail, `run ${runId} cancelled`);
+      assert.equal(end.cancelMode, undefined);
     }
   } finally {
     await removeAfterOwnersExit(setupResult.dir);

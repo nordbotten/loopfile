@@ -1756,7 +1756,10 @@ test("a nested Git launch records its top level and creates an isolate worktree 
   assert.equal(created.branch, `loopfile/${runId}`);
   assert.ok(created.baseCommit);
   assert.equal(
-    (await run("git", ["branch", "--list", `loopfile/${runId}`], { cwd: repo })).stdout.trim(),
+    (await run("git", ["branch", "--list", `loopfile/${runId}`], { cwd: repo })).stdout
+      .trim()
+      .split(/\s+/)
+      .at(-1),
     `loopfile/${runId}`,
   );
 });

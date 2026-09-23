@@ -18,6 +18,17 @@ const SAMPLE_BYTES = 8192;
 /** Thrown when a path is not a Loopfile input. The message names the path. */
 export class InputError extends Error {}
 
+/** True unless stat confirms that the path does not exist. */
+export async function sourceExists(path: string): Promise<boolean> {
+  try {
+    await stat(path);
+    return true;
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    return code !== "ENOENT" && code !== "ENOTDIR";
+  }
+}
+
 /** Reads all of stdin into one buffer. */
 export function readStdin(): Promise<Buffer> {
   return new Promise<Buffer>((resolve, reject) => {

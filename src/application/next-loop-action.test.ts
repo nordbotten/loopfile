@@ -103,6 +103,31 @@ test("starts the first run with fixed inputs", () => {
   });
 });
 
+test("does not pause twice when the event log records a pause without a later run", () => {
+  const history: LoopEvent[] = [
+    started("run-one", { project: "loopfile" }, 1),
+    {
+      seq: 3,
+      at: "2026-09-22T10:00:01.000Z",
+      type: "loop.paused",
+      until: "2026-09-22T10:00:02.000Z",
+    },
+    { seq: 4, at: "2026-09-22T10:00:01.100Z", type: "owner.started", pid: 42, host: "box" },
+  ];
+  assert.deepEqual(
+    nextLoopAction(
+      status,
+      { state: "completed", runId: "run-one" },
+      undefined,
+      undefined,
+      undefined,
+      history,
+      pauseOptions,
+    ),
+    { kind: "start", inputSet: { project: "loopfile" }, sourceIndex: 2 },
+  );
+});
+
 test("pauses before the second and later runs", () => {
   assert.deepEqual(
     nextLoopAction(
@@ -292,8 +317,24 @@ test("a failed run with no retries left ends the loop", () => {
 test("does not retry a cancelled child", () => {
   assert.deepEqual(
     nextLoopAction({ ...status, retry: 1 }, { state: "cancelled", runId: "run-one" }),
-    { kind: "end", reason: "run_failed", detail: "run run-one cancelled" },
+    { kind: "end", reason: "cancelled", detail: "run run-one cancelled" },
   );
+});
+
+test("resumes a crashed or internal-error child only when recovering a loop", () => {
+  for (const state of ["crashed", "internal_error"] as const) {
+    assert.deepEqual(
+      nextLoopAction(status, { state, runId: "run-one" }, undefined, undefined, undefined, [], {
+        resumeCrashedChild: true,
+      }),
+      { kind: "resume_child", runId: "run-one" },
+    );
+  }
+  assert.deepEqual(action({ state: "crashed", runId: "run-one" }), {
+    kind: "end",
+    reason: "internal_error",
+    detail: "child run run-one crashed",
+  });
 });
 
 test("starts next runs from the command result and resolves defaults", () => {
@@ -476,14 +517,17 @@ test("ends cancelled without starting or retrying when no child is running", () 
   }
 });
 
-test("ends on a failed or cancelled child", () => {
-  for (const state of ["failed", "cancelled"] as const) {
-    assert.deepEqual(action({ state, runId: "run-one" }), {
-      kind: "end",
-      reason: "run_failed",
-      detail: `run run-one ${state}`,
-    });
-  }
+test("ends a failed child as failed and a cancelled child as cancelled", () => {
+  assert.deepEqual(action({ state: "failed", runId: "run-one" }), {
+    kind: "end",
+    reason: "run_failed",
+    detail: "run run-one failed",
+  });
+  assert.deepEqual(action({ state: "cancelled", runId: "run-one" }), {
+    kind: "end",
+    reason: "cancelled",
+    detail: "run run-one cancelled",
+  });
 });
 
 test("ends when a child owner has crashed", () => {

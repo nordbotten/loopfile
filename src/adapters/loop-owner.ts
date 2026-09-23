@@ -21,6 +21,9 @@ export async function loopOwnerCommand(
   }
 
   const home = loopfileHome(env as NodeJS.ProcessEnv);
+  const ownerEnv = { ...env };
+  const killLeftovers = ownerEnv.LOOPFILE_KILL_LEFTOVERS === "1";
+  delete ownerEnv.LOOPFILE_KILL_LEFTOVERS;
   const paths = loopPaths(home, loopId);
   const cancelRequests = createLoopCancelRequests();
   try {
@@ -39,7 +42,7 @@ export async function loopOwnerCommand(
       },
     });
     try {
-      await runLoop(home, loopId, { cli, env, cancelRequests });
+      await runLoop(home, loopId, { cli, env: ownerEnv, killLeftovers, cancelRequests });
     } finally {
       cancelRequests.close();
       await owner.close();

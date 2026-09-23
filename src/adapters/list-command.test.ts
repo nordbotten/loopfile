@@ -150,6 +150,7 @@ test("list shows a run as a table row and exits 0", async () => {
   const code = await listCommand(["list"], r.out, r.err, env, false);
   assert.equal(code, 0);
   assert.match(r.output, new RegExp(runId));
+  assert.doesNotMatch(r.output.split("\n")[0] ?? "", /remote/i);
   assert.equal(r.output.includes(ESC), false);
   assert.equal(r.errors, "");
 });
@@ -215,8 +216,41 @@ test("--json carries the format version and one entry per run, with no ANSI", as
   assert.equal(code, 0);
   const parsed = JSON.parse(r.output);
   assert.equal(parsed.formatVersion, 1);
-  assert.ok(parsed.runs.some((entry: { runId: string }) => entry.runId === runId));
+  const entry = parsed.runs.find((row: { runId: string }) => row.runId === runId);
+  assert.equal(entry.remote, null);
   assert.equal(r.output.includes(ESC), false);
+});
+
+test("--json gives each run its remote record or null", async () => {
+  const listHome = join(home, "remote-json");
+  const remoteId = "20260917-161010-rmaa";
+  const localId = "20260917-161011-rmab";
+  const remote = {
+    host: "github.com",
+    repo: "acme/loops",
+    path: "review",
+    ref: "main",
+    sha: "4c9d077abcde1234567890abcdef1234567890ab",
+  };
+  for (const [runId, value] of [
+    [remoteId, remote],
+    [localId, undefined],
+  ] as const) {
+    await mkdir(runPaths(listHome, runId).root, { recursive: true });
+    await writeFile(
+      runPaths(listHome, runId).status,
+      JSON.stringify(statusBody(runId, value === undefined ? {} : { remote: value })),
+    );
+  }
+
+  const r = runner();
+  assert.equal(
+    await listCommand(["list", "--json"], r.out, r.err, { LOOPFILE_HOME: listHome }, false),
+    0,
+  );
+  const runs = JSON.parse(r.output).runs;
+  assert.deepEqual(runs.find((run: { runId: string }) => run.runId === remoteId).remote, remote);
+  assert.equal(runs.find((run: { runId: string }) => run.runId === localId).remote, null);
 });
 
 test("an unreadable event log uses the operator failure block and exit 2", async () => {

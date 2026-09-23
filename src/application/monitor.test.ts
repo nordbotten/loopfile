@@ -75,6 +75,23 @@ test("a live view shows every line in order", () => {
   );
 });
 
+test("a remote run keeps the attached monitor's run line unchanged", () => {
+  const text = render({
+    kind: "live",
+    status: status({
+      remote: {
+        host: "github.com",
+        repo: "acme/loops",
+        path: "review",
+        ref: "main",
+        sha: "4c9d077abcde1234567890abcdef1234567890ab",
+      },
+    }),
+  });
+  assert.equal(text.split("\n")[0], `run       ${RUN} · fix-bugs`);
+  assert.doesNotMatch(text, /^remote:/m);
+});
+
 test("null metrics show unknown and 0 shows 0", () => {
   const nulls = {
     inputTokens: null,

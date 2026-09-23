@@ -29,6 +29,34 @@ export class RemoteFetchError extends Error {
   }
 }
 
+/** The shared operator errors for Git's missing executable and fetch failures. */
+export function remoteFetchOperatorFailure(
+  remote: Pick<RemoteSource, "host" | "repo">,
+  error: unknown,
+): { readonly code: "git_missing" | "fetch_failed"; readonly stderr: string } | undefined {
+  if (!(error instanceof RemoteFetchError)) return undefined;
+  if (error.code === "git_missing") {
+    return {
+      code: "git_missing",
+      stderr:
+        "error: git is not on PATH\n" +
+        "code: git_missing\n" +
+        "help: Install git to run a Remote Loopfile. Local sources do not need it.\n",
+    };
+  }
+  if (error.code === "fetch_failed") {
+    return {
+      code: "fetch_failed",
+      stderr:
+        `error: cannot fetch ${remote.host}/${remote.repo}\n` +
+        `${error.stderr ? `${error.stderr}\n` : ""}` +
+        "code: fetch_failed\n" +
+        "help: Check the name and your access to the repository.\n",
+    };
+  }
+  return undefined;
+}
+
 /** Fetches one Git repository without running anything from it. */
 export async function fetchRemote(
   source: RemoteSource,

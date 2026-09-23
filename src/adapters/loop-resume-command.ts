@@ -30,6 +30,7 @@ export interface LoopResumeOptions extends LoopCommandOptions {
 interface LoopResumeArgs {
   readonly loopId?: string;
   readonly detach: boolean;
+  readonly killLeftovers: boolean;
   readonly help: boolean;
 }
 
@@ -65,7 +66,10 @@ export async function loopResumeCommand(
   const started = await startDetachedOwner({
     ownerId: loopId,
     paths: check.paths,
-    ownerEnv: env,
+    ownerEnv: {
+      ...env,
+      LOOPFILE_KILL_LEFTOVERS: args.killLeftovers ? "1" : "",
+    },
     cli,
     ownerCommand: "__loop-owner",
     ownerKind: "loop",
@@ -186,6 +190,7 @@ function parseArgsForLoopResume(argv: readonly string[]): LoopResumeArgs | undef
     return {
       ...(positionals[0] === undefined ? {} : { loopId: positionals[0] }),
       detach: values.detach === true,
+      killLeftovers: values["kill-leftovers"] === true,
       help: values.help === true,
     };
   } catch {

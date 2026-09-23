@@ -8,10 +8,12 @@ import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { parseEventLog } from "../application/replay.ts";
-import type { LoopEvent } from "../domain/events.ts";
+import type { LoopEvent, RunEvent } from "../domain/events.ts";
+import { cancelCommand } from "./cancel-command.ts";
 import { materializeDirectory } from "./directory-loader.ts";
 import { openEventLog } from "./event-log.ts";
 import { loopCommand } from "./loop-command.ts";
+import { loopResumeCommand } from "./loop-resume-command.ts";
 import type { MonitorIo } from "./monitor.ts";
 import { removeAfterOwnersExit } from "./owner-cleanup.test.ts";
 import { programIdentity } from "./program-identity.ts";
@@ -100,6 +102,12 @@ async function events(home: string, loopId: string): Promise<readonly LoopEvent[
   return parseEventLog<LoopEvent>(await readFile(loopPaths(home, loopId).events, "utf8"));
 }
 
+async function runEvents(home: string, runId: string): Promise<readonly RunEvent[]> {
+  return parseEventLog<RunEvent>(
+    await readFile(runPaths(home, runId).events, "utf8").catch(() => ""),
+  );
+}
+
 async function until<T>(read: () => Promise<T | undefined>, what: string): Promise<T> {
   for (let tries = 0; tries < 1000; tries += 1) {
     const value = await read();
@@ -115,6 +123,450 @@ async function waitForEnd(home: string, loopId: string): Promise<readonly LoopEv
     return history.at(-1)?.type === "loop.ended" ? history : undefined;
   }, "loop.ended");
 }
+
+test("loop resume help describes the loop command", async () => {
+  const captured = session();
+  assert.equal(await loopResumeCommand(["resume", "--help"], cli, captured.io, {}), 0);
+  assert.match(captured.out(), /Resume a crashed loop/);
+  assert.equal(captured.err(), "");
+});
+
+test("resume waits only for the remainder of a recorded loop pause", async () => {
+  const setupResult = await setup(`formatVersion: 1
+steps:
+  - id: work
+    kind: command
+    run: 'true'
+`);
+  const { loopId } = await startLoop(setupResult, ["--times", "2", "--pause", "3s", "-d"]);
+  const pause = await until(async () => {
+    const event = (await events(setupResult.home, loopId)).find(
+      (item) => item.type === "loop.paused",
+    );
+    return event?.type === "loop.paused" ? event : undefined;
+  }, "loop to pause");
+  await new Promise((resolve) => setTimeout(resolve, 1000));
+
+  const owner = (await events(setupResult.home, loopId)).findLast(
+    (event) => event.type === "owner.started",
+  );
+  if (owner?.type !== "owner.started") throw new Error("loop owner did not start");
+  process.kill(owner.pid, "SIGKILL");
+
+  const resumedAt = Date.now();
+  const resumed = await resume([loopId, "-d"], setupResult.env);
+  assert.equal(resumed.code, 0, resumed.err);
+  const nextRun = await until(async () => {
+    const event = (await events(setupResult.home, loopId)).find(
+      (item) => item.type === "loop.run_started" && item.index === 2,
+    );
+    return event?.type === "loop.run_started" ? event : undefined;
+  }, "next run to start");
+  const delay = Date.parse(nextRun.at) - resumedAt;
+  const remaining = Date.parse(pause.until) - resumedAt;
+  assert.ok(remaining >= 1500 && remaining < 2400, `pause had ${remaining}ms left`);
+  assert.ok(delay >= 1500 && delay < 2800, `next run started after ${delay}ms`);
+  assert.equal(
+    (await waitForEnd(setupResult.home, loopId)).filter((event) => event.type === "loop.paused")
+      .length,
+    1,
+  );
+});
+
+test("resume restarts a child whose owner crashed and then continues the loop", async () => {
+  const marker = join(root, "resume-child-running");
+  const counter = join(root, "resume-child-count");
+  const setupResult = await setup(`formatVersion: 1
+steps:
+  - id: work
+    kind: command
+    run: ${JSON.stringify(`n=$(cat '${counter}' 2>/dev/null || printf 0); n=$((n + 1)); printf '%s\\n' "$n" > '${counter}'; if [ "$n" = 1 ]; then : > '${marker}'; sleep 0.5; fi`)}
+`);
+  const { loopId } = await startLoop(setupResult, ["--times", "2", "-d"]);
+  const first = await until(async () => {
+    const event = (await events(setupResult.home, loopId)).find(
+      (item) => item.type === "loop.run_started" && item.index === 1,
+    );
+    return event?.type === "loop.run_started" ? event : undefined;
+  }, "first child to start");
+  const runOwner = await until(async () => {
+    const event = (await runEvents(setupResult.home, first.runId)).find(
+      (item) => item.type === "owner.started",
+    );
+    return event?.type === "owner.started" ? event : undefined;
+  }, "first child owner to start");
+  await until(
+    () =>
+      stat(marker).then(
+        () => true,
+        () => undefined,
+      ),
+    "first child command to run",
+  );
+  const loopOwner = (await events(setupResult.home, loopId)).find(
+    (event) => event.type === "owner.started",
+  );
+  assert.equal(loopOwner?.type, "owner.started");
+  if (loopOwner?.type === "owner.started") process.kill(loopOwner.pid, "SIGKILL");
+  process.kill(runOwner.pid, "SIGKILL");
+  await new Promise((resolve) => setTimeout(resolve, 600));
+
+  const resumed = await resume([loopId], setupResult.env);
+  assert.equal(resumed.code, 0, resumed.err);
+  const history = await waitForEnd(setupResult.home, loopId);
+  const started = history.filter((event) => event.type === "loop.run_started");
+  assert.equal(started.length, 2);
+  assert.equal(started[0]?.type === "loop.run_started" ? started[0].runId : undefined, first.runId);
+  const childHistory = await runEvents(setupResult.home, first.runId);
+  assert.equal(childHistory.filter((event) => event.type === "owner.started").length, 2);
+  assert.ok(childHistory.some((event) => event.type === "attempt.interrupted"));
+  assert.equal(childHistory.at(-1)?.type, "run.ended");
+  assert.equal((await readFile(counter, "utf8")).trim(), "3");
+});
+
+test("resume resumes an internal-error child before continuing the loop", async () => {
+  const marker = join(root, "resume-internal-error-running");
+  const counter = join(root, "resume-internal-error-count");
+  const setupResult = await setup(`formatVersion: 1
+steps:
+  - id: work
+    kind: command
+    run: ${JSON.stringify(`n=$(cat '${counter}' 2>/dev/null || printf 0); n=$((n + 1)); printf '%s\\n' "$n" > '${counter}'; if [ "$n" = 1 ]; then : > '${marker}'; sleep 0.4; fi`)}
+`);
+  const { loopId } = await startLoop(setupResult, ["--times", "2", "-d"]);
+  const first = await until(async () => {
+    const event = (await events(setupResult.home, loopId)).find(
+      (item) => item.type === "loop.run_started",
+    );
+    return event?.type === "loop.run_started" ? event : undefined;
+  }, "child to start");
+  const runOwner = await until(async () => {
+    const event = (await runEvents(setupResult.home, first.runId)).find(
+      (item) => item.type === "owner.started",
+    );
+    return event?.type === "owner.started" ? event : undefined;
+  }, "child owner to start");
+  await until(
+    () =>
+      stat(marker).then(
+        () => true,
+        () => undefined,
+      ),
+    "child command to run",
+  );
+  const loopOwner = (await events(setupResult.home, loopId)).find(
+    (event) => event.type === "owner.started",
+  );
+  assert.equal(loopOwner?.type, "owner.started");
+  if (loopOwner?.type === "owner.started") process.kill(loopOwner.pid, "SIGKILL");
+  process.kill(runOwner.pid, "SIGKILL");
+  await new Promise((resolve) => setTimeout(resolve, 500));
+
+  const childPaths = runPaths(setupResult.home, first.runId);
+  const childLog = await openEventLog<RunEvent>(childPaths.events);
+  await childLog.append({ type: "run.ended", result: "failure", reason: "internal_error" });
+  await childLog.close();
+  const projection = JSON.parse(await readFile(childPaths.status, "utf8"));
+  await writeFile(
+    childPaths.status,
+    `${JSON.stringify({ ...projection, state: "failed", endReason: "internal_error" })}\n`,
+  );
+
+  const resumed = await resume([loopId], setupResult.env);
+  assert.equal(resumed.code, 0, resumed.err);
+  const childHistory = await runEvents(setupResult.home, first.runId);
+  assert.equal(childHistory.filter((event) => event.type === "owner.started").length, 2);
+  assert.ok(childHistory.some((event) => event.type === "attempt.interrupted"));
+  assert.equal(childHistory.at(-1)?.type, "run.ended");
+  assert.equal((await readFile(counter, "utf8")).trim(), "3");
+});
+
+test("a child crash after loop recovery still ends the live loop with internal_error", async () => {
+  const marker = join(root, "live-loop-child-running");
+  const counter = join(root, "live-loop-child-count");
+  const killLoopOwner = `pid=$(grep -m 1 '"type":"owner.started"' "$LOOPFILE_HOME"/loops/*/events.jsonl | sed -E 's/.*"pid":([0-9]+).*/\\1/'); kill -KILL "$pid"`;
+  const setupResult = await setup(`formatVersion: 1
+steps:
+  - id: work
+    kind: command
+    run: ${JSON.stringify(`n=$(cat '${counter}' 2>/dev/null || printf 0); n=$((n + 1)); printf '%s\\n' "$n" > '${counter}'; if [ "$n" = 1 ]; then ${killLoopOwner}; fi; if [ "$n" = 2 ]; then : > '${marker}'; sleep 30; fi`)}
+`);
+  const { loopId } = await startLoop(setupResult, ["--times", "2", "-d"]);
+  const paths = loopPaths(setupResult.home, loopId);
+  const first = await until(async () => {
+    const event = (await events(setupResult.home, loopId)).find(
+      (item) => item.type === "loop.run_started",
+    );
+    return event?.type === "loop.run_started" ? event : undefined;
+  }, "first child to start");
+  await until(
+    async () =>
+      (await runEvents(setupResult.home, first.runId)).some((event) => event.type === "run.ended")
+        ? true
+        : undefined,
+    "first child to end",
+  );
+  await until(
+    async () => ((await pingOwner(paths.socket, 20)) === undefined ? true : undefined),
+    "first loop owner to stop",
+  );
+
+  const resumed = await resume([loopId, "-d"], setupResult.env);
+  assert.equal(resumed.code, 0, resumed.err);
+  const second = await until(async () => {
+    const event = (await events(setupResult.home, loopId)).find(
+      (item) => item.type === "loop.run_started" && item.index === 2,
+    );
+    return event?.type === "loop.run_started" ? event : undefined;
+  }, "second child to start");
+  const childOwner = await until(async () => {
+    const event = (await runEvents(setupResult.home, second.runId)).find(
+      (item) => item.type === "owner.started",
+    );
+    return event?.type === "owner.started" ? event : undefined;
+  }, "second child owner to start");
+  const attempt = await until(async () => {
+    const event = (await runEvents(setupResult.home, second.runId)).find(
+      (item) => item.type === "attempt.started",
+    );
+    return event?.type === "attempt.started" ? event : undefined;
+  }, "second child attempt to start");
+  await until(
+    () =>
+      stat(marker).then(
+        () => true,
+        () => undefined,
+      ),
+    "second child command to run",
+  );
+
+  try {
+    process.kill(childOwner.pid, "SIGKILL");
+    const history = await waitForEnd(setupResult.home, loopId);
+    const ended = history.at(-1);
+    assert.equal(ended?.type, "loop.ended");
+    if (ended?.type === "loop.ended") {
+      assert.equal(ended.reason, "internal_error");
+      assert.equal(ended.detail, `child run ${second.runId} crashed`);
+    }
+    assert.equal(
+      (await runEvents(setupResult.home, second.runId)).filter(
+        (event) => event.type === "owner.started",
+      ).length,
+      1,
+    );
+  } finally {
+    try {
+      process.kill(-attempt.processGroupId, "SIGKILL");
+    } catch {
+      // The process group may already have exited.
+    }
+  }
+});
+
+test("resume retries a failed child using the loop's retry limit", async () => {
+  const counter = join(root, "resume-failed-child-count");
+  const killLoopOwner = `pid=$(grep -m 1 '"type":"owner.started"' "$LOOPFILE_HOME"/loops/*/events.jsonl | sed -E 's/.*"pid":([0-9]+).*/\\1/'); kill -KILL "$pid"`;
+  const setupResult = await setup(`formatVersion: 1
+steps:
+  - id: work
+    kind: command
+    run: ${JSON.stringify(`n=$(cat '${counter}' 2>/dev/null || printf 0); n=$((n + 1)); printf '%s\\n' "$n" > '${counter}'; if [ "$n" = 1 ]; then ${killLoopOwner}; exit 1; fi`)}
+`);
+  const { loopId } = await startLoop(setupResult, ["--times", "1", "--retry", "1", "-d"]);
+  const first = await until(async () => {
+    const event = (await events(setupResult.home, loopId)).find(
+      (item) => item.type === "loop.run_started",
+    );
+    return event?.type === "loop.run_started" ? event : undefined;
+  }, "failed child to start");
+  await until(
+    async () =>
+      (await runEvents(setupResult.home, first.runId)).some((event) => event.type === "run.ended")
+        ? true
+        : undefined,
+    "failed child to end",
+  );
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.notEqual((await events(setupResult.home, loopId)).at(-1)?.type, "loop.ended");
+
+  const resumed = await resume([loopId], setupResult.env);
+  assert.equal(resumed.code, 0, resumed.err);
+  const history = await waitForEnd(setupResult.home, loopId);
+  const started = history.filter(
+    (event): event is Extract<LoopEvent, { type: "loop.run_started" }> =>
+      event.type === "loop.run_started",
+  );
+  assert.equal(started.length, 2);
+  assert.equal(started[1]?.retryOf, first.runId);
+  assert.equal((await runEvents(setupResult.home, first.runId)).at(-1)?.type, "run.ended");
+  assert.equal((await readFile(counter, "utf8")).trim(), "2");
+});
+
+test("resume ends cancelled after a pending after-run cancel without starting another run", async () => {
+  const setupResult = await setup(`formatVersion: 1
+steps:
+  - id: work
+    kind: command
+    run: 'sleep 0.5'
+`);
+  const { loopId } = await startLoop(setupResult, ["--times", "2", "-d"]);
+  const first = await until(async () => {
+    const event = (await events(setupResult.home, loopId)).find(
+      (item) => item.type === "loop.run_started",
+    );
+    return event?.type === "loop.run_started" ? event : undefined;
+  }, "first child to start");
+  await until(
+    async () =>
+      (await runEvents(setupResult.home, first.runId)).some(
+        (event) => event.type === "attempt.started",
+      )
+        ? true
+        : undefined,
+    "first child attempt to start",
+  );
+  let cancelError = "";
+  assert.equal(
+    await cancelCommand(
+      ["cancel", loopId, "--after-run"],
+      () => undefined,
+      (text) => (cancelError += text),
+      setupResult.env,
+      { answerTimeoutMs: 500, waitMs: 10 },
+    ),
+    0,
+    cancelError,
+  );
+  const loopOwner = (await events(setupResult.home, loopId)).find(
+    (event) => event.type === "owner.started",
+  );
+  assert.equal(loopOwner?.type, "owner.started");
+  if (loopOwner?.type === "owner.started") process.kill(loopOwner.pid, "SIGKILL");
+  await until(
+    async () =>
+      (await runEvents(setupResult.home, first.runId)).some((event) => event.type === "run.ended")
+        ? true
+        : undefined,
+    "first child to complete",
+  );
+
+  const resumed = await resume([loopId], setupResult.env);
+  assert.equal(resumed.code, 1, resumed.err);
+  const history = await waitForEnd(setupResult.home, loopId);
+  assert.equal(history.filter((event) => event.type === "loop.run_started").length, 1);
+  const end = history.at(-1);
+  assert.equal(end?.type, "loop.ended");
+  if (end?.type === "loop.ended") {
+    assert.equal(end.reason, "cancelled");
+    assert.equal(end.detail, undefined);
+    assert.equal(end.cancelMode, "after_run");
+  }
+});
+
+test("loop resume passes --kill-leftovers to the child run resume", async () => {
+  const marker = join(root, "resume-kill-leftovers-running");
+  const counter = join(root, "resume-kill-leftovers-count");
+  const setupResult = await setup(`formatVersion: 1
+steps:
+  - id: work
+    kind: command
+    run: ${JSON.stringify(`n=$(cat '${counter}' 2>/dev/null || printf 0); n=$((n + 1)); printf '%s\\n' "$n" > '${counter}'; if [ "$n" = 1 ]; then : > '${marker}'; sleep 30; fi`)}
+`);
+  const { loopId } = await startLoop(setupResult, ["--times", "1", "-d"]);
+  const first = await until(async () => {
+    const event = (await events(setupResult.home, loopId)).find(
+      (item) => item.type === "loop.run_started",
+    );
+    return event?.type === "loop.run_started" ? event : undefined;
+  }, "child to start");
+  const runOwner = await until(async () => {
+    const event = (await runEvents(setupResult.home, first.runId)).find(
+      (item) => item.type === "owner.started",
+    );
+    return event?.type === "owner.started" ? event : undefined;
+  }, "child owner to start");
+  await until(
+    () =>
+      stat(marker).then(
+        () => true,
+        () => undefined,
+      ),
+    "child command to run",
+  );
+  const loopOwner = (await events(setupResult.home, loopId)).find(
+    (event) => event.type === "owner.started",
+  );
+  assert.equal(loopOwner?.type, "owner.started");
+  if (loopOwner?.type === "owner.started") process.kill(loopOwner.pid, "SIGKILL");
+  process.kill(runOwner.pid, "SIGKILL");
+
+  const resumed = await resume([loopId, "--kill-leftovers"], setupResult.env);
+  assert.equal(resumed.code, 0, resumed.err);
+  const childHistory = await runEvents(setupResult.home, first.runId);
+  assert.ok(childHistory.some((event) => event.type === "attempt.interrupted"));
+  assert.equal((await readFile(counter, "utf8")).trim(), "2");
+  const history = await waitForEnd(setupResult.home, loopId);
+  const end = history.at(-1);
+  assert.equal(end?.type, "loop.ended");
+  if (end?.type === "loop.ended") assert.equal(end.reason, "source_empty");
+});
+
+test("resume reports a child resume refusal as a loop internal error", async () => {
+  const setupResult = await setup(`formatVersion: 1
+steps:
+  - id: work
+    kind: command
+    run: 'sleep 30'
+`);
+  const { loopId } = await startLoop(setupResult, ["--times", "1", "-d"]);
+  const first = await until(async () => {
+    const event = (await events(setupResult.home, loopId)).find(
+      (item) => item.type === "loop.run_started",
+    );
+    return event?.type === "loop.run_started" ? event : undefined;
+  }, "child to start");
+  const runOwner = await until(async () => {
+    const event = (await runEvents(setupResult.home, first.runId)).find(
+      (item) => item.type === "owner.started",
+    );
+    return event?.type === "owner.started" ? event : undefined;
+  }, "child owner to start");
+  const attempt = await until(async () => {
+    const event = (await runEvents(setupResult.home, first.runId)).find(
+      (item) => item.type === "attempt.started",
+    );
+    return event?.type === "attempt.started" ? event : undefined;
+  }, "child attempt to start");
+  const loopOwner = (await events(setupResult.home, loopId)).find(
+    (event) => event.type === "owner.started",
+  );
+  assert.equal(loopOwner?.type, "owner.started");
+  if (loopOwner?.type === "owner.started") process.kill(loopOwner.pid, "SIGKILL");
+  process.kill(runOwner.pid, "SIGKILL");
+
+  try {
+    const resumed = await resume([loopId], setupResult.env);
+    assert.equal(resumed.code, 1, resumed.err);
+    const history = await waitForEnd(setupResult.home, loopId);
+    const ended = history.at(-1);
+    assert.equal(ended?.type, "loop.ended");
+    if (ended?.type === "loop.ended") {
+      assert.equal(ended.reason, "internal_error");
+      assert.equal(
+        ended.detail,
+        `attempt ${attempt.attemptId} still has processes in process group ${attempt.processGroupId}. ` +
+          `Stop them with \`kill -KILL -- -${attempt.processGroupId}\`, or run \`loopfile resume ${first.runId} --kill-leftovers\`.`,
+      );
+    }
+  } finally {
+    try {
+      process.kill(-attempt.processGroupId, "SIGKILL");
+    } catch {
+      // The process group may already have exited.
+    }
+  }
+});
 
 test("resume waits for a running second child, starts the third, and completes with three runs", async () => {
   const setupResult = await setup(`formatVersion: 1
