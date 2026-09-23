@@ -84,8 +84,9 @@ async function until<T>(read: () => Promise<T | undefined>, what: string): Promi
   throw new Error(`timed out waiting for ${what}`);
 }
 
+/** Waits for the end event and then for the owner to close its socket, so continue does not see it alive. */
 async function waitForEnd(paths: RunPaths, afterSeq = 0) {
-  return await until(
+  const ended = await until(
     async () =>
       (await events(paths)).findLast(
         (event) =>
@@ -93,6 +94,11 @@ async function waitForEnd(paths: RunPaths, afterSeq = 0) {
       ),
     "run to end",
   );
+  await until(
+    async () => ((await pingOwner(paths.socket, 20)) === undefined ? true : undefined),
+    "the owner to stop answering",
+  );
+  return ended;
 }
 
 async function continueRun(runId: string, env: NodeJS.ProcessEnv) {
