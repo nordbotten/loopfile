@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
 import { copyFile, mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -16,11 +17,10 @@ import { loopPaths, runPaths } from "./run-directory.ts";
 import { pingOwner } from "./run-owner.ts";
 import { tailCommand } from "./tail-command.ts";
 
+const { version } = createRequire(import.meta.url)("../../package.json") as { version: string };
+
 const run = promisify(execFile);
 const cli = fileURLToPath(new URL("../cli.ts", import.meta.url));
-const packageVersion = JSON.parse(
-  await readFile(new URL("../../package.json", import.meta.url), "utf8"),
-).version as string;
 /**
  * The ping bound for an attached loop. A gone owner refuses the connection at
  * once and a live one answers, so this bound only ends a ping to a live owner
@@ -473,7 +473,7 @@ test("a changed CLI ends a loop before its second run", async () => {
     assert.equal(ended?.type === "loop.ended" ? ended.reason : undefined, "program_changed");
     assert.equal(
       ended?.type === "loop.ended" ? ended.detail : undefined,
-      `loopfile changed from ${packageVersion} to ${packageVersion}`,
+      `loopfile changed from ${version} to ${version}`,
     );
     assert.equal(events.filter((event) => event.type === "loop.run_started").length, 1);
     await waitForOwnerGone(setupResult.home, loopId);
