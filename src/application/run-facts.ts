@@ -1,12 +1,15 @@
 import type { RunEvent } from "../domain/events.ts";
-import type { AttemptId, Step, StepId, Workflow } from "../domain/model.ts";
+import type { AttemptId, Step, StepId, Workflow, WorkspaceMode } from "../domain/model.ts";
 import type { PromptDataView } from "./prompt-fill.ts";
+import { type RunLocation, runLocation } from "./run-location.ts";
 
 export interface RunFacts extends PromptDataView {
   readonly runId: string;
   readonly loopfileName: string;
   readonly startedAt: string;
   readonly targetFolder: string;
+  readonly workspace: string;
+  readonly workspaceMode: WorkspaceMode | "";
   readonly branch: string;
   readonly baseCommit: string;
   readonly transitions: number;
@@ -84,13 +87,10 @@ export function runFacts(
   };
 }
 
-interface RunDetails {
+interface RunDetails extends RunLocation {
   readonly runId: string;
   readonly loopfileName: string;
   readonly startedAt: string;
-  readonly targetFolder: string;
-  readonly branch: string;
-  readonly baseCommit: string;
 }
 
 type Created = Extract<RunEvent, { type: "run.created" }>;
@@ -105,14 +105,6 @@ function runIdentity(created: Created | undefined, loopfileName: string) {
     runId: created?.runId ?? "",
     loopfileName,
     startedAt: created?.at ?? "",
-  };
-}
-
-function runLocation(created: Created | undefined) {
-  return {
-    targetFolder: created?.targetFolder ?? "",
-    branch: created?.branch ?? "",
-    baseCommit: created?.baseCommit ?? "",
   };
 }
 

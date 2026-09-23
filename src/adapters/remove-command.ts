@@ -12,7 +12,7 @@ import type { RunEvent } from "../domain/events.ts";
 import { groupAlive } from "./local-executor.ts";
 import { loopfileHome, pathExists, type RunPaths, runPaths } from "./run-directory.ts";
 import { pingOwner } from "./run-owner.ts";
-import { pruneWorktrees, removeWorkspace } from "./workspace.ts";
+import { pruneWorktrees, removeWorkspace, workspaceFromCreated } from "./workspace.ts";
 
 const USAGE = "Usage: loopfile remove <runid> [--kill-leftovers] [--force]";
 const HELP = `${USAGE}
@@ -212,27 +212,20 @@ async function removeFiles(
   force: boolean,
 ): Promise<RemoveResult> {
   try {
+    const workspace = workspaceFromCreated(created, paths.workspace);
     if (!(await pathExists(created.targetFolder))) {
       await rm(paths.root, { recursive: true, force: true });
       return {
         ok: true,
         runId: created.runId,
-        branch: created.branch,
+        branch: workspace.branch,
         warning: `warning: target repository is gone: ${created.targetFolder}\n`,
       };
     }
-    if (!(await pathExists(paths.workspace))) {
+    if (!(await pathExists(workspace.path))) {
       await pruneWorktrees(created.targetFolder);
     } else {
-      const removed = await removeWorkspace(
-        {
-          path: paths.workspace,
-          repositoryPath: created.targetFolder,
-          baseCommit: created.baseCommit,
-          branch: created.branch,
-        },
-        force,
-      );
+      const removed = await removeWorkspace(workspace, force);
       if (!removed.removed) {
         return refused(
           `workspace of run ${created.runId} is dirty: ${removed.reason}`,
@@ -243,7 +236,7 @@ async function removeFiles(
       }
     }
     await rm(paths.root, { recursive: true, force: true });
-    return { ok: true, runId: created.runId, branch: created.branch };
+    return { ok: true, runId: created.runId, branch: workspace.branch };
   } catch (error) {
     return refused(
       error instanceof Error ? error.message : String(error),

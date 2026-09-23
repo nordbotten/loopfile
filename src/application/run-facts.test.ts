@@ -36,6 +36,8 @@ const created = {
   eventFormatVersion: 1,
   modelDigest: "digest",
   targetFolder: "/repo",
+  workspacePath: "/run/workspace",
+  workspaceMode: "isolate",
   baseCommit: "base",
   branch: "loopfile/run-1",
   seq: 1,
@@ -52,7 +54,7 @@ const started = (attemptId: string, at: string, stepId = "work"): RunEvent =>
     at,
   }) as RunEvent;
 
-test("run facts count this step's visits and expose only declared limits", () => {
+test("run facts expose workspace details and fill absent branch facts", () => {
   const facts = runFacts(
     [created, started("001-work", "first"), started("002-work", "second")],
     step,
@@ -67,6 +69,8 @@ test("run facts count this step's visits and expose only declared limits", () =>
     loopfileName: "",
     startedAt: "created",
     targetFolder: "/repo",
+    workspace: "/run/workspace",
+    workspaceMode: "isolate",
     branch: "loopfile/run-1",
     baseCommit: "base",
     transitions: 0,
@@ -112,6 +116,24 @@ test("run facts count this step's visits and expose only declared limits", () =>
     },
     previous: "",
   });
+
+  const withoutGitFacts: RunEvent = {
+    type: "run.created",
+    runId: "legacy",
+    eventFormatVersion: 1,
+    modelDigest: "digest",
+    targetFolder: "/repo",
+    inputs: [],
+    seq: 1,
+    at: "created",
+  };
+  const missing = runFacts([withoutGitFacts], step, {
+    attemptId: "001-work",
+    stepId: "work",
+    startedAt: "started",
+  });
+  assert.equal(missing.branch, "");
+  assert.equal(missing.baseCommit, "");
 });
 
 test("run facts list earlier attempts and declared run limits", () => {

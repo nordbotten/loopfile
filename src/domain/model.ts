@@ -57,6 +57,9 @@ export type OutputName = string;
 /** A launch input's name, read under `input.<name>`, matching `NAME_PATTERN`. */
 export type InputName = string;
 
+/** Workspace modes accepted by this release. */
+export type WorkspaceMode = "isolate";
+
 /** Where a run ends. */
 export type EndState = "$success" | "$failure";
 
@@ -132,6 +135,8 @@ export type Step = AgentStep | RalphStep | CommandStep;
 /** One loaded Loopfile's workflow. */
 export interface Workflow {
   readonly formatVersion: typeof FORMAT_VERSION;
+  /** Omitted in older manifests; the application resolves that to `isolate`. */
+  readonly workspaceMode?: WorkspaceMode;
   /**
    * Input name to its one-line description. Every input is read under the data
    * key `input.<name>`. Empty when the workflow takes none.

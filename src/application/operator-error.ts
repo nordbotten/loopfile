@@ -1,3 +1,5 @@
+import type { WorkspaceMode } from "../domain/model.ts";
+
 /** The closed failure vocabulary available to an operator. */
 export type OperatorErrorCode =
   | "no_such_run"
@@ -29,6 +31,15 @@ export interface OperatorFailure {
 export interface RenderedOperatorFailure {
   readonly stderr: string;
   readonly exitCode: 1 | 2;
+}
+
+/** Renders the launch confirmation with its selected workspace. */
+export function renderLaunchConfirmation(runId: string, mode: WorkspaceMode, path: string): string {
+  return renderOperatorConfirmation({
+    started: runId,
+    workspace: `${mode} · ${path}`,
+    branch: `loopfile/${runId}`,
+  });
 }
 
 /** Renders an AXI confirmation block. */

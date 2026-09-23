@@ -530,6 +530,67 @@ test("loop --times starts a detached owner and two command runs", async () => {
   }
 });
 
+test("loop --workspace carries its mode to every child run", async () => {
+  const setupResult = await setup(`formatVersion: 1
+workspace: isolate
+steps:
+  - id: work
+    kind: command
+    run: exit 0
+`);
+  try {
+    const captured = io();
+    assert.equal(
+      await loopCommand(
+        ["loop", setupResult.source, "--times", "1", "--workspace", "isolate", "-d"],
+        cli,
+        captured.value,
+        setupResult.env,
+        { repository: setupResult.repo },
+      ),
+      0,
+      captured.errors(),
+    );
+    const loopId = captured.output().trim();
+    const events = await waitForEnd(setupResult.home, loopId);
+    const created = events[0];
+    assert.equal(created?.type === "loop.created" ? created.workspaceMode : undefined, "isolate");
+    const child = events.find((event) => event.type === "loop.run_started");
+    assert.ok(child?.type === "loop.run_started");
+    const runEvents = parseEventLog(
+      await readFile(runPaths(setupResult.home, child.runId).events, "utf8"),
+    );
+    const runCreated = runEvents[0];
+    assert.equal(
+      runCreated?.type === "run.created" ? runCreated.workspaceMode : undefined,
+      "isolate",
+    );
+  } finally {
+    await removeAfterOwnersExit(setupResult.root);
+  }
+});
+
+test("loop rejects unsupported workspace modes before making a loop", async () => {
+  const setupResult = await setup();
+  try {
+    const captured = io();
+    assert.equal(
+      await loopCommand(
+        ["loop", setupResult.source, "--times", "1", "--workspace", "here", "-d"],
+        cli,
+        captured.value,
+        setupResult.env,
+        { repository: setupResult.repo },
+      ),
+      2,
+    );
+    assert.match(captured.errors(), /--workspace must be one of: isolate/);
+    await assert.rejects(stat(join(setupResult.home, "loops")));
+  } finally {
+    await removeAfterOwnersExit(setupResult.root);
+  }
+});
+
 test("pauses between runs and exposes the pause in status", async () => {
   const setupResult = await setup();
   try {

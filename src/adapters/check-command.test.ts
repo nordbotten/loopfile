@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
@@ -55,6 +55,42 @@ test("a valid manifest and its inputs produce an empty JSON result without a run
   assert.equal(io.output, "[]\n");
   assert.equal(io.errors, "");
   await assert.rejects(stat(join(root, "runs")));
+});
+
+test("check rejects unsupported workspace modes without inspecting the target or invoking Git", async () => {
+  const directory = await source(`formatVersion: 1
+workspace: empty
+steps:
+  - id: work
+    kind: command
+    run: echo ok
+`);
+  const target = join(root, `plain-target-${count++}`);
+  const bin = join(root, `bin-${count++}`);
+  const gitCalled = join(root, `git-called-${count++}`);
+  await mkdir(target);
+  await mkdir(bin);
+  const fakeGit = join(bin, "git");
+  await writeFile(fakeGit, `#!/bin/sh\nprintf called > '${gitCalled}'\n`);
+  await chmod(fakeGit, 0o755);
+  const oldCwd = process.cwd();
+  const oldPath = process.env.PATH;
+  process.chdir(target);
+  process.env.PATH = `${bin}${oldPath === undefined ? "" : `:${oldPath}`}`;
+  try {
+    const io = capture();
+    assert.equal(await checkCommand(["check", directory, "--json"], io.out, io.err), 1);
+    assert.deepEqual(JSON.parse(io.output), [
+      { path: "workspace", line: 2, message: "workspace must be one of: isolate" },
+    ]);
+    assert.equal(io.errors, "");
+    assert.deepEqual(await readdir(target), []);
+    await assert.rejects(stat(gitCalled), { code: "ENOENT" });
+  } finally {
+    process.chdir(oldCwd);
+    if (oldPath === undefined) delete process.env.PATH;
+    else process.env.PATH = oldPath;
+  }
 });
 
 test("JSON check returns every loader problem with its path and line", async () => {

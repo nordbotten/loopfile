@@ -1,8 +1,10 @@
 /** The operator's read-only result view over a run event log (#226). */
 
 import type { RunEvent } from "../domain/events.ts";
+import type { WorkspaceMode } from "../domain/model.ts";
 import type { RunLifecycle, StatusEndReason, StatusMetrics } from "../domain/status.ts";
 import { replay } from "./replay.ts";
+import { runLocation } from "./run-location.ts";
 import { lifecycleOf, UNKNOWN_METRICS } from "./status-projection.ts";
 
 export const RESULT_FORMAT_VERSION = 1;
@@ -62,6 +64,8 @@ export interface ResultView {
   readonly startedAt: string;
   readonly endedAt: string | null;
   readonly targetFolder: string;
+  readonly workspace: string;
+  readonly workspaceMode: WorkspaceMode | "";
   readonly branch: string;
   readonly baseCommit: string;
   readonly metrics: StatusMetrics;
@@ -98,9 +102,7 @@ export function buildResultView(
     endReason: lifecycle.endReason,
     startedAt: created.at,
     endedAt: ended?.at ?? null,
-    targetFolder: created.targetFolder,
-    branch: created.branch,
-    baseCommit: created.baseCommit,
+    ...runLocation(created),
     metrics: resultMetrics(events, metrics),
     lastOutcome: outcome === undefined ? null : lastOutcome(events, outcome),
     inputs: values.inputs,
@@ -127,7 +129,11 @@ export function renderResultView(view: ResultView): string {
       "ended",
       view.endedAt === null ? "not yet" : `${view.endReason ?? "unknown"} at ${view.endedAt}`,
     ),
-    resultLine("repository", view.targetFolder),
+    resultLine("target", view.targetFolder),
+    resultLine(
+      "workspace",
+      view.workspaceMode === "" ? view.workspace : `${view.workspaceMode} · ${view.workspace}`,
+    ),
     resultLine("branch", view.branch),
     resultLine("base commit", view.baseCommit),
     resultLine("last outcome", outcomeText(view.lastOutcome)),
