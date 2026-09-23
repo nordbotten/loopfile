@@ -8,10 +8,10 @@ import { CorruptEventLogError, parseEventLog, replay } from "../application/repl
 import { modelDigest } from "../application/workflow-run.ts";
 import type { RunEvent } from "../domain/events.ts";
 import { type LaunchIo, type LaunchOptions, startOwner } from "./launch-command.ts";
+import { CONTINUE_ENV } from "./owner-command.ts";
 import { loopfileHome, pathExists, runPaths } from "./run-directory.ts";
 import { pingOwner } from "./run-owner.ts";
 import { loadMaterialized } from "./workflow-run.ts";
-import { CONTINUE_ENV } from "./owner-command.ts";
 
 const USAGE = "Usage: loopfile continue <runid> [-d | --detach]";
 const HELP = `${USAGE}
@@ -158,18 +158,21 @@ async function checkContinue(
   const state = replay(events);
   const refusal = continueRefusal(events, modelDigest(await loadMaterialized(paths)));
   if (refusal !== undefined) {
-    const code = refusal.includes("format version") || refusal.includes("model digest")
-      ? "format_mismatch"
-      : "operation_failed";
-    const help = state.result === undefined || (state.result.result !== "cancelled" && state.result.reason === "internal_error")
-      ? `Use \`loopfile resume ${runId}\` for a crashed run or internal_error.`
-      : state.result.result === "success" && state.result.reason === "end_state"
-        ? "Start a new run; completed runs cannot be continued."
-        : events[0]?.type === "run.created" && events[0].loopId !== undefined
-          ? `Loop ${events[0].loopId} owns this child run; it cannot be continued on its own.`
-          : code === "format_mismatch"
-            ? "Continue requires the original event format and Materialized Loopfile model."
-            : "Inspect the run before trying again.";
+    const code =
+      refusal.includes("format version") || refusal.includes("model digest")
+        ? "format_mismatch"
+        : "operation_failed";
+    const help =
+      state.result === undefined ||
+      (state.result.result !== "cancelled" && state.result.reason === "internal_error")
+        ? `Use \`loopfile resume ${runId}\` for a crashed run or internal_error.`
+        : state.result.result === "success" && state.result.reason === "end_state"
+          ? "Start a new run; completed runs cannot be continued."
+          : events[0]?.type === "run.created" && events[0].loopId !== undefined
+            ? `Loop ${events[0].loopId} owns this child run; it cannot be continued on its own.`
+            : code === "format_mismatch"
+              ? "Continue requires the original event format and Materialized Loopfile model."
+              : "Inspect the run before trying again.";
     return { summary: refusal, code, help, exitCode: code === "format_mismatch" ? 2 : 1 };
   }
   if (!(await pathExists(paths.workspace))) {

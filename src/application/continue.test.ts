@@ -102,7 +102,12 @@ test("continue retries the source step of an outcome routed to $failure", () => 
   const events = [
     event("run.created", { runId: "run-1" }),
     event("attempt.started", { attemptId: "001-work", stepId: "work", processGroupId: 0 }),
-    event("attempt.ended", { attemptId: "001-work", result: "success", reason: "outcome", outcome: "blocked" }),
+    event("attempt.ended", {
+      attemptId: "001-work",
+      result: "success",
+      reason: "outcome",
+      outcome: "blocked",
+    }),
     event("transition", {
       from: "work",
       attemptId: "001-work",

@@ -19,6 +19,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { parseDocument } from "yaml";
 import { checkAttemptLimit } from "../application/attempt-limit.ts";
+import { continuePlan, continueRefusal } from "../application/continue.ts";
 import { sha256 } from "../application/data-store.ts";
 import {
   CANCEL_GRACE_MS,
@@ -31,7 +32,6 @@ import type { HarnessActivity, HarnessAdapters } from "../application/harness.ts
 import type { LaunchInputs } from "../application/launch-inputs.ts";
 import type { AttemptIdentity } from "../application/owner-protocol.ts";
 import { nextAttemptId, parseEventLog, replay } from "../application/replay.ts";
-import { continuePlan, continueRefusal } from "../application/continue.ts";
 import { resumePlan, resumeRefusal } from "../application/resume.ts";
 import { route } from "../application/routing.ts";
 import {
@@ -262,8 +262,12 @@ export async function continueRun(options: ContinueRunOptions): Promise<Executed
       branch: created.branch,
     };
     const run = { ...options, source: paths.loopfile, repository: created.repositoryPath };
-    return await runSteps(run, owner, { workflow, workspace }, await loopfileNameOf(paths), (tracked) =>
-      continueFrom(workflow, tracked),
+    return await runSteps(
+      run,
+      owner,
+      { workflow, workspace },
+      await loopfileNameOf(paths),
+      (tracked) => continueFrom(workflow, tracked),
     );
   } finally {
     await owner.close();

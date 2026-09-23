@@ -249,7 +249,8 @@ function finalResult(events: readonly RunEvent[]): { result: RunResult } | undef
   if (
     events.findLastIndex((event) => event.type === "run.continued") > endIndex ||
     resumedAfterInternalError(events, end)
-  ) return undefined;
+  )
+    return undefined;
   if (end.type === "run.cancelled") return { result: { result: "cancelled" } };
   return { result: { result: end.result, reason: end.reason } };
 }

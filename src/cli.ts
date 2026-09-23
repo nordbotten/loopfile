@@ -11,8 +11,8 @@ import {
   reportResult,
 } from "./adapters/attempt-client.ts";
 import { cancelCommand } from "./adapters/cancel-command.ts";
-import { continueCommand } from "./adapters/continue-command.ts";
 import { checkCommand } from "./adapters/check-command.ts";
+import { continueCommand } from "./adapters/continue-command.ts";
 import { docsCommand } from "./adapters/docs-command.ts";
 import { readStdin as readRealStdin } from "./adapters/input.ts";
 import { interruptCommand } from "./adapters/interrupt-command.ts";

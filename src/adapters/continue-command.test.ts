@@ -8,13 +8,12 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { parseEventLog } from "../application/replay.ts";
 import type { RunEvent } from "../domain/events.ts";
+import { continueCommand } from "./continue-command.ts";
 import { type LaunchIo, launchCommand } from "./launch-command.ts";
-import { requestCancel } from "./run-owner.ts";
-import { pingOwner } from "./run-owner.ts";
 import type { MonitorIo } from "./monitor.ts";
 import { removeAfterOwnersExit } from "./owner-cleanup.test.ts";
-import { continueCommand } from "./continue-command.ts";
-import { runPaths, type RunPaths } from "./run-directory.ts";
+import { type RunPaths, runPaths } from "./run-directory.ts";
+import { pingOwner, requestCancel } from "./run-owner.ts";
 
 const run = promisify(execFile);
 const cli = fileURLToPath(new URL("../cli.ts", import.meta.url));
@@ -135,18 +134,23 @@ steps:
   assert.match(result.err, new RegExp(`^continued: ${testCase.runId}\\n`));
   const all = await events(testCase.paths);
   const added = all.slice(parseEventLog(logBefore).length);
-  assert.deepEqual(added.slice(0, 3).map((event) => event.type), [
-    "owner.started",
-    "run.continued",
-    "attempt.started",
-  ]);
+  assert.deepEqual(
+    added.slice(0, 3).map((event) => event.type),
+    ["owner.started", "run.continued", "attempt.started"],
+  );
   assert.deepEqual(all[0], createdBefore);
   assert.ok((await readFile(testCase.paths.events, "utf8")).startsWith(logBefore));
-  assert.equal(await readFile(join(testCase.paths.loopfile, "manifest.yaml"), "utf8"), materializedBefore);
+  assert.equal(
+    await readFile(join(testCase.paths.loopfile, "manifest.yaml"), "utf8"),
+    materializedBefore,
+  );
   assert.ok(workspace.startsWith(testCase.paths.root));
   assert.equal(all.filter((event) => event.type === "attempt.started").length, 2);
   assert.equal(all.filter((event) => event.type === "run.continued").length, 1);
-  assert.equal((await waitForEnd(testCase.paths, parseEventLog(logBefore).at(-1)?.seq)).type, "run.ended");
+  assert.equal(
+    (await waitForEnd(testCase.paths, parseEventLog(logBefore).at(-1)?.seq)).type,
+    "run.ended",
+  );
 });
 
 test("continue replaces a cancelled attempt even when its prior attempt limit was reached", async () => {
@@ -159,7 +163,8 @@ steps:
 `;
   const testCase = await launch(manifest);
   await until(
-    async () => (await events(testCase.paths)).some((event) => event.type === "attempt.started") || undefined,
+    async () =>
+      (await events(testCase.paths)).some((event) => event.type === "attempt.started") || undefined,
     "the cancelled attempt to start",
   );
   assert.equal(await requestCancel(testCase.paths.socket, testCase.runId), true);
@@ -171,7 +176,9 @@ steps:
   assert.equal((await waitForEnd(testCase.paths, stopped.seq)).type, "run.ended");
   const all = await events(testCase.paths);
   assert.deepEqual(
-    all.filter((event) => event.type === "attempt.started").map((event) => event.type === "attempt.started" && event.attemptId),
+    all
+      .filter((event) => event.type === "attempt.started")
+      .map((event) => event.type === "attempt.started" && event.attemptId),
     ["001-work", "002-work"],
   );
   assert.equal(all.filter((event) => event.type === "run.continued").length, 1);
@@ -195,7 +202,10 @@ steps:
   const result = await continueRun(testCase.runId, testCase.env);
   assert.equal(result.code, 0, result.err);
   assert.equal((await waitForEnd(testCase.paths, stopped.seq)).type, "run.ended");
-  assert.equal((await events(testCase.paths)).filter((event) => event.type === "attempt.started").length, 2);
+  assert.equal(
+    (await events(testCase.paths)).filter((event) => event.type === "attempt.started").length,
+    2,
+  );
 });
 
 test("continue routes a transition_limit result instead of starting that step again", async () => {
@@ -221,9 +231,15 @@ steps:
   assert.equal(terminal.type, "run.ended");
   assert.equal(terminal.result, "success");
   const added = (await events(testCase.paths)).slice(parseEventLog(logBefore).length);
-  assert.deepEqual(added.map((event) => event.type), ["owner.started", "run.continued", "transition", "run.ended"]);
+  assert.deepEqual(
+    added.map((event) => event.type),
+    ["owner.started", "run.continued", "transition", "run.ended"],
+  );
   assert.equal(added.find((event) => event.type === "transition")?.type, "transition");
-  assert.equal(added.some((event) => event.type === "attempt.started"), false);
+  assert.equal(
+    added.some((event) => event.type === "attempt.started"),
+    false,
+  );
 });
 
 test("continue routes the attempt outcome to $failure by retrying that step", async () => {
@@ -241,13 +257,18 @@ steps:
   const stopped = await waitForEnd(testCase.paths);
   assert.equal(stopped.type, "run.ended");
   assert.equal(stopped.result, "failure");
-  const firstAttempt = (await events(testCase.paths)).find((event) => event.type === "attempt.ended");
+  const firstAttempt = (await events(testCase.paths)).find(
+    (event) => event.type === "attempt.ended",
+  );
   assert.equal(firstAttempt?.type === "attempt.ended" && firstAttempt.reason, "outcome");
 
   const result = await continueRun(testCase.runId, testCase.env);
   assert.equal(result.code, 0, result.err);
   await waitForEnd(testCase.paths, stopped.seq);
-  assert.equal((await events(testCase.paths)).filter((event) => event.type === "attempt.started").length, 2);
+  assert.equal(
+    (await events(testCase.paths)).filter((event) => event.type === "attempt.started").length,
+    2,
+  );
 });
 
 test("continue gives an attempt_limit run its maxAttempts again", async () => {
@@ -273,7 +294,9 @@ steps:
   assert.equal(terminal.type, "run.ended");
   assert.equal(terminal.result, "success", JSON.stringify(await events(testCase.paths)));
   assert.deepEqual(
-    (await events(testCase.paths)).filter((event) => event.type === "attempt.started").map((event) => event.type === "attempt.started" && event.attemptId),
+    (await events(testCase.paths))
+      .filter((event) => event.type === "attempt.started")
+      .map((event) => event.type === "attempt.started" && event.attemptId),
     ["001-work", "002-work"],
   );
 });
@@ -296,7 +319,10 @@ steps:
   const terminal = await waitForEnd(testCase.paths, secondEnd.seq);
   assert.equal(terminal.type, "run.ended");
   assert.equal(terminal.result, "success");
-  assert.equal((await events(testCase.paths)).filter((event) => event.type === "run.continued").length, 2);
+  assert.equal(
+    (await events(testCase.paths)).filter((event) => event.type === "run.continued").length,
+    2,
+  );
 });
 
 test("run_timeout between attempts takes the unfinished route rather than repeating the attempt", async () => {
@@ -316,7 +342,10 @@ steps:
     ...before.slice(0, lastAttemptEnd + 1),
     { type: "run.ended", seq: lastAttemptEnd + 2, at, result: "failure", reason: "run_timeout" },
   ];
-  await writeFile(testCase.paths.events, `${cut.map((event) => JSON.stringify(event)).join("\n")}\n`);
+  await writeFile(
+    testCase.paths.events,
+    `${cut.map((event) => JSON.stringify(event)).join("\n")}\n`,
+  );
   const logBefore = await readFile(testCase.paths.events, "utf8");
 
   const result = await continueRun(testCase.runId, testCase.env);
@@ -324,12 +353,20 @@ steps:
   const terminal = await waitForEnd(testCase.paths, parseEventLog(logBefore).at(-1)?.seq);
   assert.equal(terminal.type, "run.ended");
   const added = (await events(testCase.paths)).slice(parseEventLog(logBefore).length);
-  assert.deepEqual(added.map((event) => event.type), ["owner.started", "run.continued", "transition", "run.ended"]);
-  assert.equal(added.some((event) => event.type === "attempt.started"), false);
+  assert.deepEqual(
+    added.map((event) => event.type),
+    ["owner.started", "run.continued", "transition", "run.ended"],
+  );
+  assert.equal(
+    added.some((event) => event.type === "attempt.started"),
+    false,
+  );
 });
 
 test("completed runs refuse continue and suggest starting a new run", async () => {
-  const testCase = await launch(`formatVersion: 1\nsteps:\n  - id: work\n    kind: command\n    run: 'true'\n`);
+  const testCase = await launch(
+    `formatVersion: 1\nsteps:\n  - id: work\n    kind: command\n    run: 'true'\n`,
+  );
   await waitForEnd(testCase.paths);
   const refused = await continueRun(testCase.runId, testCase.env);
   assert.equal(refused.code, 1);
@@ -338,9 +375,12 @@ test("completed runs refuse continue and suggest starting a new run", async () =
 });
 
 test("running runs refuse continue and name interrupt", async () => {
-  const testCase = await launch(`formatVersion: 1\nsteps:\n  - id: work\n    kind: command\n    run: sleep 30\n`);
+  const testCase = await launch(
+    `formatVersion: 1\nsteps:\n  - id: work\n    kind: command\n    run: sleep 30\n`,
+  );
   await until(
-    async () => (await events(testCase.paths)).some((event) => event.type === "attempt.started") || undefined,
+    async () =>
+      (await events(testCase.paths)).some((event) => event.type === "attempt.started") || undefined,
     "the active attempt",
   );
   const refused = await continueRun(testCase.runId, testCase.env);
@@ -351,34 +391,41 @@ test("running runs refuse continue and name interrupt", async () => {
 });
 
 test("crashed runs refuse continue and name resume", async () => {
-  const testCase = await launch(`formatVersion: 1\nsteps:\n  - id: work\n    kind: command\n    run: sleep 30\n`);
-  await until(
-    async () => {
-      const all = await events(testCase.paths);
-      const owner = all.find((event) => event.type === "owner.started");
-      const attempt = all.find((event) => event.type === "attempt.started");
-      return owner?.type === "owner.started" && attempt?.type === "attempt.started"
-        ? { owner: owner.pid, group: attempt.processGroupId }
-        : undefined;
-    },
-    "the active owner and attempt",
-  ).then(async ({ owner, group }) => {
+  const testCase = await launch(
+    `formatVersion: 1\nsteps:\n  - id: work\n    kind: command\n    run: sleep 30\n`,
+  );
+  await until(async () => {
+    const all = await events(testCase.paths);
+    const owner = all.find((event) => event.type === "owner.started");
+    const attempt = all.find((event) => event.type === "attempt.started");
+    return owner?.type === "owner.started" && attempt?.type === "attempt.started"
+      ? { owner: owner.pid, group: attempt.processGroupId }
+      : undefined;
+  }, "the active owner and attempt").then(async ({ owner, group }) => {
     process.kill(owner, "SIGKILL");
     process.kill(-group, "SIGKILL");
   });
-  await until(async () => ((await pingOwner(testCase.paths.socket, 200)) === undefined ? true : undefined), "the owner to stop answering");
+  await until(
+    async () => ((await pingOwner(testCase.paths.socket, 200)) === undefined ? true : undefined),
+    "the owner to stop answering",
+  );
   const refused = await continueRun(testCase.runId, testCase.env);
   assert.equal(refused.code, 1);
   assert.match(refused.err, new RegExp(`loopfile resume ${testCase.runId}`));
 });
 
 test("internal_error refuses continue and names resume", async () => {
-  const testCase = await launch(`formatVersion: 1\nsteps:\n  - id: work\n    kind: command\n    onFailure: $failure\n    run: exit 1\n`);
+  const testCase = await launch(
+    `formatVersion: 1\nsteps:\n  - id: work\n    kind: command\n    onFailure: $failure\n    run: exit 1\n`,
+  );
   await waitForEnd(testCase.paths);
   const changed = (await events(testCase.paths)).map((event) =>
     event.type === "run.ended" ? { ...event, reason: "internal_error" as const } : event,
   );
-  await writeFile(testCase.paths.events, `${changed.map((event) => JSON.stringify(event)).join("\n")}\n`);
+  await writeFile(
+    testCase.paths.events,
+    `${changed.map((event) => JSON.stringify(event)).join("\n")}\n`,
+  );
   const refused = await continueRun(testCase.runId, testCase.env);
   assert.equal(refused.code, 1);
   assert.match(refused.err, /internal_error/);
@@ -386,20 +433,30 @@ test("internal_error refuses continue and names resume", async () => {
 });
 
 test("changed event format and model refuse continue", async () => {
-  const eventCase = await launch(`formatVersion: 1\nsteps:\n  - id: work\n    kind: command\n    run: exit 1\n`);
+  const eventCase = await launch(
+    `formatVersion: 1\nsteps:\n  - id: work\n    kind: command\n    run: exit 1\n`,
+  );
   await waitForEnd(eventCase.paths);
   const eventsWithNewFormat = (await events(eventCase.paths)).map((event) =>
     event.type === "run.created" ? { ...event, eventFormatVersion: 99 } : event,
   );
-  await writeFile(eventCase.paths.events, `${eventsWithNewFormat.map((event) => JSON.stringify(event)).join("\n")}\n`);
+  await writeFile(
+    eventCase.paths.events,
+    `${eventsWithNewFormat.map((event) => JSON.stringify(event)).join("\n")}\n`,
+  );
   const formatRefusal = await continueRun(eventCase.runId, eventCase.env);
   assert.equal(formatRefusal.code, 2);
   assert.match(formatRefusal.err, /event format version 99/);
 
-  const modelCase = await launch(`formatVersion: 1\nsteps:\n  - id: work\n    kind: command\n    run: exit 1\n`);
+  const modelCase = await launch(
+    `formatVersion: 1\nsteps:\n  - id: work\n    kind: command\n    run: exit 1\n`,
+  );
   await waitForEnd(modelCase.paths);
   const materialized = join(modelCase.paths.loopfile, "manifest.yaml");
-  await writeFile(materialized, `formatVersion: 1\nsteps:\n  - id: work\n    kind: command\n    run: exit 2\n`);
+  await writeFile(
+    materialized,
+    `formatVersion: 1\nsteps:\n  - id: work\n    kind: command\n    run: exit 2\n`,
+  );
   const modelRefusal = await continueRun(modelCase.runId, modelCase.env);
   assert.equal(modelRefusal.code, 2);
   assert.match(modelRefusal.err, /no longer builds the model the run started with/);
@@ -437,12 +494,21 @@ steps:
   await mkdir(bin);
   await mkdir(captures);
   const fake = join(bin, "claude");
-  await writeFile(fake, `#!/bin/sh\ncat > "$CAPTURE_DIR/$LOOPFILE_ATTEMPT_ID"\n[ "$LOOPFILE_ATTEMPT_ID" = "002-review" ] && exit 1\nnode ${cli} result approved\n`);
+  await writeFile(
+    fake,
+    `#!/bin/sh\ncat > "$CAPTURE_DIR/$LOOPFILE_ATTEMPT_ID"\n[ "$LOOPFILE_ATTEMPT_ID" = "002-review" ] && exit 1\nnode ${cli} result approved\n`,
+  );
   await chmod(fake, 0o755);
   testCase.env.PATH = `${bin}:${testCase.env.PATH}`;
   testCase.env.CAPTURE_DIR = captures;
   const session = io();
-  assert.equal(await launchCommand([testCase.source, "-d"], cli, session.adapter, testCase.env, { repository: testCase.repo }), 0, session.err());
+  assert.equal(
+    await launchCommand([testCase.source, "-d"], cli, session.adapter, testCase.env, {
+      repository: testCase.repo,
+    }),
+    0,
+    session.err(),
+  );
   const runId = session.out().trim();
   const paths = runPaths(testCase.home, runId);
   const firstEnd = await waitForEnd(paths);
@@ -458,5 +524,8 @@ steps:
   const replacement = await readFile(join(captures, "003-review"), "utf8");
   assert.equal(replaced, "same-data|prep|clean_exit|1");
   assert.equal(replacement, "same-data|prep|clean_exit|2");
-  assert.equal(replaced.slice(0, replaced.lastIndexOf("|")), replacement.slice(0, replacement.lastIndexOf("|")));
+  assert.equal(
+    replaced.slice(0, replaced.lastIndexOf("|")),
+    replacement.slice(0, replacement.lastIndexOf("|")),
+  );
 });

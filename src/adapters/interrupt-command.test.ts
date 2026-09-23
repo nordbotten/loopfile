@@ -178,7 +178,9 @@ test("interrupt validates its run ID and event log before asking the owner", asy
 });
 
 test("interrupt reports ended, crashed and between-attempt runs instead of queueing", async (t) => {
-  const ended = await launch(`formatVersion: 1\nsteps:\n  - id: work\n    kind: command\n    onFailure: $failure\n    run: exit 1\n`);
+  const ended = await launch(
+    `formatVersion: 1\nsteps:\n  - id: work\n    kind: command\n    onFailure: $failure\n    run: exit 1\n`,
+  );
   await until(
     async () => ((await events(ended.paths)).at(-1)?.type === "run.ended" ? true : undefined),
     "the run to end",

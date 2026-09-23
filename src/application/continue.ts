@@ -3,8 +3,7 @@
 import type { RunCreated, RunEvent } from "../domain/events.ts";
 import { isEndState, type StepId, type Workflow } from "../domain/model.ts";
 import { replay } from "./replay.ts";
-import { resumePlan } from "./resume.ts";
-import { runModelRefusal } from "./resume.ts";
+import { resumePlan, runModelRefusal } from "./resume.ts";
 import type { AttemptEndFields } from "./workflow-run.ts";
 
 export type ContinueNext =
