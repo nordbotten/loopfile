@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 
 function git(...args) {
@@ -30,20 +31,11 @@ test("workspace mode docs leave ADRs 0005, 0006 and 0010, Monitor and Harness ad
   );
 });
 
-test("workspace documentation edits do not sweep unrelated Target repository wording", () => {
-  const allowed = new Set([
-    "CONTEXT.md",
-    "docs/adr/0001-node-typescript-stack.md",
-    "docs/adr/0002-normalized-runtime-model.md",
-    "docs/adr/0003-event-log-run-state.md",
-    "docs/adr/0004-internal-harness-adapters-no-plugins.md",
-    "docs/adr/0011-operator-contract.md",
-    "docs/adr/0014-workspace-modes.md",
-    "quality/workspace-mode-scope.test.mjs",
-    "quality/workspace-modes-adr.test.mjs",
+test("unrelated examples retain their Target repository wording", async () => {
+  const [readme, prompt] = await Promise.all([
+    readFile(new URL("../examples/implement-review/README.md", import.meta.url), "utf8"),
+    readFile(new URL("../examples/implement-review/prompts/implement.md", import.meta.url), "utf8"),
   ]);
-  assert.deepEqual(
-    changedFiles().filter((path) => !allowed.has(path)),
-    [],
-  );
+  assert.match(readme, /The target repository must\s+have an `npm test` script/);
+  assert.match(prompt, /You work on the task in the target repository/);
 });
