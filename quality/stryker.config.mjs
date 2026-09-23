@@ -57,6 +57,7 @@ const SLOW_TESTS = new Set([
   "src/adapters/input-equivalence.test.ts",
   "src/adapters/feedback-loop.test.ts",
   "src/adapters/resume-command.test.ts",
+  "src/adapters/continue-command.test.ts",
 ]);
 
 export default {
