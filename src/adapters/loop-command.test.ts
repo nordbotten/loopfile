@@ -17,6 +17,8 @@ import { loopPaths, runPaths } from "./run-directory.ts";
 import { pingOwner } from "./run-owner.ts";
 import { tailCommand } from "./tail-command.ts";
 
+const { version } = createRequire(import.meta.url)("../../package.json") as { version: string };
+
 const run = promisify(execFile);
 const cli = fileURLToPath(new URL("../cli.ts", import.meta.url));
 const { version } = createRequire(import.meta.url)("../../package.json") as { version: string };
