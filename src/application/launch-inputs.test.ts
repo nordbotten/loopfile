@@ -132,6 +132,17 @@ test("a launch request survives the environment variable", () => {
     loopIndex: 3,
   };
   assert.deepEqual(decodeLaunch(encodeLaunch(request)), request);
+  assert.deepEqual(decodeLaunch(encodeLaunch({ ...request, workspaceMode: "empty" })), {
+    ...request,
+    workspaceMode: "empty",
+  });
+  const { repository: originalRepository, ...emptyExpected } = request;
+  const emptyRequest = { ...emptyExpected, workspaceMode: "empty" as const };
+  const decodedEmpty = decodeLaunch(encodeLaunch(emptyRequest));
+  assert.equal(originalRepository, "/r");
+  assert.deepEqual(decodedEmpty, emptyRequest);
+  assert.equal(decodedEmpty && Object.hasOwn(decodedEmpty, "repository"), false);
+  assert.equal(decodeLaunch(JSON.stringify({ ...emptyRequest, workspaceMode: "here" })), undefined);
 });
 
 test("a launch request that is not one decodes to nothing", () => {

@@ -210,7 +210,7 @@ async function launchSource(
     source: sourceName,
     kind: source.kind,
     sourceText: source.text,
-    repository: options.repository ?? process.cwd(),
+    ...(workspace.mode === "empty" ? {} : { repository: options.repository ?? process.cwd() }),
     inputs: inputs.inputs,
     workspaceMode: workspace.mode,
     loopfileName,
@@ -592,7 +592,7 @@ async function start(
     sourceKind: request.kind,
     sourceText: request.sourceText,
     workflow,
-    repository: request.repository,
+    ...(request.repository === undefined ? {} : { repository: request.repository }),
     inputs: request.inputs,
     workspaceMode: request.workspaceMode,
     runId: newRunId(),
@@ -634,7 +634,7 @@ export interface StartRunOptions {
   readonly sourceKind?: InputKind;
   readonly sourceText?: string;
   readonly workflow?: Workflow;
-  readonly repository: string;
+  readonly repository?: string;
   readonly inputs: LaunchInputs;
   readonly workspaceMode?: LaunchRequest["workspaceMode"];
   readonly runId: string;
@@ -685,13 +685,13 @@ export async function startRun(options: StartRunOptions): Promise<StartRunResult
 
   const home = loopfileHome(options.env as NodeJS.ProcessEnv);
   let paths: RunPaths;
-  let targetFolder: string;
+  let targetFolder: string | undefined;
   try {
     targetFolder = await targetFolderForRun(options.repository, workspaceMode);
     paths = await createRunDirectory({
       home,
       runId: options.runId,
-      targetRepository: targetFolder,
+      ...(targetFolder === undefined ? {} : { targetRepository: targetFolder }),
       stepIds: workflow.workflow.steps.map((step) => step.id),
     });
   } catch (error) {
@@ -701,17 +701,7 @@ export async function startRun(options: StartRunOptions): Promise<StartRunResult
     };
   }
 
-  const request: LaunchRequest = {
-    source: options.source,
-    kind: options.sourceKind ?? "directory",
-    ...(options.sourceText === undefined ? {} : { sourceText: options.sourceText }),
-    repository: targetFolder,
-    inputs: inputs.inputs,
-    workspaceMode,
-    loopfileName: options.loopfileName,
-    ...(options.remote === undefined ? {} : { remote: options.remote }),
-    ...optionalLoopFields(options.loopId, options.loopIndex),
-  };
+  const request = launchRequestForRun(options, inputs.inputs, workspaceMode, targetFolder);
   return await startDetachedOwner({
     ownerId: options.runId,
     paths,
@@ -723,8 +713,32 @@ export async function startRun(options: StartRunOptions): Promise<StartRunResult
   });
 }
 
-async function targetFolderForRun(repository: string, mode: WorkspaceMode): Promise<string> {
-  return mode === "here" ? resolve(repository) : targetRepository(repository);
+function launchRequestForRun(
+  options: StartRunOptions,
+  inputs: LaunchInputs,
+  workspaceMode: WorkspaceMode,
+  targetFolder: string | undefined,
+): LaunchRequest {
+  return {
+    source: options.source,
+    kind: options.sourceKind ?? "directory",
+    ...(options.sourceText === undefined ? {} : { sourceText: options.sourceText }),
+    ...(targetFolder === undefined ? {} : { repository: targetFolder }),
+    inputs,
+    workspaceMode,
+    loopfileName: options.loopfileName,
+    ...(options.remote === undefined ? {} : { remote: options.remote }),
+    ...optionalLoopFields(options.loopId, options.loopIndex),
+  };
+}
+
+async function targetFolderForRun(
+  repository: string | undefined,
+  mode: WorkspaceMode,
+): Promise<string | undefined> {
+  if (mode === "empty") return undefined;
+  const launchFolder = repository ?? process.cwd();
+  return mode === "here" ? resolve(launchFolder) : targetRepository(launchFolder);
 }
 
 async function workflowForStart(

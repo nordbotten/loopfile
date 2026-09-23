@@ -18,10 +18,11 @@ test("the ADR defines each mode, the isolate fallback, defaults, records and cle
   assert.match(text, /no `\.git`, no commits, or no `git` binary/);
   assert.match(
     text,
-    /every step works in a new empty folder[\s\S]*?It has no link to the Target folder/,
+    /every step works in a new empty folder[\s\S]*?Nothing is copied from the Target folder/,
   );
   assert.match(text, /The default is `isolate`/);
-  assert.match(text, /`run\.created` records `targetFolder`, `workspacePath`, and `workspaceMode`/);
+  assert.match(text, /`run\.created` records `workspacePath` and `workspaceMode` for every run/);
+  assert.match(text, /`empty` omits it/);
   assert.match(text, /Only an `isolate` worktree records `branch` and `baseCommit`/);
   assert.match(text, /a successful run removes only an `isolate` worktree/);
   assert.match(text, /An `isolate` copy and an `empty` folder stay/);

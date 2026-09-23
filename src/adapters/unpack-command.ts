@@ -1,14 +1,4 @@
-/**
- * `loopfile unpack <file.loop> [<destination>]`: extracts a `.loop` into an
- * editable source directory (#10, decided in #80).
- *
- * The input is told apart by content. A packed `.loop` goes through the same
- * strict extraction a run uses (#79); a thin `.loop` is copied as
- * `manifest.yaml`. Nothing is validated beyond what extraction needs, so an
- * invalid or older Loopfile can be unpacked and then fixed. Extraction goes to
- * a temporary folder beside the destination and is renamed into place only on
- * success, so a failure leaves nothing behind.
- */
+/** `loopfile unpack <file.loop|remote> [<destination>]` makes a local source directory. */
 
 import { mkdtemp, readdir, rename, rm, stat } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
@@ -18,8 +8,20 @@ import {
   renderOperatorConfirmation,
   renderOperatorFailure,
 } from "../application/operator-error.ts";
-import { materializePacked, materializeThin } from "./directory-loader.ts";
-import { classifyInput, InputError } from "./input.ts";
+import { formatRemoteLine } from "../application/remote-view.ts";
+import { parseSource, type RemoteSource, SourceParseError } from "../application/source.ts";
+import {
+  materializePacked,
+  materializeRemoteDirectory,
+  materializeThin,
+} from "./directory-loader.ts";
+import { classifyInput, InputError, sourceExists } from "./input.ts";
+import {
+  type FetchedRemote,
+  fetchRemote,
+  RemoteFetchError,
+  remoteFetchOperatorFailure,
+} from "./remote-fetch.ts";
 
 type Out = (text: string) => void;
 
@@ -34,61 +36,139 @@ function fail(
   return exitCode;
 }
 
-const USAGE = "Usage: loopfile unpack <file.loop> [<destination>]";
+const USAGE = "Usage: loopfile unpack <file.loop|remote> [<destination>]";
 const HELP = `${USAGE}
 
-Extract a thin or packed .loop into an editable source directory. The optional
-destination must be new or empty. Exit 0 means extraction succeeded; invalid
-input returns 2 and an extraction failure returns 1.
+Extract a thin or packed .loop, or copy a remote source directory, into a local
+source directory. A remote copy has no link to its origin and needs no trust.
+The optional destination must be new or empty. Exit 0 means unpack succeeded;
+invalid input returns 2 and an extraction failure returns 1.
 `;
 
 /** Runs `unpack`. Returns the process exit code. */
-export async function unpackCommand(argv: readonly string[], out: Out, err: Out): Promise<number> {
+export async function unpackCommand(
+  argv: readonly string[],
+  out: Out,
+  err: Out,
+  env: Record<string, string | undefined> = process.env,
+): Promise<number> {
   if (argv.includes("--help")) {
     out(HELP);
     return 0;
   }
+  let values: { trust?: boolean };
   let positionals: string[];
   try {
-    positionals = parseArgs({
+    ({ values, positionals } = parseArgs({
       args: argv.slice(1),
-      options: {},
+      options: { trust: { type: "boolean" } },
       allowPositionals: true,
-    }).positionals;
+    }));
   } catch (error) {
     return fail(err, (error as Error).message, "bad_argument", 2, USAGE);
   }
-  const [file, given] = positionals;
-  if (file === undefined || positionals.length > 2) {
+  if (values.trust === true)
+    return fail(err, "--trust is for launch only", "bad_argument", 2, USAGE);
+  const [source, given] = positionals;
+  if (source === undefined || positionals.length > 2) {
     return fail(
       err,
-      "unpack takes one .loop file and an optional destination",
+      "unpack takes one .loop file or remote source and an optional destination",
       "bad_argument",
       2,
       USAGE,
     );
   }
-  const destination = resolve(given ?? basename(file).replace(/\.loop$/, ""));
+
+  let parsed: ReturnType<typeof parseSource>;
   try {
-    const kind = await classifyInput(file);
-    if (kind === "directory") {
-      return fail(err, `${file} is a directory`, "bad_argument", 2, USAGE);
-    }
-    if (!(await destinationIsFree(destination))) {
-      return fail(
-        err,
-        `${destination} already exists`,
-        "bad_argument",
-        2,
-        "Use a new or empty destination.",
-      );
-    }
-    await extractInto(file, kind, destination);
+    parsed = parseSource(source, await sourceExists(source));
+  } catch (error) {
+    return fail(
+      err,
+      (error as Error).message,
+      "bad_argument",
+      2,
+      error instanceof SourceParseError ? error.help : USAGE,
+    );
+  }
+  if (parsed.kind === "local") return unpackLocal(source, given, err);
+  return unpackRemote(source, given, parsed, env, err);
+}
+
+async function unpackLocal(source: string, given: string | undefined, err: Out): Promise<number> {
+  const destination = resolve(given ?? basename(source).replace(/\.loop$/, ""));
+  try {
+    const kind = await classifyInput(source);
+    if (kind === "directory")
+      return fail(err, `${source} is a directory`, "bad_argument", 2, USAGE);
+    if (!(await destinationIsFree(destination))) return destinationExists(err, destination);
+    await extractInto(source, kind, destination);
     err(renderOperatorConfirmation({ unpacked: destination }));
     return 0;
   } catch (error) {
-    return unpackFailure(err, file, error);
+    return unpackFailure(err, source, error);
   }
+}
+
+async function unpackRemote(
+  source: string,
+  given: string | undefined,
+  remote: RemoteSource,
+  env: Record<string, string | undefined>,
+  err: Out,
+): Promise<number> {
+  let fetched: FetchedRemote | undefined;
+  try {
+    fetched = await fetchRemote(remote, env);
+    const name =
+      fetched.remote.path
+        ?.split("/")
+        .at(-1)
+        ?.replace(/\.loop$/, "") ??
+      fetched.remote.repo.split("/").at(-1) ??
+      fetched.remote.repo;
+    const destination = resolve(given ?? name);
+    const kind = await classifyInput(fetched.path);
+    if (!(await destinationIsFree(destination))) return destinationExists(err, destination);
+    await extractInto(fetched.path, kind, destination);
+    err(
+      renderOperatorConfirmation({ unpacked: destination }) +
+        `${formatRemoteLine({ ...fetched.remote, sha: fetched.sha }, true)}\n`,
+    );
+    return 0;
+  } catch (error) {
+    if (fetched === undefined) return remoteFetchFailure(err, remote, error);
+    return unpackFailure(err, source, error);
+  } finally {
+    await fetched?.cleanup().catch(() => undefined);
+  }
+}
+
+function destinationExists(err: Out, destination: string): number {
+  return fail(
+    err,
+    `${destination} already exists`,
+    "bad_argument",
+    2,
+    "Use a new or empty destination.",
+  );
+}
+
+function remoteFetchFailure(err: Out, remote: RemoteSource, error: unknown): number {
+  const standardFailure = remoteFetchOperatorFailure(remote, error);
+  if (standardFailure !== undefined) {
+    err(standardFailure.stderr);
+    return 2;
+  }
+  const message =
+    remote.bareSource === undefined
+      ? error instanceof Error
+        ? error.message
+        : String(error)
+      : `no local path and no GitHub repo named ${remote.bareSource}`;
+  const code = error instanceof RemoteFetchError ? error.code : "operation_failed";
+  return fail(err, message, code, 2, USAGE);
 }
 
 function unpackFailure(err: Out, file: string, error: unknown): number {
@@ -110,13 +190,14 @@ async function destinationIsFree(destination: string): Promise<boolean> {
 
 async function extractInto(
   file: string,
-  kind: "thin" | "packed",
+  kind: "directory" | "thin" | "packed",
   destination: string,
 ): Promise<void> {
   const holder = await mkdtemp(join(dirname(destination), `.${basename(destination)}.`));
   try {
     const staging = join(holder, "out");
-    await (kind === "packed" ? materializePacked : materializeThin)(file, staging);
+    if (kind === "directory") await materializeRemoteDirectory(file, staging);
+    else await (kind === "packed" ? materializePacked : materializeThin)(file, staging);
     await rename(staging, destination);
   } finally {
     await rm(holder, { recursive: true, force: true });

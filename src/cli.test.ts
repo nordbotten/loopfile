@@ -93,7 +93,7 @@ test("--help is a short command index", () => {
       "  status [<runid>|<loopid>] [--monitor | --json]",
       "  tail <runid|loopid> [--json]",
       "  result <runid|loopid> [--json]",
-      "  unpack <file.loop> [<destination>]",
+      "  unpack <file.loop|remote> [<destination>]",
       "  upgrade <source>",
     ],
   );
