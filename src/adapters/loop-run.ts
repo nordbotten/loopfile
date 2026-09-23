@@ -122,7 +122,7 @@ async function driveLoop(
     );
 
     if (action.kind === "wait") {
-      await waitForChild(home, status.currentRunId ?? status.runIds.at(-1) ?? "", deps.pollMs);
+      await waitForChild(home, currentRunId(status), deps.pollMs);
       continue;
     }
     if (action.kind === "pause") {
@@ -298,6 +298,10 @@ async function waitForPause(until: string | null): Promise<void> {
   if (until === null) return;
   const delay = Date.parse(until) - Date.now();
   if (delay > 0) await new Promise((resolve) => setTimeout(resolve, delay));
+}
+
+function currentRunId(status: LoopStatus): string {
+  return status.currentRunId ?? status.runIds.at(-1) ?? "";
 }
 
 async function lastChild(home: string, status: LoopStatus): Promise<LastChild> {

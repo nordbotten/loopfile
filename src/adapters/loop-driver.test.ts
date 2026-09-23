@@ -10,6 +10,7 @@ import { parseEventLog } from "../application/replay.ts";
 import type { LoopEvent } from "../domain/events.ts";
 import { materializeDirectory } from "./directory-loader.ts";
 import { openEventLog } from "./event-log.ts";
+import { startRun } from "./launch-command.ts";
 import { runLoop } from "./loop-run.ts";
 import { programIdentity } from "./program-identity.ts";
 import { loopPaths, runPaths } from "./run-directory.ts";
@@ -29,6 +30,7 @@ let count = 0;
 async function setup(
   command: string,
   sourceText = `formatVersion: 1\nsteps:\n  - id: work\n    kind: command\n    run: ${JSON.stringify(command)}\n`,
+  pauseMs: number | null = null,
 ) {
   count += 1;
   const base = join(root, `case-${count}`);
@@ -61,11 +63,11 @@ async function setup(
     fixedInputs: {},
     retry: 0,
     maxRuns: null,
-    pauseMs: null,
+    pauseMs,
     program: await programIdentity(cli),
   });
   await log.close();
-  return { env: { ...process.env, ...gitEnv, LOOPFILE_HOME: home }, home, loopId };
+  return { env: { ...process.env, ...gitEnv, LOOPFILE_HOME: home }, home, loopId, repo, source };
 }
 
 async function loopEvents(home: string, loopId: string): Promise<readonly LoopEvent[]> {
@@ -114,6 +116,58 @@ test("runs times children in order and records their loop links", async () => {
     await readFile(loopPaths(setupResult.home, setupResult.loopId).status, "utf8"),
   );
   assert.deepEqual(status, ended);
+});
+
+test("waits for a child already running when the loop resumes", async () => {
+  const setupResult = await setup("sleep 0.2");
+  const runId = "20260922-100001-wait";
+  const started = await startRun({
+    source: setupResult.source,
+    repository: setupResult.repo,
+    inputs: {},
+    runId,
+    loopId: setupResult.loopId,
+    loopIndex: 1,
+    cli,
+    env: setupResult.env,
+  });
+  assert.deepEqual(started, { ok: true, runId });
+
+  const log = await openEventLog<LoopEvent>(loopPaths(setupResult.home, setupResult.loopId).events);
+  await log.append({
+    type: "loop.run_started",
+    runId,
+    index: 1,
+    inputSet: {},
+    sourceIndex: 1,
+    retryOf: null,
+  });
+  await log.close();
+
+  const ended = await runLoop(setupResult.home, setupResult.loopId, {
+    cli,
+    env: setupResult.env,
+  });
+  const events = await loopEvents(setupResult.home, setupResult.loopId);
+  assert.equal(ended.state, "completed");
+  assert.equal(events.filter((event) => event.type === "loop.run_started").length, 3);
+  assert.deepEqual(ended, loopStatus(events));
+});
+
+test("pauses before later children", async () => {
+  const setupResult = await setup("true", undefined, 1);
+  const ended = await runLoop(setupResult.home, setupResult.loopId, {
+    cli,
+    env: setupResult.env,
+  });
+  const events = await loopEvents(setupResult.home, setupResult.loopId);
+  const pauses = events.filter((event) => event.type === "loop.paused");
+  const started = events.filter((event) => event.type === "loop.run_started");
+
+  assert.equal(ended.state, "completed");
+  assert.equal(started.length, 3);
+  assert.equal(pauses.length, 2);
+  assert.deepEqual(ended, loopStatus(events));
 });
 
 test("stops after the first failed child", async () => {
