@@ -17,7 +17,9 @@
 #   run-ticket.sh --dry-run  only print the issue it would pick
 #
 # It uses the loopfile on PATH, as a user does. To run the loopfile of this
-# repo, install it: npm run build && npm i -g "$(npm pack)". Each run copies
+# repo, install a copy of it (a link would change on each build):
+#   npm run build && npm i -g "/tmp/$(npm pack --pack-destination /tmp)"
+# Each run copies
 # loops/ticket when it starts, so a later merge does not change a run in
 # flight. The run owner starts under nice -n 10, so every step, agent and test
 # process of the run is niced too.
