@@ -1,8 +1,17 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, readdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  realpath,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { PassThrough } from "node:stream";
 import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -152,6 +161,16 @@ async function launchRemoteAndWait(
   return runPaths(setupResult.home, runId);
 }
 
+async function inCwd<T>(directory: string, action: () => Promise<T>): Promise<T> {
+  const previous = process.cwd();
+  process.chdir(directory);
+  try {
+    return await action();
+  } finally {
+    process.chdir(previous);
+  }
+}
+
 async function detached(source: string, home: string, env: NodeJS.ProcessEnv, repo: string) {
   const s = session();
   const code = await launchCommand([source, "-d", "--input", "issue=42"], cli, s.io, env, {
@@ -194,6 +213,92 @@ test("a trusted GitHub Remote Loopfile runs and uses the repository name", async
       loopfileName: string;
     };
     assert.equal(status.loopfileName, "loops");
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("a bare owner/repo launches its GitHub fixture when no local path exists", async () => {
+  const setupResult = await setup();
+  const fixture = await makeGitFixture({ "manifest.yaml": markerManifest("bare-remote") });
+  const tmp = await privateTmp(setupResult.base);
+  try {
+    const paths = await inCwd(setupResult.base, () =>
+      launchRemoteAndWait("acme/loops", setupResult, fixture.env, tmp),
+    );
+    assert.equal(await readFile(join(paths.workspace, "marker.txt"), "utf8"), "bare-remote");
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("an existing bare path and ./ path launch locally without fetching GitHub", async () => {
+  const setupResult = await setup();
+  const fixture = await makeGitFixture({ "manifest.yaml": markerManifest("remote") });
+  const local = join(setupResult.base, "acme", "loops");
+  await mkdir(local, { recursive: true });
+  await writeFile(join(local, "manifest.yaml"), markerManifest("local"));
+  const tmp = await privateTmp(setupResult.base);
+  const bin = join(setupResult.base, "bin");
+  await mkdir(bin);
+  const gitLog = join(setupResult.base, "git-called");
+  const realGit = (await run("which", ["git"])).stdout.trim();
+  await writeFile(
+    join(bin, "git"),
+    `#!/bin/sh\nprintf '%s\\n' "$*" >> "$GIT_CALL_LOG"\nexec ${realGit} "$@"\n`,
+  );
+  await chmod(join(bin, "git"), 0o755);
+  const env = {
+    ...setupResult.env,
+    ...fixture.env,
+    PATH: `${bin}${delimiter}${process.env.PATH}`,
+    GIT_CALL_LOG: gitLog,
+    TMPDIR: tmp,
+  };
+  try {
+    await inCwd(setupResult.base, async () => {
+      for (const source of ["acme/loops", "./acme/loops"]) {
+        const s = session();
+        assert.equal(
+          await launchCommand([source, "--trust", "-d"], cli, s.io, env, {
+            repository: setupResult.repo,
+          }),
+          0,
+          s.err(),
+        );
+        const runId = s.out().trim();
+        assert.equal(resultOf(await waitForEnd(setupResult.home, runId)), "success");
+        assert.equal(
+          await readFile(join(runPaths(setupResult.home, runId).workspace, "marker.txt"), "utf8"),
+          "local",
+        );
+      }
+    });
+    assert.doesNotMatch(await readFile(gitLog, "utf8"), /^(?:ls-remote|fetch|clone)\b/m);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("a missing bare repository reports that no local path or GitHub repo exists", async () => {
+  const setupResult = await setup();
+  const fixture = await makeGitFixture(
+    { "README.md": "not the requested repository\n" },
+    "other/repo",
+  );
+  try {
+    await inCwd(setupResult.base, async () => {
+      const s = session();
+      assert.equal(
+        await launchCommand(["acme/loops", "--trust", "-d"], cli, s.io, fixture.env, {
+          repository: setupResult.repo,
+        }),
+        2,
+      );
+      assert.match(s.err(), /error: no local path and no GitHub repo named acme\/loops\n/);
+      assert.match(s.err(), /code: operation_failed/);
+    });
+    await assert.rejects(stat(join(setupResult.home, "runs")));
   } finally {
     await fixture.cleanup();
   }
