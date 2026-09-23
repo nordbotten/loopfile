@@ -65,7 +65,9 @@ The `Release` workflow keeps one open release PR, with a title that starts with
 `chore(main): release`. It holds the next version and the new `CHANGELOG.md` entries. To release, merge
 it with `gh pr merge <number> --squash --admin`. `--admin` is necessary because
 CI does not run on a PR that GITHUB_TOKEN opens. The merge tags `v<version>`,
-makes the GitHub Release and publishes the package to npm.
+makes the GitHub Release and stages the package on npm. The version goes live
+only when a maintainer approves it with 2FA: `npm stage list loopfile`, then
+`npm stage approve <id>`, or on npmjs.com. An agent never approves a stage.
 
 ## Pull requests as a triage surface
 
