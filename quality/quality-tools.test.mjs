@@ -10,12 +10,16 @@
  */
 
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { test } from "node:test";
 import { crapScores } from "./quality-coverage.mjs";
 import { forbiddenReason, importsOf } from "./quality-imports.mjs";
 import { quietDiagnostics } from "./quality-runner.mjs";
 import { findSuppressions } from "./quality-suppressions.mjs";
-import { changedCore, zoneOf } from "./quality-zones.mjs";
+import { changedCore, REPO_ROOT, zoneOf } from "./quality-zones.mjs";
+import strykerConfig from "./stryker.config.mjs";
 
 /** A minimal Istanbul report shaped the way c8 writes one. */
 function report({ statements, branches, functions }) {
@@ -31,6 +35,38 @@ function report({ statements, branches, functions }) {
 }
 
 const wholeFile = { start: { line: 1, column: 0 }, end: { line: 99, column: 0 } };
+
+test("Stryker excludes every tracked test that imports processes or the fake harness", () => {
+  const files = execFileSync("git", ["ls-files", "--", "src"], {
+    cwd: REPO_ROOT,
+    encoding: "utf8",
+  })
+    .trim()
+    .split("\n")
+    .filter((file) => file.endsWith(".test.ts"));
+  const included = new Set(strykerConfig.tap.testFiles);
+  const processTests = files.filter((file) => {
+    const source = readFileSync(join(REPO_ROOT, file), "utf8");
+    const imports = [
+      ...importsOf(source),
+      ...Array.from(source.matchAll(/\bfrom\s*["']([^"']+)["']/g), (match) => match[1]),
+    ];
+    return imports.includes("node:child_process") || imports.includes("./fake-harness.test.ts");
+  });
+
+  assert.ok(processTests.length > 0);
+  for (const file of processTests) {
+    assert.ok(!included.has(file), `${file} should not run under Stryker`);
+  }
+});
+
+test("the Mutation docs describe the Stryker process-test exclusions", () => {
+  const docs = readFileSync(join(REPO_ROOT, "quality/QUALITY.md"), "utf8");
+  const mutation = docs.split("## Mutation\n")[1]?.split("\n## ")[0] ?? "";
+  assert.match(mutation, /`node:child_process`/);
+  assert.match(mutation, /`\.\/fake-harness\.test\.ts`/);
+  assert.match(mutation, /gate`\s+and `check` still run these files/);
+});
 
 test("the zone map places every kind of source file", () => {
   assert.equal(zoneOf("src/model.ts"), "CORE");
