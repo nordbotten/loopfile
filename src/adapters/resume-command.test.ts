@@ -359,7 +359,7 @@ async function crashedRun(extra: readonly Record<string, unknown>[] = [], digest
       runId,
       eventFormatVersion: 1,
       modelDigest: model,
-      repositoryPath: paths.workspace,
+      targetFolder: paths.workspace,
       baseCommit: "0".repeat(40),
       branch: `loopfile/${runId}`,
       inputs: [],

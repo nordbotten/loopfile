@@ -292,7 +292,7 @@ test("a created event is appended before owner.started", async () => {
       runId,
       eventFormatVersion: 1,
       modelDigest: "d",
-      repositoryPath: "/repo",
+      targetFolder: "/repo",
       baseCommit: "abc",
       branch: `loopfile/${runId}`,
       inputs: [],

@@ -146,7 +146,7 @@ output. In an `each` over it, entries are oldest first and have `value`,
 `attemptId`, `outcome`, `index` (from 1), `newest`, and `new`; `new` means put
 since this step's prior attempt. `$history.input.<name>` has one entry with an
 empty `attemptId` and `outcome`. `$run` has `runId`, `loopfileName`, `startedAt`,
-`repositoryPath`, `branch`, `baseCommit`, `transitions`, `maxTransitions`, and
+`targetFolder`, `branch`, `baseCommit`, `transitions`, `maxTransitions`, and
 `runTimeout`; its two limits are `""` when omitted. `$run.attempts` has every
 earlier attempt, oldest first, not the running one. Each has `stepId`,
 `attemptId`, `number` (the visit number for its step), `result`, `reason`,

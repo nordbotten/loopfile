@@ -23,7 +23,7 @@ const CREATED = {
   runId: "20260917-160344-k3f9",
   eventFormatVersion: 1,
   modelDigest: "sha256:abc",
-  repositoryPath: "/home/ada/repo",
+  targetFolder: "/home/ada/repo",
   baseCommit: "c0ffee",
   branch: "loopfile/20260917-160344-k3f9",
   inputs: [],
