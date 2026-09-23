@@ -103,6 +103,31 @@ test("starts the first run with fixed inputs", () => {
   });
 });
 
+test("does not pause twice when the event log records a pause without a later run", () => {
+  const history: LoopEvent[] = [
+    started("run-one", { project: "loopfile" }, 1),
+    {
+      seq: 3,
+      at: "2026-09-22T10:00:01.000Z",
+      type: "loop.paused",
+      until: "2026-09-22T10:00:02.000Z",
+    },
+    { seq: 4, at: "2026-09-22T10:00:01.100Z", type: "owner.started", pid: 42, host: "box" },
+  ];
+  assert.deepEqual(
+    nextLoopAction(
+      status,
+      { state: "completed", runId: "run-one" },
+      undefined,
+      undefined,
+      undefined,
+      history,
+      pauseOptions,
+    ),
+    { kind: "start", inputSet: { project: "loopfile" }, sourceIndex: 2 },
+  );
+});
+
 test("pauses before the second and later runs", () => {
   assert.deepEqual(
     nextLoopAction(
