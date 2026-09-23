@@ -54,6 +54,7 @@ async function gitRepo(repo: string, bare: string): Promise<void> {
 
 const done: FakeAction[] = [
   { do: "dataPut", key: "implement.criteria", content: "criterion 1: a.test.ts, it works" },
+  { do: "dataPut", key: "implement.title", content: "feat: ticket title" },
   { do: "result", outcome: "done" },
 ];
 
