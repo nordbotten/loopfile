@@ -16,10 +16,12 @@
  * the whole suite once per mutant, at about ten times the CPU. If it stops
  * being fast, scope the run rather than lower the bar.
  *
- * Only the `CORE` files this branch changed since it left `origin/main` are
- * mutated, committed or not. A branch that changes no `CORE` file mutates
- * nothing and passes. A test-only change is not checked against the code it
- * stops covering.
+ * Only the `CORE` lines this branch added or changed since it left
+ * `origin/main` are mutated, committed or not, and all of a `CORE` file that is
+ * not tracked yet. A whole file was too much: 9 changed lines in an 800-line
+ * file gave over 1000 mutants and a run longer than the CI timeout. A branch
+ * that changes no `CORE` line mutates nothing and passes. A test-only change is
+ * not checked against the code it stops covering.
  *
  * The bar lives in `quality-ratchet.json`, like every other bar, and Stryker
  * enforces it directly by breaking the build below it.
@@ -27,7 +29,7 @@
 
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
-import { filesInZone, REPO_ROOT } from "./quality-zones.mjs";
+import { changedCore, filesInZone, REPO_ROOT } from "./quality-zones.mjs";
 
 const bars = JSON.parse(readFileSync(new URL("quality-ratchet.json", import.meta.url), "utf8"));
 
@@ -36,12 +38,6 @@ function git(...args) {
   const output = execFileSync("git", [...args, "--", "src"], { cwd: REPO_ROOT, encoding: "utf8" });
   return output.split("\n");
 }
-
-/** Changed since the merge base with `origin/main`, plus files not yet tracked. */
-const changed = new Set([
-  ...git("diff", "--name-only", "--merge-base", "origin/main"),
-  ...git("ls-files", "--others", "--exclude-standard"),
-]);
 
 /**
  * End-to-end tests that start processes, build git repositories or wait on
@@ -67,7 +63,10 @@ export default {
   testRunner: "tap",
   plugins: ["@stryker-mutator/tap-runner"],
   tap: { testFiles: filesInZone("TESTS").filter((file) => !SLOW_TESTS.has(file)) },
-  mutate: filesInZone("CORE").filter((file) => changed.has(file)),
+  mutate: changedCore(
+    git("diff", "-U0", "--merge-base", "origin/main"),
+    git("ls-files", "--others", "--exclude-standard"),
+  ),
   coverageAnalysis: "perTest",
   reporters: ["clear-text", "progress"],
   thresholds: { high: 90, low: bars.mutation.min, break: bars.mutation.min },

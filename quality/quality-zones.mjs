@@ -86,6 +86,28 @@ export function filesInZone(zone) {
   return sourceFiles().filter((file) => zoneOf(file) === zone);
 }
 
+/**
+ * Stryker `file:start-end` patterns for the `CORE` lines that a `git diff -U0`
+ * adds or changes, plus every untracked `CORE` file in full.
+ *
+ * @param {string[]} diff the lines of the diff
+ * @param {string[]} untracked repository-relative paths
+ */
+export function changedCore(diff, untracked) {
+  const isCore = (file) => file?.endsWith(".ts") && zoneOf(file) === "CORE";
+  const patterns = untracked.filter(isCore);
+  let file;
+  for (const line of diff) {
+    if (line.startsWith("+++ ")) file = line.slice(6);
+    const hunk = /^@@ -\S+ \+(\d+)(?:,(\d+))? @@/.exec(line);
+    if (!hunk || !isCore(file)) continue;
+    const start = Number(hunk[1]);
+    const count = hunk[2] === undefined ? 1 : Number(hunk[2]);
+    if (count > 0) patterns.push(`${file}:${start}-${start + count - 1}`);
+  }
+  return patterns;
+}
+
 /** Checks that every tracked source file has a zone. Returns the exit code. */
 export function main(write) {
   const counts = { CORE: 0, BOUNDARY: 0, EXEMPT: 0, TESTS: 0 };
