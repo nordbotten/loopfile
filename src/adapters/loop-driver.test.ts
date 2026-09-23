@@ -10,10 +10,14 @@ import { parseEventLog } from "../application/replay.ts";
 import type { LoopEvent } from "../domain/events.ts";
 import { materializeDirectory } from "./directory-loader.ts";
 import { openEventLog } from "./event-log.ts";
+import { type FakeScript, fakeHarnessAdapters } from "./fake-harness.test.ts";
 import { startRun } from "./launch-command.ts";
+import { localExecutor } from "./local-executor.ts";
 import { runLoop } from "./loop-run.ts";
 import { programIdentity } from "./program-identity.ts";
 import { loopPaths, runPaths } from "./run-directory.ts";
+import { statusCommand } from "./status-command.ts";
+import { executeRun } from "./workflow-run.ts";
 
 const run = promisify(execFile);
 const cli = await realpath(new URL("../cli.ts", import.meta.url));
@@ -30,6 +34,7 @@ let count = 0;
 async function setup(
   command: string,
   sourceText = `formatVersion: 1\nsteps:\n  - id: work\n    kind: command\n    run: ${JSON.stringify(command)}\n`,
+  runCount = 3,
   pauseMs: number | null = null,
 ) {
   count += 1;
@@ -59,7 +64,7 @@ async function setup(
     eventFormatVersion: 1,
     repositoryPath: repo,
     loopfileName: "source",
-    source: { kind: "times", count: 3 },
+    source: { kind: "times", count: runCount },
     fixedInputs: {},
     retry: 0,
     maxRuns: null,
@@ -155,7 +160,7 @@ test("waits for a child already running when the loop resumes", async () => {
 });
 
 test("pauses before later children", async () => {
-  const setupResult = await setup("true", undefined, 1);
+  const setupResult = await setup("true", undefined, 3, 1);
   const ended = await runLoop(setupResult.home, setupResult.loopId, {
     cli,
     env: setupResult.env,
@@ -168,6 +173,108 @@ test("pauses before later children", async () => {
   assert.equal(started.length, 3);
   assert.equal(pauses.length, 2);
   assert.deepEqual(ended, loopStatus(events));
+});
+
+test("status totals include metrics from two fake-harness loop runs", async () => {
+  const sourceText = `formatVersion: 1
+steps:
+  - id: work
+    kind: agent
+    harness: claude
+    prompt: Work.
+    on:
+      done: $success
+`;
+  const setupResult = await setup("true", sourceText, 2);
+  const script: FakeScript = {
+    work: [
+      [
+        {
+          do: "activity",
+          activity: {
+            kind: "metrics",
+            metrics: {
+              inputTokens: null,
+              outputTokens: null,
+              totalTokens: null,
+              costUsd: 1,
+              toolCalls: null,
+              permissionDenials: null,
+            },
+          },
+        },
+        { do: "result", outcome: "done" },
+      ],
+      [
+        {
+          do: "activity",
+          activity: {
+            kind: "metrics",
+            metrics: {
+              inputTokens: null,
+              outputTokens: null,
+              totalTokens: null,
+              costUsd: 2,
+              toolCalls: null,
+              permissionDenials: null,
+            },
+          },
+        },
+        { do: "result", outcome: "done" },
+      ],
+    ],
+  };
+  const adapters = fakeHarnessAdapters(script);
+  const ended = await runLoop(setupResult.home, setupResult.loopId, {
+    cli,
+    env: setupResult.env,
+    pollMs: 1,
+    startRun: async (options) => {
+      await mkdir(runPaths(setupResult.home, options.runId).root, { recursive: true });
+      const run = await executeRun({
+        home: setupResult.home,
+        runId: options.runId,
+        source: options.source,
+        inputs: options.inputs,
+        loopId: options.loopId,
+        loopIndex: options.loopIndex,
+        loopfileName: options.loopfileName,
+        repository: options.repository,
+        executor: localExecutor(setupResult.env),
+        adapters,
+      });
+      assert.equal(run.result, "success");
+      return { ok: true, runId: options.runId };
+    },
+  });
+  assert.equal(ended.state, "completed");
+
+  let text = "";
+  assert.equal(
+    await statusCommand(
+      ["status", setupResult.loopId],
+      (value) => (text += value),
+      () => undefined,
+      setupResult.env,
+    ),
+    0,
+  );
+  assert.match(
+    text,
+    /^totals: 2 completed, 0 retries, wall \d+:\d\d, est\. \$3\.00, mean \d+:\d\d \/ est\. \$1\.50 per completed run$/m,
+  );
+
+  let json = "";
+  assert.equal(
+    await statusCommand(
+      ["status", setupResult.loopId, "--json"],
+      (value) => (json += value),
+      () => undefined,
+      setupResult.env,
+    ),
+    0,
+  );
+  assert.equal(JSON.parse(json).totals.costUsd, 3);
 });
 
 test("stops after the first failed child", async () => {

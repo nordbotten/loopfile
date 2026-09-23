@@ -90,7 +90,7 @@ test("--help is a short command index", () => {
       "  logs <runid> [<attempt>] [--stdout | --stderr] [--iteration <n>]",
       "  logs <runid> --owner",
       "  status [<runid>|<loopid>] [--monitor | --json]",
-      "  tail <runid> [--json]",
+      "  tail <runid|loopid> [--json]",
       "  result <runid> [--json]",
       "  unpack <file.loop> [<destination>]",
       "  upgrade <source>",
@@ -721,7 +721,7 @@ test("`logs` is dispatched by name and reports an operator failure on stderr onl
 });
 
 test("`tail` is listed as a command", () => {
-  assert.match(run(["--help"]).output, /tail <runid> \[--json\]/);
+  assert.match(run(["--help"]).output, /tail <runid\|loopid> \[--json\]/);
 });
 
 test("`tail` is dispatched by name and reports an unknown run on stderr only", async () => {

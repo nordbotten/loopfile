@@ -168,10 +168,14 @@ test("status prints a loop's facts and three newest-last child rows, and JSON ha
   ]);
   const table = text.output.slice(text.output.indexOf("\n\n") + 2);
   assert.match(table, /^#\s+RUN ID\s+INPUT SET\s+STATE\s+TIME\s+COST/);
-  assert.equal(table.trim().split("\n").length, 4);
+  assert.equal(table.trim().split("\n").length, 5);
   assert.match(table, /issue=12345678901234567890/);
   assert.doesNotMatch(table, /1234567890123456789012345/);
   assert.match(table, /est\. \$1\.50/);
+  assert.match(
+    text.output,
+    /^totals: 3 completed, 1 retries, wall 30:00, est\. \$4\.50, mean 0:06 \/ est\. \$1\.50 per completed run$/m,
+  );
 
   const json = runner();
   assert.equal(
@@ -183,6 +187,17 @@ test("status prints a loop's facts and three newest-last child rows, and JSON ha
   assert.equal(parsed.runs.length, 3);
   assert.equal(parsed.runs[1].retryOf, parsed.runs[0].runId);
   assert.equal(parsed.runs[0].metrics.costUsd, 1.5);
+  assert.deepEqual(parsed.totals, {
+    completed: 3,
+    failed: 0,
+    cancelled: 0,
+    retries: 1,
+    wallMs: 1_800_000,
+    costUsd: 4.5,
+    runsWithoutCost: 0,
+    meanMsPerCompleted: 6_000,
+    meanCostUsdPerCompleted: 1.5,
+  });
 });
 
 test("status shows only ten text rows but all twelve JSON runs", async () => {
@@ -190,7 +205,7 @@ test("status shows only ten text rows but all twelve JSON runs", async () => {
   const text = runner();
   await statusCommand(["status", loopId], text.out, text.err, { LOOPFILE_HOME: home });
   const table = text.output.slice(text.output.indexOf("\n\n") + 2);
-  assert.equal(table.trim().split("\n").length, 11);
+  assert.equal(table.trim().split("\n").length, 12);
 
   const json = runner();
   await statusCommand(["status", loopId, "--json"], json.out, json.err, { LOOPFILE_HOME: home });
@@ -390,17 +405,22 @@ test("loop status rendering includes the current child step", () => {
       program: { version: "0.1.0", digest: "sha256:program" },
     },
   ]);
-  const view = buildLoopStatusView(status, "running", [
-    {
-      index: 1,
-      runId: "20260922-120000-aaaa",
-      inputSet: {},
-      retryOf: null,
-      state: "running",
-      elapsedMs: 1,
-      metrics: UNKNOWN_METRICS,
-    },
-  ]);
+  const view = buildLoopStatusView(
+    status,
+    "running",
+    [
+      {
+        index: 1,
+        runId: "20260922-120000-aaaa",
+        inputSet: {},
+        retryOf: null,
+        state: "running",
+        elapsedMs: 1,
+        metrics: UNKNOWN_METRICS,
+      },
+    ],
+    "2026-09-22T12:00:00.000Z",
+  );
   assert.match(
     renderLoopStatusView(
       { ...view, loop: { ...view.loop, currentRunId: "20260922-120000-aaaa" } },

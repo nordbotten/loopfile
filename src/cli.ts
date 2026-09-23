@@ -66,7 +66,7 @@ Commands:
   logs <runid> [<attempt>] [--stdout | --stderr] [--iteration <n>]
   logs <runid> --owner
   status [<runid>|<loopid>] [--monitor | --json]
-  tail <runid> [--json]
+  tail <runid|loopid> [--json]
   result <runid> [--json]
   unpack <file.loop> [<destination>]
   upgrade <source>
