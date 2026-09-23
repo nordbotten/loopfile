@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
 import { copyFile, mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -18,6 +19,7 @@ import { tailCommand } from "./tail-command.ts";
 
 const run = promisify(execFile);
 const cli = fileURLToPath(new URL("../cli.ts", import.meta.url));
+const { version } = createRequire(import.meta.url)("../../package.json") as { version: string };
 /**
  * The ping bound for an attached loop. A gone owner refuses the connection at
  * once and a live one answers, so this bound only ends a ping to a live owner
@@ -470,7 +472,7 @@ test("a changed CLI ends a loop before its second run", async () => {
     assert.equal(ended?.type === "loop.ended" ? ended.reason : undefined, "program_changed");
     assert.equal(
       ended?.type === "loop.ended" ? ended.detail : undefined,
-      "loopfile changed from 0.1.0 to 0.1.0",
+      `loopfile changed from ${version} to ${version}`,
     );
     assert.equal(events.filter((event) => event.type === "loop.run_started").length, 1);
     await waitForOwnerGone(setupResult.home, loopId);
@@ -530,7 +532,7 @@ test("pauses between runs and exposes the pause in status", async () => {
   try {
     const captured = io();
     const code = await loopCommand(
-      ["loop", setupResult.source, "--times", "2", "--pause", "1s", "-d"],
+      ["loop", setupResult.source, "--times", "2", "--pause", "5s", "-d"],
       cli,
       captured.value,
       setupResult.env,
@@ -550,13 +552,13 @@ test("pauses between runs and exposes the pause in status", async () => {
     );
     assert.equal(started.length, 2);
     assert.equal(events.filter((event) => event.type === "loop.paused").length, 1);
-    assert.equal(events[0]?.type === "loop.created" ? events[0].pauseMs : undefined, 1000);
+    assert.equal(events[0]?.type === "loop.created" ? events[0].pauseMs : undefined, 5000);
     const firstChild = parseEventLog(
       await readFile(runPaths(setupResult.home, started[0]?.runId ?? "").events, "utf8"),
     );
     const firstEnded = firstChild.at(-1);
     assert.equal(firstEnded?.type, "run.ended");
-    assert.ok(Date.parse(started[1]?.at ?? "") - Date.parse(firstEnded?.at ?? "") >= 1000);
+    assert.ok(Date.parse(started[1]?.at ?? "") - Date.parse(firstEnded?.at ?? "") >= 5000);
   } finally {
     await removeAfterOwnersExit(setupResult.root);
   }
