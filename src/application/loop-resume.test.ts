@@ -42,3 +42,18 @@ test("loop resume guard detects repeated internal errors only without child prog
     true,
   );
 });
+
+test("loop resume guard ignores unrelated ends and only loop ends", () => {
+  const unrelatedEnd: LoopEvent = {
+    ...internalError(null, 2),
+    reason: "source_empty",
+    result: "success",
+  };
+  assert.equal(repeatedLoopInternalError([unrelatedEnd, unrelatedEnd]), false);
+
+  const unrelatedRun = { ...runStarted(3), reason: "internal_error", childSeq: null };
+  assert.equal(
+    repeatedLoopInternalError([internalError(null, 2), unrelatedRun, internalError(null, 4)]),
+    false,
+  );
+});
