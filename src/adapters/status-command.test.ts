@@ -5,10 +5,12 @@ import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import { after, test } from "node:test";
 import { stripVTControlCharacters } from "node:util";
+import { loopStatus } from "../application/loop-status.ts";
 import { UNKNOWN_METRICS } from "../application/status-projection.ts";
+import type { LoopEvent } from "../domain/events.ts";
 import { STATUS_FORMAT_VERSION } from "../domain/status.ts";
 import type { MonitorIo } from "./monitor.ts";
-import { runPaths } from "./run-directory.ts";
+import { loopPaths, runPaths } from "./run-directory.ts";
 import { statusCommand } from "./status-command.ts";
 
 const home = await mkdtemp(join(tmpdir(), "loopfile-status-"));
@@ -312,6 +314,68 @@ async function pickerHome(
   await makeRun("20260917-160300-pppp", overrides, undefined, dir);
   return { LOOPFILE_HOME: dir };
 }
+
+async function makePickerLoop(home: string): Promise<string> {
+  const loopId = "loop-20260917-160301-pppp";
+  const events: LoopEvent[] = [
+    {
+      seq: 1,
+      at: "2026-09-17T16:03:01.000Z",
+      type: "loop.created",
+      loopId,
+      eventFormatVersion: 1,
+      repositoryPath: "/repo",
+      loopfileName: "review-loop",
+      source: { kind: "times", count: 1 },
+      fixedInputs: {},
+      retry: 0,
+      maxRuns: 1,
+      pauseMs: null,
+      program: { version: "0.1.0", digest: "sha256:program" },
+    },
+    {
+      seq: 2,
+      at: "2026-09-17T16:04:01.000Z",
+      type: "loop.ended",
+      result: "success",
+      reason: "max_runs",
+    },
+  ];
+  const paths = loopPaths(home, loopId);
+  await mkdir(paths.root, { recursive: true });
+  await writeFile(paths.events, `${events.map((event) => JSON.stringify(event)).join("\n")}\n`);
+  await writeFile(paths.status, JSON.stringify(loopStatus(events)));
+  return loopId;
+}
+
+test("bare status in a terminal lists loops before runs and picks a loop", async () => {
+  const home = await mkdtemp(join(tmpdir(), "loopfile-status-pick-loop-"));
+  after(() => rm(home, { recursive: true, force: true }));
+  const runId = "20260917-160300-pppp";
+  await makeRun(runId, {}, undefined, home);
+  const loopId = await makePickerLoop(home);
+  const t = terminal(true);
+  const r = runner();
+  const result = statusCommand(
+    ["status"],
+    r.out,
+    r.err,
+    { LOOPFILE_HOME: home },
+    {
+      io: t.io,
+      pingTimeoutMs: 100,
+    },
+  );
+  await waitFor(() => t.text().includes("Pick a run"));
+  const picker = t.text();
+  assert.match(picker, new RegExp(`^    LOOP ID.*\\n1\\) .*${loopId}`, "m"));
+  assert.match(picker, new RegExp(`^    RUN ID.*\\n2\\) .*${runId}`, "m"));
+  t.input.write("1\n");
+
+  assert.equal(await result, 0);
+  assert.match(r.output, new RegExp(`^loop: ${loopId}$`, "m"));
+  assert.equal(r.errors, "");
+});
 
 test("bare status in a terminal prints the picked run once", async () => {
   const t = terminal(true);
