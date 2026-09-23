@@ -20,6 +20,7 @@ import {
   renderOperatorConfirmation,
   renderOperatorFailure,
 } from "../application/operator-error.ts";
+import { parseSource, SourceParseError } from "../application/source.ts";
 import {
   MANIFEST_UPGRADES,
   type ManifestUpgrades,
@@ -35,7 +36,14 @@ import {
   MANIFEST_NAME,
   materializePacked,
 } from "./directory-loader.ts";
-import { askOnTerminal, classifyInput, InputError, type InputKind, readStdin } from "./input.ts";
+import {
+  askOnTerminal,
+  classifyInput,
+  InputError,
+  type InputKind,
+  readStdin,
+  sourceExists,
+} from "./input.ts";
 import { writeArchive } from "./pack-command.ts";
 
 export interface UpgradeIo {
@@ -124,6 +132,31 @@ export async function upgradeCommand(
   if (source === "-")
     return upgradeStdin(io, upgrades, readInput).catch((error) =>
       resultExitCode(commandFailure(io)(error)),
+    );
+
+  let parsed: ReturnType<typeof parseSource>;
+  try {
+    parsed = parseSource(source, await sourceExists(source));
+  } catch (error) {
+    return resultExitCode(
+      operatorFailure(
+        io,
+        error instanceof Error ? error.message : String(error),
+        "bad_argument",
+        2,
+        error instanceof SourceParseError ? error.help : USAGE,
+      ),
+    );
+  }
+  if (parsed.kind === "remote")
+    return resultExitCode(
+      operatorFailure(
+        io,
+        "upgrade cannot write to a Remote Loopfile",
+        "bad_argument",
+        2,
+        "Make a local copy first: loopfile unpack <source> [<destination>]",
+      ),
     );
 
   const result = await guarded(
