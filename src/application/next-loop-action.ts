@@ -17,6 +17,7 @@ export type LastChildState =
   | "not_started"
   | "completed"
   | "failed"
+  | "internal_error"
   | "cancelled"
   | "crashed";
 
@@ -34,6 +35,7 @@ export type LoopAction =
       readonly retryOf?: string;
     }
   | { readonly kind: "wait" }
+  | { readonly kind: "resume_child"; readonly runId: string }
   | { readonly kind: "start_pending"; readonly run: LoopRunStarted }
   | { readonly kind: "pause"; readonly until: string }
   | {
@@ -47,6 +49,7 @@ export type LoopAction =
 export interface NextLoopActionOptions {
   readonly pauseMs?: number | null;
   readonly now?: Date;
+  readonly resumeCrashedChild?: boolean;
 }
 
 /** The parsed stdout result of one `--next` command. */
@@ -81,6 +84,12 @@ export function nextLoopAction(
         }
       : { kind: "start_pending", run };
   }
+  if (
+    options.resumeCrashedChild &&
+    (lastChild.state === "crashed" || lastChild.state === "internal_error")
+  ) {
+    return { kind: "resume_child", runId: lastChild.runId };
+  }
   const failed = failedChildAction(status, lastChild, history, options);
   if (failed !== undefined) return failed;
   const childEnd = childEndAction(lastChild);
@@ -94,7 +103,7 @@ function failedChildAction(
   history: readonly LoopEvent[],
   options: NextLoopActionOptions,
 ): LoopAction | undefined {
-  if (child.state !== "failed") return undefined;
+  if (child.state !== "failed" && child.state !== "internal_error") return undefined;
   const details = retryDetails(child.runId, history);
   if (details === undefined || details.retriesSoFar >= status.retry) {
     return { kind: "end", reason: "run_failed", detail: `run ${child.runId} failed` };
@@ -150,7 +159,7 @@ function atRunCap(status: LoopStatus): boolean {
 
 function childEndAction(child: LastChild): LoopAction | undefined {
   if (child.state === "cancelled") {
-    return { kind: "end", reason: "run_failed", detail: `run ${child.runId} cancelled` };
+    return { kind: "end", reason: "cancelled", detail: `run ${child.runId} cancelled` };
   }
   if (child.state === "crashed") {
     return { kind: "end", reason: "internal_error", detail: `child run ${child.runId} crashed` };
