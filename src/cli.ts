@@ -46,7 +46,7 @@ const { version } = createRequire(import.meta.url)("../package.json") as { versi
 const HELP = `loopfile ${version} - run deterministic agent workflows
 
 Usage:
-  loopfile <directory|file.loop|github:owner/repo|-> [-d] [--trust] [--input <name>=<value>]...
+  loopfile <directory|file.loop|github:owner/repo[/path][@ref]|-> [-d] [--trust] [--input <name>=<value>]...
   loopfile [options]
 
 Learn more:
