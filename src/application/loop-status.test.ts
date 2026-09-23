@@ -202,6 +202,58 @@ for (const [reason, state] of endStates) {
   });
 }
 
+test("owner.started clears an internal-error end to resume the loop", () => {
+  const status = loopStatus([
+    createdList,
+    {
+      seq: 2,
+      at: "2026-09-22T10:01:00.000Z",
+      type: "loop.run_started",
+      runId: "run-one",
+      index: 1,
+      inputSet: {},
+      sourceIndex: 1,
+      retryOf: null,
+    },
+    {
+      seq: 3,
+      at: "2026-09-22T10:02:00.000Z",
+      type: "loop.ended",
+      result: "failure",
+      reason: "internal_error",
+      detail: "driver failed",
+      childSeq: 4,
+    },
+    { seq: 4, at: "2026-09-22T10:03:00.000Z", type: "owner.started", pid: 42, host: "box" },
+  ]);
+
+  assert.equal(status.state, "running");
+  assert.equal(status.endReason, null);
+  assert.equal(status.detail, null);
+  assert.equal(status.endedAt, null);
+  assert.equal(status.currentRunId, "run-one");
+});
+
+test("owner.started does not reopen a normally ended loop", () => {
+  const status = loopStatus([
+    createdList,
+    {
+      seq: 2,
+      at: "2026-09-22T10:01:00.000Z",
+      type: "loop.ended",
+      result: "failure",
+      reason: "run_failed",
+      detail: "child run failed",
+    },
+    { seq: 3, at: "2026-09-22T10:02:00.000Z", type: "owner.started", pid: 42, host: "box" },
+  ]);
+
+  assert.equal(status.state, "failed");
+  assert.equal(status.endReason, "run_failed");
+  assert.equal(status.detail, "child run failed");
+  assert.equal(status.endedAt, "2026-09-22T10:01:00.000Z");
+});
+
 test("loopStatus rejects a log without loop.created", () => {
   assert.throws(() => loopStatus([]), /does not start with loop\.created/);
 });
