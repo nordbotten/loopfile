@@ -116,12 +116,15 @@ the same: every run already works from its own copy.
   `--force`.
 - The command prints the path of the file it wrote.
 
-`loopfile unpack <file.loop> [<destination>]` writes a source directory.
+`loopfile unpack <file.loop|remote> [<destination>]` writes a local source directory.
 
-- The destination is the file name without `.loop`, or the path you give. It must
-  not exist, or it must be an empty directory.
+- The destination is the input name without `.loop`, or the remote Loopfile name,
+  unless you give a path. It must not exist, or it must be an empty directory.
 - A packed `.loop` is extracted with the safety rules below. A thin `.loop`
-  becomes a directory that holds `manifest.yaml`.
+  becomes a directory that holds `manifest.yaml`. A remote folder is copied
+  without its root `.git` folder.
+- A remote copy keeps no link to its origin and never needs trust. It prints the
+  source and commit it copied.
 - `unpack` does not validate the manifest, so you can unpack an invalid or older
   Loopfile and then fix it. If it fails, it leaves nothing behind.
 
