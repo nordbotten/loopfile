@@ -7,9 +7,14 @@ Rules:
 
 - Follow AGENTS.md. Do not add a suppression under `src/`, and do not edit a bar in
   `quality/quality-ratchet.json`.
+- Write a test for each acceptance criterion of the issue. A criterion with no test
+  is not done.
+- Run `npm run verify` before you finish, and fix what it finds. You can run single
+  test files with `node --test <file>` while you work.
+- Do not run `npm run quality:mutation`. The next step runs it.
 - Commit your work to the current branch. Do not push and do not open a pull request.
+- List each acceptance criterion with the test that checks it (file and test name),
+  one per line, with `loopfile data put implement.criteria -`.
 - When the work is complete and committed, run `loopfile result done`.
-- For testing and linting only these are allowed: `npm run format`, `npm run test`, `npm run typecheck` and `npm run gate:quiet` (test step will cover the rest)
-  - Do not run `npm run quality:mutation`
 - If you cannot go on without a person, run
   `loopfile result blocked --message "<why>"`.

@@ -41,6 +41,7 @@ function collectCoverage() {
       "--exclude=quality/**",
       "node",
       "--test",
+      "--test-timeout=120000",
       "src/**/*.test.ts",
     ],
     { cwd: REPO_ROOT, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
