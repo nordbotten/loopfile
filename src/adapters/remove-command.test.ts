@@ -235,6 +235,17 @@ test("prunes a missing workspace before removing the run folder", async () => {
   assert.match(await runGit(run.repo, "branch", "--list", `loopfile/${run.runId}`), /loopfile/);
 });
 
+test("removes a worktree when its repository is gone, with or without --force", async () => {
+  for (const args of [[], ["--force"]]) {
+    const run = await setup();
+    await rm(run.repo, { recursive: true });
+    const result = await remove(run.env, run.runId, ...args);
+    assert.equal(result.code, 0, result.err);
+    await assert.rejects(stat(run.paths.root));
+    await assert.rejects(stat(run.paths.workspace));
+  }
+});
+
 test("warns once and removes a run whose recorded workspace is already gone", async () => {
   const run = await setup();
   await rm(run.paths.workspace, { recursive: true });

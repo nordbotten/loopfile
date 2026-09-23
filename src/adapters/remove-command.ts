@@ -16,6 +16,7 @@ import {
   pruneWorktrees,
   removeWorkspace,
   type Workspace,
+  type WorkspaceRemoval,
   workspaceFromCreated,
 } from "./workspace.ts";
 
@@ -237,14 +238,23 @@ async function removeRunWorkspace(
     await pruneWorktrees(workspace.repositoryPath).catch(() => undefined);
     return `warning: workspace is gone: ${workspace.path}\n`;
   }
-  return removed.removed
-    ? undefined
-    : failure(
-        `workspace of run ${created.runId} is dirty: ${removed.reason}`,
-        "workspace_dirty",
-        `Commit or discard the workspace changes, or run \`loopfile remove ${created.runId} --force\` to delete them.`,
-        1,
-      );
+  return removed.removed ? undefined : workspaceRemovalFailure(created.runId, removed);
+}
+
+function workspaceRemovalFailure(
+  runId: string,
+  removed: Extract<WorkspaceRemoval, { readonly removed: false }>,
+): RemoveFailure {
+  return failure(
+    removed.dirty
+      ? `workspace of run ${runId} is dirty: ${removed.reason}`
+      : `could not remove workspace of run ${runId}: ${removed.reason}`,
+    removed.dirty ? "workspace_dirty" : "operation_failed",
+    removed.dirty
+      ? `Commit or discard the workspace changes, or run \`loopfile remove ${runId} --force\` to delete them.`
+      : "Inspect the target repository and workspace, then try again.",
+    1,
+  );
 }
 
 async function removeFiles(
