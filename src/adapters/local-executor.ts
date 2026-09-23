@@ -45,11 +45,16 @@ async function start(
   const child = spawn(command, args, {
     cwd: context.workspace,
     env: {
+      // These inherited values would still name the operator's launch folder.
       ...Object.fromEntries(
         Object.entries(launchEnv).filter(
-          ([name]) => !(CONTEXT_VARIABLE_NAMES as readonly string[]).includes(name),
+          ([name]) =>
+            name !== "PWD" &&
+            name !== "OLDPWD" &&
+            !(CONTEXT_VARIABLE_NAMES as readonly string[]).includes(name),
         ),
       ),
+      PWD: context.workspace,
       ...contextEnv,
     },
     detached: true,

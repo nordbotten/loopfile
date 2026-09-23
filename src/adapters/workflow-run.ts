@@ -128,8 +128,8 @@ export interface ExecuteRunOptions {
   /** Overrides the source basename in status and prompt facts. */
   readonly loopfileName?: string;
   readonly remote?: RemoteRecord;
-  /** The target repository the workspace is made from. */
-  readonly repository: string;
+  /** The Target folder the workspace is made from; absent in `empty` mode. */
+  readonly repository?: string;
   readonly executor: Executor;
   /** The harness adapter table. Defaults to the real one; tests give the fake behind a real name. */
   readonly adapters?: HarnessAdapters;
@@ -234,7 +234,11 @@ export async function resumeRun(options: ResumeRunOptions): Promise<ExecutedRun>
   try {
     const created = (await readEvents(paths))[0] as RunCreated;
     const workspace = workspaceFromCreated(created, paths.workspace);
-    const run = { ...options, source: paths.loopfile, repository: created.targetFolder };
+    const run = {
+      ...options,
+      source: paths.loopfile,
+      repository: created.targetFolder ?? paths.workspace,
+    };
     return await runSteps(run, owner, { workflow, workspace }, await loopfileNameOf(paths), (t) =>
       resumeFrom(workflow, t),
     );
@@ -259,7 +263,11 @@ export async function continueRun(options: ContinueRunOptions): Promise<Executed
   try {
     const created = history[0] as RunCreated;
     const workspace = workspaceFromCreated(created, paths.workspace);
-    const run = { ...options, source: paths.loopfile, repository: created.targetFolder };
+    const run = {
+      ...options,
+      source: paths.loopfile,
+      repository: created.targetFolder ?? paths.workspace,
+    };
     return await runSteps(
       run,
       owner,
@@ -360,10 +368,12 @@ async function prepare(
       runId: options.runId,
       eventFormatVersion: EVENT_FORMAT_VERSION,
       modelDigest: modelDigest(workflow),
-      targetFolder: workspace.targetFolder,
+      ...(workspace.mode === "empty" ? {} : { targetFolder: workspace.targetFolder }),
       workspacePath: workspace.path,
       workspaceMode: selectedMode.mode,
-      ...(workspace.mode === "here" ? {} : { isolateKind: workspace.isolateKind }),
+      ...(workspace.mode === "here" || workspace.mode === "empty"
+        ? {}
+        : { isolateKind: workspace.isolateKind }),
       ...(workspace.isolateKind === "worktree"
         ? { baseCommit: workspace.baseCommit, branch: workspace.branch }
         : {}),
@@ -409,7 +419,7 @@ async function runSteps(
       await status.flush();
       return { result: ended.result };
     }
-    if (workspace.mode === "here" || workspace.isolateKind === "copy") {
+    if (workspace.isolateKind !== "worktree") {
       await status.flush();
       return { result: ended.result };
     }

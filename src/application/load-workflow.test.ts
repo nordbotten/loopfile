@@ -151,13 +151,26 @@ test("workspace modes load, invalid modes are bad fields, and steps cannot overr
   assert.equal(here.status, "loaded");
   assert.equal(here.status === "loaded" && here.workflow.workspaceMode, "here");
 
-  const invalid = loadWorkflow(
+  const empty = loadWorkflow(
     { formatVersion: 1, workspace: "empty", steps: [{ id: "a", kind: "command", run: "true" }] },
+    { root: null },
+  );
+  assert.equal(empty.status, "loaded");
+  assert.equal(empty.status === "loaded" && empty.workflow.workspaceMode, "empty");
+
+  const invalid = loadWorkflow(
+    {
+      formatVersion: 1,
+      workspace: "not-a-mode",
+      steps: [{ id: "a", kind: "command", run: "true" }],
+    },
     { root: null, locate: (path) => (path === "workspace" ? 2 : undefined) },
   );
   assert.deepEqual(invalid, {
     status: "invalid",
-    errors: [{ path: "workspace", line: 2, message: "workspace must be one of: isolate, here" }],
+    errors: [
+      { path: "workspace", line: 2, message: "workspace must be one of: isolate, here, empty" },
+    ],
   });
   assert.match(
     only(

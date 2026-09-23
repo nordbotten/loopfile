@@ -143,7 +143,7 @@ export interface LaunchRequest {
   readonly kind: "directory" | "thin" | "packed";
   /** The manifest itself when `source` is stdin (`-`). */
   readonly sourceText?: string;
-  readonly repository: string;
+  readonly repository?: string;
   readonly inputs: LaunchInputs;
   /** Resolved mode for a launch, or the loop's CLI override for child runs. */
   readonly workspaceMode?: WorkspaceMode;
@@ -178,7 +178,7 @@ function launchRequest(value: unknown): LaunchRequest | undefined {
     source: value.source,
     sourceText: value.sourceText,
     kind: value.kind,
-    repository: value.repository,
+    ...(value.repository === undefined ? {} : { repository: value.repository }),
     inputs: value.inputs,
     ...(value.workspaceMode === undefined ? {} : { workspaceMode: value.workspaceMode }),
     loopfileName: value.loopfileName,
@@ -192,7 +192,7 @@ function isLaunchRequest(value: unknown): value is LaunchRequest {
   const { source, sourceText, kind, repository, inputs, workspaceMode } = value;
   return (
     typeof source === "string" &&
-    typeof repository === "string" &&
+    (typeof repository === "string" || (workspaceMode === "empty" && repository === undefined)) &&
     isKind(kind) &&
     isInputs(inputs) &&
     validWorkspaceMode(workspaceMode) &&
@@ -229,7 +229,7 @@ function validSourceText(value: unknown, kind: LaunchRequest["kind"]): value is 
 }
 
 function validWorkspaceMode(value: unknown): boolean {
-  return value === undefined || value === "isolate" || value === "here";
+  return value === undefined || value === "isolate" || value === "here" || value === "empty";
 }
 
 function isKind(value: unknown): value is LaunchRequest["kind"] {

@@ -569,7 +569,7 @@ steps:
   }
 });
 
-test("loop rejects unsupported workspace modes before making a loop", async () => {
+test("loop --workspace empty carries the mode to its child run", async () => {
   const setupResult = await setup();
   try {
     const captured = io();
@@ -581,10 +581,24 @@ test("loop rejects unsupported workspace modes before making a loop", async () =
         setupResult.env,
         { repository: setupResult.repo },
       ),
-      2,
+      0,
+      captured.errors(),
     );
-    assert.match(captured.errors(), /--workspace must be one of: isolate, here/);
-    await assert.rejects(stat(join(setupResult.home, "loops")));
+    const loopId = captured.output().trim();
+    const events = await waitForEnd(setupResult.home, loopId);
+    assert.equal(events[0]?.type === "loop.created" ? events[0].workspaceMode : undefined, "empty");
+    const child = events.find((event) => event.type === "loop.run_started");
+    assert.ok(child?.type === "loop.run_started");
+    const runEvents = parseEventLog(
+      await readFile(runPaths(setupResult.home, child.runId).events, "utf8"),
+    );
+    const created = runEvents[0];
+    assert.equal(created?.type === "run.created" ? created.workspaceMode : undefined, "empty");
+    assert.equal(
+      created?.type === "run.created" && created.workspacePath,
+      runPaths(setupResult.home, child.runId).workspace,
+    );
+    assert.equal(created?.type === "run.created" && Object.hasOwn(created, "targetFolder"), false);
   } finally {
     await removeAfterOwnersExit(setupResult.root);
   }

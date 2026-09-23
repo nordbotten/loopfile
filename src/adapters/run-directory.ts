@@ -1,8 +1,7 @@
 /**
  * The external run directory: where one run's state lives (#14).
  *
- * Run state never lives inside the target repository (ADR 0003), so every run
- * gets its own folder under `$LOOPFILE_HOME/runs/<runid>/`, with `~/.loopfile`
+ * Run state lives under `$LOOPFILE_HOME/runs/<runid>/`, with `~/.loopfile`
  * as the default home. The layout is fixed by ADR 0003 (`events.jsonl`,
  * `attempts/`), ADR 0007 (`status.json`, `activity.log`) and ADR 0008
  * (`owner.sock`, `owner.log`), plus the workspace (CONTEXT.md), `loopfile/`
@@ -40,7 +39,7 @@ export interface RunPaths {
   readonly ownerLog: string;
   /** One folder per attempt, `<nnn>-<step>` (#15). */
   readonly attempts: string;
-  /** The path for an isolated workspace; `here` runs use the Target folder instead. */
+  /** The workspace path for `isolate` and `empty`; `here` uses the Target folder instead. */
   readonly workspace: string;
   /** The Materialized Loopfile. The only folder whose contents are the user's. */
   readonly loopfile: string;
@@ -202,8 +201,8 @@ export interface CreateRunDirectoryOptions {
   readonly home: string;
   /** The run ID, usually from `newRunId()`. */
   readonly runId: string;
-  /** The target repository. Run state may never land inside it. */
-  readonly targetRepository: string;
+  /** The Target folder; empty workspaces have none and skip the containment check. */
+  readonly targetRepository?: string;
   /** Every step ID in the workflow. The longest one sets the socket budget. */
   readonly stepIds: readonly string[];
 }
@@ -212,12 +211,14 @@ export interface CreateRunDirectoryOptions {
  * Makes the run folder and its empty `owner.log`, or fails saying why.
  *
  * The folder must be new: an existing one belongs to another run and is never
- * reused. Both checks run before anything is made, so a rejected launch leaves
- * nothing behind.
+ * reused. Applicable checks run before anything is made, so a rejected launch
+ * leaves nothing behind.
  */
 export async function createRunDirectory(options: CreateRunDirectoryOptions): Promise<RunPaths> {
   const paths = runPaths(options.home, options.runId);
-  await checkOutsideRepository(paths.root, options.targetRepository);
+  if (options.targetRepository !== undefined) {
+    await checkOutsideRepository(paths.root, options.targetRepository);
+  }
   checkSocketBudget(paths.root, options.stepIds);
 
   await makeDirectory(join(options.home, "runs"), true);

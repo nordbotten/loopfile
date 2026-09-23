@@ -132,6 +132,19 @@ test("the working directory is the workspace root", async () => {
   assert.equal((await read(started.stdout)).trim(), path);
 });
 
+test("the process environment describes its workspace, not the launch folder", async () => {
+  const path = await workspace();
+  const executor = localExecutor({ ...LAUNCH, PWD: "/target", OLDPWD: "/target" });
+  const started = running(
+    await executor.start({
+      command: "sh",
+      args: ["-c", 'printf "%s\\n" "$PWD"; printenv OLDPWD || echo unset'],
+      context: contextIn(path),
+    }),
+  );
+  assert.equal(await read(started.stdout), `${path}\nunset\n`);
+});
+
 test("stdin is closed, so a reader of it ends at once", async () => {
   const started = running(await sh("cat; echo done"));
   assert.equal(await read(started.stdout), "done\n");

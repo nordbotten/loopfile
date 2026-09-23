@@ -108,6 +108,27 @@ test("removes a copy without Git and does not report a branch", async () => {
   await assert.rejects(stat(run.paths.root));
 });
 
+test("removes an empty workspace without a recorded Target folder or Git", async () => {
+  const run = await setup();
+  await runGit(run.repo, "worktree", "remove", "--force", run.paths.workspace);
+  await mkdir(run.paths.workspace);
+  await writeFile(join(run.paths.workspace, "output.txt"), "keep until removal\n");
+  const lines = (await readFile(run.paths.events, "utf8")).trimEnd().split("\n");
+  const created = JSON.parse(lines[0] ?? "{}") as Record<string, unknown>;
+  created.workspacePath = run.paths.workspace;
+  created.workspaceMode = "empty";
+  for (const field of ["targetFolder", "isolateKind", "branch", "baseCommit"])
+    delete created[field];
+  lines[0] = JSON.stringify(created);
+  await writeFile(run.paths.events, `${lines.join("\n")}\n`);
+
+  const result = await remove({ ...run.env, PATH: "" }, run.runId);
+  assert.equal(result.code, 0, result.err);
+  assert.equal(result.err, `removed: ${run.runId}\n`);
+  await assert.rejects(stat(run.paths.root));
+  assert.equal((await stat(run.repo)).isDirectory(), true);
+});
+
 test("removing a here run preserves the target folder without Git", async () => {
   const run = await setup();
   await runGit(run.repo, "worktree", "remove", "--force", run.paths.workspace);
