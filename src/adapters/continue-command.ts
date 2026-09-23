@@ -173,12 +173,20 @@ async function readRunEvents(
     return parseEventLog(text);
   } catch (error) {
     return {
-      summary: error instanceof Error ? error.message : String(error),
-      code: error instanceof CorruptEventLogError ? "log_corrupt" : "operation_failed",
+      summary: eventErrorMessage(error),
+      code: eventErrorCode(error),
       help: "Inspect events.jsonl before continuing the run.",
       exitCode: 2,
     };
   }
+}
+
+function eventErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function eventErrorCode(error: unknown): "log_corrupt" | "operation_failed" {
+  return error instanceof CorruptEventLogError ? "log_corrupt" : "operation_failed";
 }
 
 /** A `continueRefusal` as an operator failure, with help that names the command to use instead. */

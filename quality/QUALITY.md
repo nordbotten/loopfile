@@ -136,9 +136,9 @@ Adapted from a larger stack, with roughly half of it deliberately left behind:
 
 ## Coverage and CRAP
 
-`quality-coverage.mjs` runs the suite under `c8` once and answers two questions
-from the one report. Coverage asks whether the code ran. CRAP asks a sharper
-version of it:
+`quality-coverage.mjs` runs the suite under `c8` once and combines its coverage
+report with source-derived complexity. Coverage asks whether the code ran. CRAP
+asks a sharper version of it:
 
 ```text
 CRAP = complexity^2 * (1 - coverage)^3 + complexity
@@ -149,11 +149,15 @@ ways down are more tests or less branching. Note the shape: at full coverage
 CRAP equals complexity, so a ceiling of 10 is also a complexity cap of 10 for
 code that is fully tested. That is the intended reading, not a side effect.
 
-Coverage comes from `c8` in Istanbul format rather than V8's own, because CRAP
-needs the per-function statement data only the Istanbul report carries. `c8`
-writes one entry per branch *path*, not per decision, plus a `column: -1` entry
-for an `if` with no `else` and one entry at each function's own start. The
-complexity count drops those two, which is what makes it agree with a hand count.
+Complexity comes from the source, parsed with TypeScript, not from the coverage
+report. It is 1 plus one for each `if`, `?:`, non-default `case`, `for`,
+`for…of`, `for…in`, `while`, `do`, `catch`, `&&`, `||`, `??`, `&&=`, `||=` or
+`??=`. Nested functions and callbacks are counted separately. Source functions
+match c8's function records by start position.
+
+Coverage comes from `c8` in Istanbul format, whose per-function statement data
+and function locations determine what ran. Adding tests may change coverage,
+but cannot change a function's source complexity.
 
 `EXEMPT` and `TESTS` are not measured.
 
