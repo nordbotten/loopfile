@@ -510,6 +510,8 @@ test("loop --times starts a detached owner and two command runs", async () => {
     assert.equal(pinged, true);
 
     const events = await waitForEnd(setupResult.home, loopId);
+    assert.doesNotMatch(captured.errors(), /\nloop: /);
+    assert.doesNotMatch(captured.errors(), /\ntotals: /);
     const started = events.filter(
       (event): event is Extract<LoopEvent, { type: "loop.run_started" }> =>
         event.type === "loop.run_started",
@@ -786,9 +788,18 @@ test("an attached loop reports a failed child as an operator failure", async () 
     assert.equal(lines[0], `started: ${loopId}`);
     assert.match(lines[1] ?? "", /^run: 1 \S+ started$/);
     assert.match(lines[2] ?? "", /^run: 1 \S+ failed$/);
-    assert.match(lines[3] ?? "", /^error: loop loop-\S+ failed: run_failed \(run \S+ failed\)$/);
-    assert.equal(lines[4], "code: operation_failed");
-    assert.equal(lines[5], `help: See each run with: loopfile result ${loopId}`);
+    assert.ok(lines.includes(`loop: ${loopId}`));
+    assert.ok(lines.includes("state: failed"));
+    const totals = lines.findIndex((line) => line.startsWith("totals: 0 completed, 1 failed"));
+    const failure = lines.findIndex((line) => line.startsWith("error: loop "));
+    assert.ok(totals > 2, lines.join("\n"));
+    assert.ok(failure > totals, lines.join("\n"));
+    assert.match(
+      lines[failure] ?? "",
+      /^error: loop loop-\S+ failed: run_failed \(run \S+ failed\)$/,
+    );
+    assert.equal(lines[failure + 1], "code: operation_failed");
+    assert.equal(lines[failure + 2], `help: See each run with: loopfile result ${loopId}`);
   } finally {
     await removeAfterOwnersExit(setupResult.root);
   }
@@ -1051,8 +1062,12 @@ test("an attached loop reports each run and its successful end", async () => {
     assert.match(lines[2] ?? "", /^run: 1 \S+ completed$/);
     assert.match(lines[3] ?? "", /^run: 2 \S+ started$/);
     assert.match(lines[4] ?? "", /^run: 2 \S+ completed$/);
-    assert.equal(lines[5], `ended: ${loopId} completed source_empty`);
-    assert.equal(lines.length, 6);
+    assert.ok(lines.includes(`loop: ${loopId}`));
+    assert.ok(lines.includes("state: completed"));
+    const totals = lines.findIndex((line) => line.startsWith("totals: 2 completed, 0 retries"));
+    const ended = lines.lastIndexOf(`ended: ${loopId} completed source_empty`);
+    assert.ok(totals > 4, lines.join("\n"));
+    assert.ok(ended > totals, lines.join("\n"));
   } finally {
     await removeAfterOwnersExit(setupResult.root);
   }
