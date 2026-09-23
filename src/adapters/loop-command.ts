@@ -19,6 +19,7 @@ import {
   renderOperatorFailureLines,
 } from "../application/operator-error.ts";
 import { parseStatusProjection } from "../application/status.ts";
+import { selectWorkspaceMode } from "../application/workspace-mode.ts";
 import type { InputSet, LoopEvent, LoopSource } from "../domain/events.ts";
 import type { Workflow } from "../domain/model.ts";
 import type { LoopStatus, StatusProjection } from "../domain/status.ts";
@@ -49,7 +50,7 @@ import { pingOwner } from "./run-owner.ts";
 import { statusCommand } from "./status-command.ts";
 
 const USAGE =
-  "Usage: loopfile loop <source> (--times N | --list <file> | --next <command>) [--input k=v]... [--retry N] [--max-runs N] [--pause <duration>] [-d]";
+  "Usage: loopfile loop <source> (--times N | --list <file> | --next <command>) [--input k=v]... [--retry N] [--max-runs N] [--pause <duration>] [--workspace <mode>] [-d]";
 const HELP = `${USAGE}
 
 Run a Loopfile repeatedly in the background. Each non-empty JSON Lines input
@@ -77,6 +78,7 @@ interface LoopArgs {
   readonly maxRuns: string[];
   readonly pause: string | undefined;
   readonly inputs: readonly string[];
+  readonly workspaceMode: string | undefined;
   readonly detach: boolean;
   readonly help: boolean;
 }
@@ -109,11 +111,14 @@ interface ValidLoopArgs {
   readonly maxRuns: number | undefined;
   readonly pauseMs: number | null;
   readonly inputs: readonly string[];
+  readonly workspaceMode?: "isolate";
   readonly detach: boolean;
 }
 
 function validateLoopArgs(args: LoopArgs, io: LoopIo): ValidLoopArgs | number {
   if (args.source === undefined) return refuse(io, "loop needs one source");
+  const workspace = selectWorkspaceMode(args.workspaceMode, undefined);
+  if (!workspace.ok) return refuse(io, workspace.message);
   const sources = args.times.length + args.list.length + args.next.length;
   if (sources === 0) {
     return refuse(io, "a loop needs one input source: --times, --list or --next");
@@ -121,7 +126,11 @@ function validateLoopArgs(args: LoopArgs, io: LoopIo): ValidLoopArgs | number {
   if (sources > 1) return refuse(io, "a loop takes only one input source");
   const limits = parseLoopLimits(args, io);
   if (limits === undefined) return 2;
-  return loopSourceArgs(args, limits, io);
+  return loopSourceArgs(
+    { ...args, workspaceMode: args.workspaceMode === undefined ? undefined : workspace.mode },
+    limits,
+    io,
+  );
 }
 
 async function startLoop(
@@ -220,6 +229,7 @@ async function createAndStartLoop(
         retry: args.retry,
         maxRuns: args.maxRuns ?? null,
         pauseMs: args.pauseMs,
+        ...(args.workspaceMode === undefined ? {} : { workspaceMode: args.workspaceMode }),
         program,
       });
     } finally {
@@ -545,6 +555,7 @@ function parseLoopArgs(argv: readonly string[]): LoopArgs | undefined {
         "max-runs": { type: "string", multiple: true },
         pause: { type: "string" },
         input: { type: "string", multiple: true },
+        workspace: { type: "string" },
         detach: { type: "boolean", short: "d" },
         help: { type: "boolean", short: "h" },
       },
@@ -560,6 +571,7 @@ function parseLoopArgs(argv: readonly string[]): LoopArgs | undefined {
       maxRuns: values["max-runs"] ?? [],
       pause: values.pause,
       inputs: values.input ?? [],
+      workspaceMode: values.workspace,
       detach: values.detach === true,
       help: values.help === true,
     };
@@ -569,7 +581,7 @@ function parseLoopArgs(argv: readonly string[]): LoopArgs | undefined {
 }
 
 function loopSourceArgs(
-  args: LoopArgs,
+  args: Omit<LoopArgs, "workspaceMode"> & { readonly workspaceMode?: "isolate" },
   limits: {
     readonly retry: number;
     readonly maxRuns: number | undefined;
@@ -587,6 +599,7 @@ function loopSourceArgs(
       next: undefined,
       ...limits,
       inputs: args.inputs,
+      ...(args.workspaceMode === undefined ? {} : { workspaceMode: args.workspaceMode }),
       detach: args.detach,
     };
   }
@@ -598,6 +611,7 @@ function loopSourceArgs(
       next: undefined,
       ...limits,
       inputs: args.inputs,
+      ...(args.workspaceMode === undefined ? {} : { workspaceMode: args.workspaceMode }),
       detach: args.detach,
     };
   }
@@ -608,6 +622,7 @@ function loopSourceArgs(
     next: args.next[0],
     ...limits,
     inputs: args.inputs,
+    ...(args.workspaceMode === undefined ? {} : { workspaceMode: args.workspaceMode }),
     detach: args.detach,
   };
 }

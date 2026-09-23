@@ -82,6 +82,9 @@ async function makeRun(
       eventFormatVersion: 1,
       modelDigest: "sha256:model",
       targetFolder: "/repo",
+      workspacePath: `${home}/runs/${runId}/workspace`,
+      workspaceMode: "isolate",
+      isolateKind: "worktree",
       branch: `loopfile/${runId}`,
       baseCommit: "abc123",
       inputs: [],
@@ -149,6 +152,8 @@ test("a finished run prints all operator facts as JSON and exits 0", async () =>
     startedAt: "2026-09-21T14:00:00.000Z",
     endedAt: "2026-09-21T14:01:00.000Z",
     targetFolder: "/repo",
+    workspace: `${home}/runs/${runId}/workspace`,
+    workspaceMode: "isolate",
     branch: `loopfile/${runId}`,
     baseCommit: "abc123",
     metrics: {
@@ -171,7 +176,7 @@ test("a finished run prints all operator facts as JSON and exits 0", async () =>
   assert.equal(output.errors, "");
 });
 
-test("the human result still labels the target folder as repository", async () => {
+test("the human result prints the target and workspace", async () => {
   const runId = "20260921-140000-human";
   await makeRun(runId, true);
   const output = capture();
@@ -182,7 +187,8 @@ test("the human result still labels the target folder as repository", async () =
       "state        completed\n" +
       "started      2026-09-21T14:00:00.000Z\n" +
       "ended        success at 2026-09-21T14:01:00.000Z\n" +
-      "repository   /repo\n" +
+      "target       /repo\n" +
+      `workspace    isolate · ${home}/runs/${runId}/workspace\n` +
       `branch       loopfile/${runId}\n` +
       "base commit  abc123\n" +
       "last outcome review (001-review) · changes_requested\n" +

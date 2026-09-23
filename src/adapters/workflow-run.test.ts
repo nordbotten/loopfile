@@ -153,10 +153,25 @@ test("a straight-line workflow runs every step in the workspace and ends in succ
 });
 
 test("run.created records the workspace and the attempts are numbered from 001", async () => {
-  const { events, runId } = await execute(STRAIGHT("exit 0"));
+  const { events, runId, paths } = await execute(STRAIGHT("exit 0"));
   const created = events.find((event) => event.type === "run.created");
-  assert.equal(created?.type === "run.created" && created.branch, `loopfile/${runId}`);
-  assert.match(created?.type === "run.created" ? created.baseCommit : "", /^[0-9a-f]{40}$/);
+  assert.deepEqual(
+    created?.type === "run.created"
+      ? {
+          workspacePath: created.workspacePath,
+          workspaceMode: created.workspaceMode,
+          isolateKind: created.isolateKind,
+          branch: created.branch,
+        }
+      : undefined,
+    {
+      workspacePath: paths.workspace,
+      workspaceMode: "isolate",
+      isolateKind: "worktree",
+      branch: `loopfile/${runId}`,
+    },
+  );
+  assert.match(created?.type === "run.created" ? (created.baseCommit ?? "") : "", /^[0-9a-f]{40}$/);
   const ids = events.flatMap((event) =>
     event.type === "attempt.started" ? [event.attemptId] : [],
   );

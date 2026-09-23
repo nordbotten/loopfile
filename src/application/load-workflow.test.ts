@@ -135,6 +135,36 @@ test("the reference-style manifest builds a model with every default filled in",
   assert.deepEqual(review?.outputs, { feedback: ["changes_requested"] });
 });
 
+test("workspace isolate loads, invalid modes are bad fields, and steps cannot override it", () => {
+  const loaded = loadWorkflow(
+    { formatVersion: 1, workspace: "isolate", steps: [{ id: "a", kind: "command", run: "true" }] },
+    { root: null },
+  );
+  assert.equal(loaded.status, "loaded");
+  assert.equal(loaded.status === "loaded" && loaded.workflow.workspaceMode, "isolate");
+  assert.equal(loaded.status === "loaded" && loaded.workflow.formatVersion, 1);
+
+  const invalid = loadWorkflow(
+    { formatVersion: 1, workspace: "empty", steps: [{ id: "a", kind: "command", run: "true" }] },
+    { root: null, locate: (path) => (path === "workspace" ? 2 : undefined) },
+  );
+  assert.deepEqual(invalid, {
+    status: "invalid",
+    errors: [{ path: "workspace", line: 2, message: "workspace must be one of: isolate" }],
+  });
+  assert.match(
+    only(
+      {
+        formatVersion: 1,
+        steps: [{ id: "a", kind: "command", run: "true", workspace: "isolate" }],
+      },
+      "steps[0].workspace",
+      { root: null },
+    ),
+    /unknown field `workspace`/,
+  );
+});
+
 test("a minimal manifest gets the defaults and leaves optional fields out", () => {
   const result = loadWorkflow(
     { formatVersion: 1, steps: [{ id: "a", kind: "command", run: "true" }] },
@@ -656,7 +686,7 @@ test("$run accepts documented fields and rejects unknown ones, including attempt
     loadWorkflow(
       withStep(2, {
         prompt:
-          "{{ $run.runId }} {{ $run.loopfileName }} {{ $run.startedAt }} {{ $run.targetFolder }} {{ $run.branch }} {{ $run.baseCommit }} {{ $run.transitions }} {{ $run.maxTransitions }} {{ $run.runTimeout }} {{#each $run.attempts}}{{ stepId }} {{ attemptId }} {{ number }} {{ result }} {{ reason }} {{ outcome }} {{ message }} {{ startedAt }} {{ index }} {{ newest }}{{/each}}",
+          "{{ $run.runId }} {{ $run.loopfileName }} {{ $run.startedAt }} {{ $run.targetFolder }} {{ $run.workspace }} {{ $run.workspaceMode }} {{ $run.branch }} {{ $run.baseCommit }} {{ $run.transitions }} {{ $run.maxTransitions }} {{ $run.runTimeout }} {{#each $run.attempts}}{{ stepId }} {{ attemptId }} {{ number }} {{ result }} {{ reason }} {{ outcome }} {{ message }} {{ startedAt }} {{ index }} {{ newest }}{{/each}}",
       }),
       options,
     ).status,

@@ -11,6 +11,9 @@ const created = {
   eventFormatVersion: 1,
   modelDigest: "sha256:model",
   targetFolder: "/repo",
+  workspacePath: "/run/workspace",
+  workspaceMode: "isolate",
+  isolateKind: "worktree",
   branch: "loopfile/run-1",
   baseCommit: "abc123",
   inputs: [],
@@ -96,6 +99,45 @@ test("a result carries the declared values", () => {
   });
 });
 
+test("result JSON carries target and workspace facts without changing its version", () => {
+  const result = view();
+  const json = JSON.stringify(result);
+  assert.equal(result.formatVersion, 1);
+  assert.deepEqual(
+    {
+      targetFolder: result.targetFolder,
+      workspace: result.workspace,
+      workspaceMode: result.workspaceMode,
+      branch: result.branch,
+      baseCommit: result.baseCommit,
+    },
+    {
+      targetFolder: "/repo",
+      workspace: "/run/workspace",
+      workspaceMode: "isolate",
+      branch: "loopfile/run-1",
+      baseCommit: "abc123",
+    },
+  );
+  assert.doesNotMatch(json, /workspaceExists/);
+});
+
+test("legacy results keep absent branch facts as empty strings", () => {
+  const legacy: RunEvent = {
+    type: "run.created",
+    runId: "legacy",
+    eventFormatVersion: 1,
+    modelDigest: "sha256:model",
+    targetFolder: "/repo",
+    inputs: [],
+    seq: 1,
+    at: "created",
+  };
+  const result = buildResultView([legacy], "review-loop");
+  assert.equal(result.branch, "");
+  assert.equal(result.baseCommit, "");
+});
+
 test("the text result view keeps every field and value on one line", () => {
   const result = buildResultView(
     [
@@ -133,6 +175,10 @@ test("the text result view keeps every field and value on one line", () => {
 
   const text = renderResultView(result);
   assert.match(text, /^run +run-1 · review-loop$/m);
+  assert.match(text, /^target +\/repo$/m);
+  assert.match(text, /^workspace +isolate · \/run\/workspace$/m);
+  assert.match(text, /^branch +loopfile\/run-1$/m);
+  assert.match(text, /^base commit +abc123$/m);
   assert.match(text, /^last outcome +review \(001-review\) · approved: looks good$/m);
   assert.match(text, /^input +issue: 42 urgent$/m);
   assert.match(text, /^output +review\.feedback: all clear$/m);
