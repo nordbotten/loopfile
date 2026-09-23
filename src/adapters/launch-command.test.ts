@@ -1564,6 +1564,74 @@ test("a directory, a thin .loop and a packed .loop run the same and give input.i
   assert.deepEqual(shapes[2], shapes[0]);
 });
 
+test("Manifest and CLI empty mode start steps in a clean, Target-free workspace", async () => {
+  const manifest = (mode: string) => `formatVersion: 1
+workspace: ${mode}
+steps:
+  - id: inspect
+    kind: command
+    run: 'test -z "$(find . -mindepth 1 -maxdepth 1 -print -quit)" && printf "%s\\n%s\\n%s\\n" "$PWD" "$LOOPFILE_WORKSPACE" "$LOOPFILE_SCRATCH" > context.txt && env > env.txt'
+`;
+  const { repo, source, home, env } = await setup(manifest("empty"));
+  await writeFile(join(repo, "CLAUDE.md"), "Target instructions\n");
+  await mkdir(join(repo, ".claude", "skills"), { recursive: true });
+  await writeFile(join(repo, ".claude", "settings.json"), "{}\n");
+  await writeFile(join(repo, ".claude", "settings.local.json"), "{}\n");
+  await writeFile(join(repo, ".claude", "skills", "skill.md"), "Target skill\n");
+  await writeFile(join(repo, ".claude", "hooks.json"), "{}\n");
+  const gitBin = join(home, "bin");
+  const gitCalled = join(home, "git-called");
+  await mkdir(gitBin, { recursive: true });
+  const fakeGit = join(gitBin, "git");
+  await writeFile(fakeGit, '#!/bin/sh\nprintf called > "$EMPTY_MODE_GIT_SENTINEL"\nexit 1\n');
+  await chmod(fakeGit, 0o755);
+
+  for (const [manifestMode, args] of [
+    ["empty", [source, "-d"]],
+    ["isolate", [source, "--workspace", "empty", "-d"]],
+  ] as const) {
+    await writeFile(join(source, "manifest.yaml"), manifest(manifestMode));
+    const s = session();
+    assert.equal(
+      await launchCommand(
+        args,
+        cli,
+        s.io,
+        {
+          ...env,
+          PWD: repo,
+          OLDPWD: repo,
+          PATH: `${gitBin}${delimiter}${process.env.PATH ?? ""}`,
+          EMPTY_MODE_GIT_SENTINEL: gitCalled,
+        },
+        { repository: join(repo, "not-a-target") },
+      ),
+      0,
+      s.err(),
+    );
+    const runId = s.out().trim();
+    const paths = runPaths(home, runId);
+    const events = await waitForEnd(home, runId);
+    const created = events[0];
+    assert.equal(created?.type, "run.created");
+    if (created?.type !== "run.created") throw new Error("run.created is missing");
+    assert.deepEqual([created.workspaceMode, created.workspacePath], ["empty", paths.workspace]);
+    for (const field of ["targetFolder", "branch", "baseCommit", "isolateKind"] as const) {
+      assert.equal(Object.hasOwn(created, field), false, field);
+    }
+    const [cwd, workspace, scratch] = (await readFile(join(paths.workspace, "context.txt"), "utf8"))
+      .trim()
+      .split("\n");
+    assert.deepEqual([cwd, workspace], [paths.workspace, paths.workspace]);
+    assert.equal(scratch, join(paths.attempts, "001-inspect", "scratch"));
+    const stepEnv = await readFile(join(paths.workspace, "env.txt"), "utf8");
+    assert.equal(stepEnv.includes(repo), false);
+    assert.doesNotMatch(stepEnv, /^LOOPFILE_(?:LAUNCH|TARGET)=/m);
+    assert.deepEqual(await readdir(paths.workspace), ["context.txt", "env.txt"]);
+  }
+  await assert.rejects(stat(gitCalled), { code: "ENOENT" });
+});
+
 test("workspace here runs in the launch folder without Git and reports matching result paths", async () => {
   const manifest = `formatVersion: 1
 workspace: here
@@ -1770,12 +1838,12 @@ test("launch rejects unsupported workspace modes before making a run", async () 
   const { repo, source, home, env } = await setup();
   const s = session();
   assert.equal(
-    await launchCommand([source, "--workspace", "empty", "-d"], cli, s.io, env, {
+    await launchCommand([source, "--workspace", "not-a-mode", "-d"], cli, s.io, env, {
       repository: repo,
     }),
     2,
   );
-  assert.match(s.err(), /--workspace must be one of: isolate, here/);
+  assert.match(s.err(), /--workspace must be one of: isolate, here, empty/);
   await assert.rejects(stat(join(home, "runs")));
 });
 

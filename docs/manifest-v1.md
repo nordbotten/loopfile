@@ -23,7 +23,7 @@ loader also rejects a duration of zero, which the shape alone allows.
 | `inputs` | no | `{}` | A map from input name to a description or input definition. See [Inputs](#inputs). |
 | `maxTransitions` | no | none | An integer of 1 or more. With no value a run has no transition limit. |
 | `runTimeout` | no | none | A duration. It counts only run owner time, so the gap between a crash and a resume does not count. |
-| `workspace` | no | `isolate` | The workspace mode: `isolate` or `here`. `here` runs steps in the launch folder. `--workspace <mode>` on launch or `loop` overrides this field. |
+| `workspace` | no | `isolate` | The workspace mode: `isolate`, `here` or `empty`. `here` runs steps in the launch folder; `empty` starts in a new empty folder. `--workspace <mode>` on launch or `loop` overrides this field. |
 
 There is no `name`, `description` or `start` field in v1.
 
@@ -149,8 +149,8 @@ since this step's prior attempt. `$history.input.<name>` has one entry with an
 empty `attemptId` and `outcome`. `$run` has `runId`, `loopfileName`, `startedAt`,
 `targetFolder`, `workspace`, `workspaceMode`, `branch`, `baseCommit`,
 `transitions`, `maxTransitions`, and `runTimeout`; its two limits are `""` when
-omitted. `$run.attempts` has every earlier attempt, oldest first, not the
-running one. Each has `stepId`,
+omitted. In `empty` mode, `$run.targetFolder` is omitted. `$run.attempts` has
+every earlier attempt, oldest first, not the running one. Each has `stepId`,
 `attemptId`, `number` (the visit number for its step), `result`, `reason`,
 `outcome`, `message`, `startedAt`, `index` (from 1), and `newest`. `$run.attempt` has `id`, `number`, `startedAt`,
 `maxAttempts`, `timeout`, `lastAttempt`, `iteration`, `maxIterations`,

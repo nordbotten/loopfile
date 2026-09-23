@@ -324,7 +324,8 @@ the run here, and `newest` to find it in the history. `$history.input.<name>` ha
 with empty `attemptId` and `outcome`. `$run` gives `runId`, `loopfileName`,
 `startedAt`, `targetFolder`, `workspace`, `workspaceMode`, `branch`, `baseCommit`,
 `transitions`, `maxTransitions`, and
-`runTimeout`; its two limits are `""` when omitted.
+`runTimeout`; its two limits are `""` when omitted. In `empty` mode,
+`targetFolder` is omitted.
 `$run.attempts` lists every earlier attempt, oldest first, without the running
 one. Its entries have `stepId`, `attemptId`, `number` (the visit number for its
 step), `result`, `reason`, `outcome`, `message`, `startedAt`, `index` (from 1),
@@ -389,9 +390,9 @@ loopfile ./fix.loop --input issue=42
 
 A run has one workspace, and all steps work in it. The optional top-level
 `workspace` field selects its mode; `--workspace <mode>` on launch or `loop`
-overrides it. `isolate` is the default; `here` is available only when selected
-explicitly. `loopfile check` validates the mode word without inspecting Git or
-the target folder.
+overrides it. `isolate` is the default; `here` and `empty` are available only
+when selected explicitly. `loopfile check` validates the mode word without
+inspecting Git or the target folder.
 
 In `here` mode, the Target folder is the launch folder and is the workspace.
 Loopfile does not inspect or modify Git in the Target folder and does not create a workspace folder.
@@ -412,16 +413,23 @@ workspace lives at `runs/<runid>/workspace` and follows one of two paths:
    commit.
 
 The launch confirmation names the workspace and prints `branch:` only for a
-worktree. A successful run removes only a worktree; a copy stays for inspection.
-A run that fails, is cancelled, or crashes keeps either workspace. Loopfile
-never deletes a run branch; commit inside a worktree if you want the work to
-survive on that branch.
+worktree. A successful run removes only a worktree; a copy and an empty workspace
+stay for inspection. A run that fails, is cancelled, or crashes keeps its
+workspace. Loopfile never deletes a run branch; commit inside a worktree if you
+want the work to survive on that branch.
 
-`run.created` records `targetFolder`, workspace path and mode. An `isolate` run
-also records `isolateKind: worktree` or `copy`. Only a worktree records
-`branch` and `baseCommit`; `here` records none of those three fields.
-`loopfile result <runid>` hides Git facts when absent; `result --json` keeps the
-branch and base commit as empty strings. The JSON format version does not change.
+In `empty` mode, every step starts in the new empty folder at
+`runs/<runid>/workspace`. Loopfile copies no Target files—not even `CLAUDE.md`,
+Claude settings, skills or hooks—and records no Target path. The step gets no
+Target path in its prompt facts or environment; `LOOPFILE_WORKSPACE` is the
+empty folder and `LOOPFILE_SCRATCH` keeps its normal per-attempt path.
+
+`run.created` records workspace path and mode for every run, and records
+`targetFolder` except in `empty` mode. An `isolate` run also records
+`isolateKind: worktree` or `copy`. Only a worktree records `branch` and
+`baseCommit`; `here` and `empty` record none of those fields. `loopfile result
+<runid>` hides Git facts when absent; `result --json` keeps branch and base
+commit as empty strings. The JSON format version does not change.
 
 ## Operator commands
 
