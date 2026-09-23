@@ -29,7 +29,7 @@ const created = {
   runId: "r-1",
   eventFormatVersion: 1,
   modelDigest: "sha256:model",
-  repositoryPath: "/home/me/project",
+  targetFolder: "/home/me/project",
   baseCommit: "9f1c0de",
   branch: "loopfile/r-1",
   inputs: [{ name: "issue", size: 2, digest: "sha256:42" }],

@@ -322,7 +322,7 @@ step for each cause, `new` also marks values that another step has already
 handled. Test `$run.previous.data.<step>.<output>` to find the value that sent
 the run here, and `newest` to find it in the history. `$history.input.<name>` has one entry
 with empty `attemptId` and `outcome`. `$run` gives `runId`, `loopfileName`,
-`startedAt`, `repositoryPath`, `branch`, `baseCommit`, `transitions`,
+`startedAt`, `targetFolder`, `branch`, `baseCommit`, `transitions`,
 `maxTransitions`, and `runTimeout`; its two limits are `""` when omitted.
 `$run.attempts` lists every earlier attempt, oldest first, without the running
 one. Its entries have `stepId`, `attemptId`, `number` (the visit number for its

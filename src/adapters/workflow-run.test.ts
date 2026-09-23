@@ -182,7 +182,9 @@ test("a run launched from a worktree records the main repository and worktree HE
 
   const events = parseEventLog(await readFile(runPaths(home, runId).events, "utf8"));
   const created = events.find((event) => event.type === "run.created");
-  assert.equal(created?.type === "run.created" && created.repositoryPath, repo);
+  assert.equal(created?.type === "run.created" && created.targetFolder, repo);
+  assert.equal(created?.type === "run.created" && Object.hasOwn(created, "repositoryPath"), false);
+  assert.equal(created?.type === "run.created" && created.eventFormatVersion, 1);
   assert.equal(created?.type === "run.created" && created.baseCommit, outerHead);
 });
 
@@ -1159,7 +1161,7 @@ steps:
     kind: agent
     harness: claude
     maxAttempts: 4
-    prompt: "{{ $run.runId }}|{{ $run.loopfileName }}|{{ $run.startedAt }}|{{ $run.repositoryPath }}|{{ $run.branch }}|{{ $run.baseCommit }}|{{ $run.transitions }}|{{ $run.maxTransitions }}|{{ $run.runTimeout }}{{#each $run.attempts }}\\n{{ stepId }}|{{ attemptId }}|{{ number }}|{{ result }}|{{ reason }}|{{ outcome }}|{{ message }}|{{ startedAt }}|{{ index }}|{{ newest }}{{/each}}"
+    prompt: "{{ $run.runId }}|{{ $run.loopfileName }}|{{ $run.startedAt }}|{{ $run.targetFolder }}|{{ $run.branch }}|{{ $run.baseCommit }}|{{ $run.transitions }}|{{ $run.maxTransitions }}|{{ $run.runTimeout }}{{#each $run.attempts }}\\n{{ stepId }}|{{ attemptId }}|{{ number }}|{{ result }}|{{ reason }}|{{ outcome }}|{{ message }}|{{ startedAt }}|{{ index }}|{{ newest }}{{/each}}"
     on:
       again: work
       done: $success
@@ -1205,7 +1207,7 @@ steps:
     [0, 1, 2, 3].map((transitions, current) => {
       const attempts = started.slice(0, current);
       return [
-        `${runId}|source|${created.at}|${created.repositoryPath}|${created.branch}|${created.baseCommit}|${transitions}|4|1h`,
+        `${runId}|source|${created.at}|${created.targetFolder}|${created.branch}|${created.baseCommit}|${transitions}|4|1h`,
         ...attempts.map(
           (attempt, index) =>
             `work|${attempt.attemptId}|${index + 1}|success|outcome|again|${["one", "two", "three"][index]}|${attempt.at}|${index + 1}|${index === attempts.length - 1}`,

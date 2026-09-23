@@ -81,7 +81,7 @@ async function makeRun(
       runId,
       eventFormatVersion: 1,
       modelDigest: "sha256:model",
-      repositoryPath: "/repo",
+      targetFolder: "/repo",
       branch: `loopfile/${runId}`,
       baseCommit: "abc123",
       inputs: [],
@@ -148,7 +148,7 @@ test("a finished run prints all operator facts as JSON and exits 0", async () =>
     endReason: "success",
     startedAt: "2026-09-21T14:00:00.000Z",
     endedAt: "2026-09-21T14:01:00.000Z",
-    repositoryPath: "/repo",
+    targetFolder: "/repo",
     branch: `loopfile/${runId}`,
     baseCommit: "abc123",
     metrics: {
@@ -168,6 +168,27 @@ test("a finished run prints all operator facts as JSON and exits 0", async () =>
     inputs: {},
     outputs: {},
   });
+  assert.equal(output.errors, "");
+});
+
+test("the human result still labels the target folder as repository", async () => {
+  const runId = "20260921-140000-human";
+  await makeRun(runId, true);
+  const output = capture();
+  assert.equal(await resultCommand(["result", runId], output.out, output.err, env), 0);
+  assert.equal(
+    output.output,
+    `run          ${runId} · review-loop\n` +
+      "state        completed\n" +
+      "started      2026-09-21T14:00:00.000Z\n" +
+      "ended        success at 2026-09-21T14:01:00.000Z\n" +
+      "repository   /repo\n" +
+      `branch       loopfile/${runId}\n` +
+      "base commit  abc123\n" +
+      "last outcome review (001-review) · changes_requested\n" +
+      "inputs       none\n" +
+      "outputs      none\n",
+  );
   assert.equal(output.errors, "");
 });
 
@@ -209,7 +230,7 @@ steps:
       runId,
       eventFormatVersion: 1,
       modelDigest: "sha256:model",
-      repositoryPath: "/repo",
+      targetFolder: "/repo",
       branch: `loopfile/${runId}`,
       baseCommit: "abc123",
       inputs: [{ name: "issue", size: 2, digest: "digest" }],

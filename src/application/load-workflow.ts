@@ -665,7 +665,7 @@ const RUN_FIELDS = new Set([
   "runId",
   "loopfileName",
   "startedAt",
-  "repositoryPath",
+  "targetFolder",
   "branch",
   "baseCommit",
   "transitions",

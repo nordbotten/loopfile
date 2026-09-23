@@ -212,22 +212,22 @@ async function removeFiles(
   force: boolean,
 ): Promise<RemoveResult> {
   try {
-    if (!(await pathExists(created.repositoryPath))) {
+    if (!(await pathExists(created.targetFolder))) {
       await rm(paths.root, { recursive: true, force: true });
       return {
         ok: true,
         runId: created.runId,
         branch: created.branch,
-        warning: `warning: target repository is gone: ${created.repositoryPath}\n`,
+        warning: `warning: target repository is gone: ${created.targetFolder}\n`,
       };
     }
     if (!(await pathExists(paths.workspace))) {
-      await pruneWorktrees(created.repositoryPath);
+      await pruneWorktrees(created.targetFolder);
     } else {
       const removed = await removeWorkspace(
         {
           path: paths.workspace,
-          repositoryPath: created.repositoryPath,
+          repositoryPath: created.targetFolder,
           baseCommit: created.baseCommit,
           branch: created.branch,
         },

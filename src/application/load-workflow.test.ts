@@ -656,11 +656,15 @@ test("$run accepts documented fields and rejects unknown ones, including attempt
     loadWorkflow(
       withStep(2, {
         prompt:
-          "{{ $run.runId }} {{ $run.loopfileName }} {{ $run.startedAt }} {{ $run.repositoryPath }} {{ $run.branch }} {{ $run.baseCommit }} {{ $run.transitions }} {{ $run.maxTransitions }} {{ $run.runTimeout }} {{#each $run.attempts}}{{ stepId }} {{ attemptId }} {{ number }} {{ result }} {{ reason }} {{ outcome }} {{ message }} {{ startedAt }} {{ index }} {{ newest }}{{/each}}",
+          "{{ $run.runId }} {{ $run.loopfileName }} {{ $run.startedAt }} {{ $run.targetFolder }} {{ $run.branch }} {{ $run.baseCommit }} {{ $run.transitions }} {{ $run.maxTransitions }} {{ $run.runTimeout }} {{#each $run.attempts}}{{ stepId }} {{ attemptId }} {{ number }} {{ result }} {{ reason }} {{ outcome }} {{ message }} {{ startedAt }} {{ index }} {{ newest }}{{/each}}",
       }),
       options,
     ).status,
     "loaded",
+  );
+  assert.match(
+    only(withStep(2, { prompt: "{{ $run.repositoryPath }}" }), "steps[2].prompt"),
+    /\$run\.repositoryPath/,
   );
   assert.match(only(withStep(2, { prompt: "{{ $run.nope }}" }), "steps[2].prompt"), /\$run\.nope/);
   assert.match(
