@@ -12,7 +12,12 @@ import type { RunEvent } from "../domain/events.ts";
 import { groupAlive } from "./local-executor.ts";
 import { loopfileHome, pathExists, type RunPaths, runPaths } from "./run-directory.ts";
 import { pingOwner } from "./run-owner.ts";
-import { pruneWorktrees, removeWorkspace, workspaceFromCreated } from "./workspace.ts";
+import {
+  pruneWorktrees,
+  removeWorkspace,
+  type Workspace,
+  workspaceFromCreated,
+} from "./workspace.ts";
 
 const USAGE = "Usage: loopfile remove <runid> [--kill-leftovers] [--force]";
 const HELP = `${USAGE}
@@ -211,6 +216,31 @@ async function readEvents(
   }
 }
 
+async function removeRunWorkspace(
+  workspace: Workspace,
+  created: Extract<RunEvent, { type: "run.created" }>,
+  force: boolean,
+): Promise<RemoveResult | undefined> {
+  if (workspace.mode === "here") return undefined;
+  if (workspace.isolateKind === "copy") {
+    await rm(workspace.path, { recursive: true, force: true });
+    return undefined;
+  }
+  if (!(await pathExists(workspace.path))) {
+    await pruneWorktrees(created.targetFolder);
+    return undefined;
+  }
+  const removed = await removeWorkspace(workspace, force);
+  return removed.removed
+    ? undefined
+    : refused(
+        `workspace of run ${created.runId} is dirty: ${removed.reason}`,
+        "workspace_dirty",
+        `Commit or discard the workspace changes, or run \`loopfile remove ${created.runId} --force\` to delete them.`,
+        1,
+      );
+}
+
 async function removeFiles(
   paths: RunPaths,
   created: Extract<RunEvent, { type: "run.created" }>,
@@ -218,35 +248,23 @@ async function removeFiles(
 ): Promise<RemoveResult> {
   try {
     const workspace = workspaceFromCreated(created, paths.workspace);
+    const branch = workspace.isolateKind === "worktree" ? workspace.branch : undefined;
     if (!(await pathExists(created.targetFolder))) {
       await rm(paths.root, { recursive: true, force: true });
       return {
         ok: true,
         runId: created.runId,
-        ...(workspace.isolateKind === "worktree" ? { branch: workspace.branch } : {}),
+        ...(branch === undefined ? {} : { branch }),
         warning: `warning: target folder is gone: ${created.targetFolder}\n`,
       };
     }
-    if (workspace.isolateKind === "copy") {
-      await rm(workspace.path, { recursive: true, force: true });
-    } else if (!(await pathExists(workspace.path))) {
-      await pruneWorktrees(created.targetFolder);
-    } else {
-      const removed = await removeWorkspace(workspace, force);
-      if (!removed.removed) {
-        return refused(
-          `workspace of run ${created.runId} is dirty: ${removed.reason}`,
-          "workspace_dirty",
-          `Commit or discard the workspace changes, or run \`loopfile remove ${created.runId} --force\` to delete them.`,
-          1,
-        );
-      }
-    }
+    const workspaceFailure = await removeRunWorkspace(workspace, created, force);
+    if (workspaceFailure !== undefined) return workspaceFailure;
     await rm(paths.root, { recursive: true, force: true });
     return {
       ok: true,
       runId: created.runId,
-      ...(workspace.isolateKind === "worktree" ? { branch: workspace.branch } : {}),
+      ...(branch === undefined ? {} : { branch }),
     };
   } catch (error) {
     return refused(

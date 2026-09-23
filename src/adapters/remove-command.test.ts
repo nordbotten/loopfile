@@ -108,6 +108,28 @@ test("removes a copy without Git and does not report a branch", async () => {
   await assert.rejects(stat(run.paths.root));
 });
 
+test("removing a here run preserves the target folder without Git", async () => {
+  const run = await setup();
+  await runGit(run.repo, "worktree", "remove", "--force", run.paths.workspace);
+  const userFile = join(run.repo, "user.txt");
+  await writeFile(userFile, "keep me\n");
+  const lines = (await readFile(run.paths.events, "utf8")).trimEnd().split("\n");
+  const created = JSON.parse(lines[0] ?? "{}") as Record<string, unknown>;
+  created.workspacePath = run.repo;
+  created.workspaceMode = "here";
+  delete created.isolateKind;
+  delete created.branch;
+  delete created.baseCommit;
+  lines[0] = JSON.stringify(created);
+  await writeFile(run.paths.events, `${lines.join("\n")}\n`);
+
+  const result = await remove({ ...run.env, PATH: "" }, run.runId);
+  assert.equal(result.code, 0, result.err);
+  assert.equal(result.err, `removed: ${run.runId}\n`);
+  assert.equal(await readFile(userFile, "utf8"), "keep me\n");
+  await assert.rejects(stat(run.paths.root));
+});
+
 test("does not remove a run with a live owner", async () => {
   const run = await setup();
   const owner = await startRunOwner({ home: run.home, runId: run.runId });

@@ -135,7 +135,7 @@ test("the reference-style manifest builds a model with every default filled in",
   assert.deepEqual(review?.outputs, { feedback: ["changes_requested"] });
 });
 
-test("workspace isolate loads, invalid modes are bad fields, and steps cannot override it", () => {
+test("workspace modes load, invalid modes are bad fields, and steps cannot override them", () => {
   const loaded = loadWorkflow(
     { formatVersion: 1, workspace: "isolate", steps: [{ id: "a", kind: "command", run: "true" }] },
     { root: null },
@@ -144,13 +144,20 @@ test("workspace isolate loads, invalid modes are bad fields, and steps cannot ov
   assert.equal(loaded.status === "loaded" && loaded.workflow.workspaceMode, "isolate");
   assert.equal(loaded.status === "loaded" && loaded.workflow.formatVersion, 1);
 
+  const here = loadWorkflow(
+    { formatVersion: 1, workspace: "here", steps: [{ id: "a", kind: "command", run: "true" }] },
+    { root: null },
+  );
+  assert.equal(here.status, "loaded");
+  assert.equal(here.status === "loaded" && here.workflow.workspaceMode, "here");
+
   const invalid = loadWorkflow(
     { formatVersion: 1, workspace: "empty", steps: [{ id: "a", kind: "command", run: "true" }] },
     { root: null, locate: (path) => (path === "workspace" ? 2 : undefined) },
   );
   assert.deepEqual(invalid, {
     status: "invalid",
-    errors: [{ path: "workspace", line: 2, message: "workspace must be one of: isolate" }],
+    errors: [{ path: "workspace", line: 2, message: "workspace must be one of: isolate, here" }],
   });
   assert.match(
     only(

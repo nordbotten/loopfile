@@ -23,7 +23,7 @@ loader also rejects a duration of zero, which the shape alone allows.
 | `inputs` | no | `{}` | A map from input name to a description or input definition. See [Inputs](#inputs). |
 | `maxTransitions` | no | none | An integer of 1 or more. With no value a run has no transition limit. |
 | `runTimeout` | no | none | A duration. It counts only run owner time, so the gap between a crash and a resume does not count. |
-| `workspace` | no | `isolate` | The workspace mode. Only `isolate` is currently accepted. `--workspace <mode>` on launch or `loop` overrides this field. |
+| `workspace` | no | `isolate` | The workspace mode: `isolate` or `here`. `here` runs steps in the launch folder. `--workspace <mode>` on launch or `loop` overrides this field. |
 
 There is no `name`, `description` or `start` field in v1.
 

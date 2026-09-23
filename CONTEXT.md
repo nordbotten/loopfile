@@ -145,11 +145,11 @@ The one process that carries out a run's steps and the only one that writes its 
 The one process that carries out a loop: it starts each run and is the only writer of the loop's event log. It runs in the background, attached or detached.
 
 **Target folder**:
-The folder a run is isolated from: the Git top level when the launch folder is inside a repository, or the launch folder otherwise. Run state never lives inside it.
+The folder a run works from: the launch folder in `here` mode; otherwise the Git top level when the launch folder is inside a repository, or the launch folder otherwise. Run state never lives inside it.
 _Avoid_: Target repository
 
 **Workspace**:
-Where all steps in a run work, selected by its workspace mode. In `isolate`, it is a Git worktree when Git can make one, otherwise a full copy of the Target folder.
+Where all steps in a run work, selected by its workspace mode. In `here`, it is the Target folder itself. In `isolate`, it is a Git worktree when Git can make one, otherwise a full copy of the Target folder.
 _Avoid_: Checkout, sandbox
 
 **Run branch**:
