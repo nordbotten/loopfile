@@ -53,16 +53,17 @@ export async function loopResumeCommand(
     return 0;
   }
   if (args.loopId === undefined) return refuse(io, USAGE, "bad_argument");
+  const loopId = args.loopId;
 
   const home = loopfileHome(env as NodeJS.ProcessEnv);
-  const check = await checkLoopResume(home, args.loopId, options.pingTimeoutMs);
+  const check = await checkLoopResume(home, loopId, options.pingTimeoutMs);
   if (!check.ok) {
     io.err(renderOperatorFailure(check.failure).stderr);
     return 2;
   }
 
   const started = await startDetachedOwner({
-    ownerId: args.loopId,
+    ownerId: loopId,
     paths: check.paths,
     ownerEnv: env,
     cli,
@@ -84,9 +85,15 @@ export async function loopResumeCommand(
     return started.failure.exitCode;
   }
 
-  io.out(`${args.loopId}\n`);
-  io.err(renderOperatorConfirmation({ resumed: args.loopId }));
-  return args.detach ? 0 : await attachLoop(args.loopId, check.home, io.err, options);
+  if (args.detach) {
+    io.out(`${loopId}\n`);
+    io.err(renderOperatorConfirmation({ resumed: loopId }));
+    return 0;
+  }
+  return await attachLoop(loopId, check.home, io.err, options, () => {
+    io.out(`${loopId}\n`);
+    io.err(renderOperatorConfirmation({ resumed: loopId }));
+  });
 }
 
 async function checkLoopResume(
