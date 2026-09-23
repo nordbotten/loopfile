@@ -2,6 +2,7 @@
 
 import { readFile } from "node:fs/promises";
 import { parseArgs } from "node:util";
+import { repeatedLoopInternalError } from "../application/loop-resume.ts";
 import {
   type OperatorErrorCode,
   type OperatorFailure,
@@ -149,13 +150,23 @@ async function checkLoopEvents(
     };
   }
   const ended = history.events.findLast((event) => event.type === "loop.ended");
-  return ended?.type === "loop.ended"
-    ? {
-        summary: `loop ${loopId} already ended: ${ended.reason}`,
-        code: "already_ended",
-        help: "Resume is only for a crashed loop: start a new loop instead.",
-      }
-    : undefined;
+  if (ended?.type !== "loop.ended") return undefined;
+  if (ended.reason === "internal_error") {
+    return repeatedLoopInternalError(history.events)
+      ? {
+          summary:
+            `loop ${loopId} hit the same internal error twice with no progress. ` +
+            "Report it as a bug and start a new loop.",
+          code: "already_ended",
+          help: "Report the repeated internal error as a bug, then start a new loop.",
+        }
+      : undefined;
+  }
+  return {
+    summary: `loop ${loopId} already ended: ${ended.reason}`,
+    code: "already_ended",
+    help: "Resume is only for a crashed loop: start a new loop instead.",
+  };
 }
 
 async function readLoopHistory(
