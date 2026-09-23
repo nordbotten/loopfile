@@ -35,6 +35,7 @@ import {
   renderOperatorFailureLines,
 } from "../application/operator-error.ts";
 import { decodeMessage, encodeMessage, PING } from "../application/owner-protocol.ts";
+import { parseEventLog } from "../application/replay.ts";
 import { endedHelp, runEndFromStatus } from "../application/run-end.ts";
 import { parseSource, type RemoteSource, SourceParseError } from "../application/source.ts";
 import { ownerGoneMessage } from "../application/tail.ts";
@@ -64,6 +65,7 @@ import {
   checkManifestVersionText,
   type UpgradeIo,
 } from "./upgrade-command.ts";
+import { targetRepository } from "./workspace.ts";
 
 type Out = (text: string) => void;
 type CheckIo = Pick<LaunchIo, "err" | "upgrade">;
@@ -477,6 +479,8 @@ async function start(
     readyTimeoutMs: options.readyTimeoutMs,
   });
   if (!started.ok) return refuseStart(io, started.failure);
+  const paths = runPaths(loopfileHome(env as NodeJS.ProcessEnv), started.runId);
+  const created = parseEventLog(await readFile(paths.events, "utf8"))[0];
   return await continueAfterReady(
     started.runId,
     detach,
@@ -487,7 +491,8 @@ async function start(
     renderLaunchConfirmation(
       started.runId,
       request.workspaceMode ?? "isolate",
-      runPaths(loopfileHome(env as NodeJS.ProcessEnv), started.runId).workspace,
+      paths.workspace,
+      created?.type === "run.created" ? created.branch : undefined,
     ),
   );
 }
@@ -548,11 +553,13 @@ export async function startRun(options: StartRunOptions): Promise<StartRunResult
 
   const home = loopfileHome(options.env as NodeJS.ProcessEnv);
   let paths: RunPaths;
+  let targetFolder: string;
   try {
+    targetFolder = await targetRepository(options.repository);
     paths = await createRunDirectory({
       home,
       runId: options.runId,
-      targetRepository: options.repository,
+      targetRepository: targetFolder,
       stepIds: workflow.workflow.steps.map((step) => step.id),
     });
   } catch (error) {
@@ -566,7 +573,7 @@ export async function startRun(options: StartRunOptions): Promise<StartRunResult
     source: options.source,
     kind: options.sourceKind ?? "directory",
     ...(options.sourceText === undefined ? {} : { sourceText: options.sourceText }),
-    repository: options.repository,
+    repository: targetFolder,
     inputs: inputs.inputs,
     workspaceMode: options.workspaceMode,
     loopfileName: options.loopfileName,

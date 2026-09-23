@@ -34,11 +34,16 @@ export interface RenderedOperatorFailure {
 }
 
 /** Renders the launch confirmation with its selected workspace. */
-export function renderLaunchConfirmation(runId: string, mode: WorkspaceMode, path: string): string {
+export function renderLaunchConfirmation(
+  runId: string,
+  mode: WorkspaceMode,
+  path: string,
+  branch: string | undefined,
+): string {
   return renderOperatorConfirmation({
     started: runId,
     workspace: `${mode} · ${path}`,
-    branch: `loopfile/${runId}`,
+    ...(branch === undefined ? {} : { branch }),
   });
 }
 
