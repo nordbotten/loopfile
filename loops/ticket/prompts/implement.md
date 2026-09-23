@@ -15,6 +15,10 @@ Rules:
 - Commit your work to the current branch. Do not push and do not open a pull request.
 - List each acceptance criterion with the test that checks it (file and test name),
   one per line, with `loopfile data put implement.criteria -`.
+- Write a pull request title for your change, as the section "Pull request titles"
+  of `docs/agents/issue-tracker.md` tells. Check it with
+  `scripts/check-pr-title.sh "<title>"`, then put it with
+  `loopfile data put implement.title -`.
 - When the work is complete and committed, run `loopfile result done`.
 - If you cannot go on without a person, run
   `loopfile result blocked --message "<why>"`.

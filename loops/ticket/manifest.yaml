@@ -39,6 +39,7 @@ steps:
     timeout: 60m
     outputs:
       criteria: [done]
+      title: [done]
     on:
       done: test
       blocked: $failure
@@ -181,7 +182,9 @@ steps:
       if gh pr view --json number > /dev/null 2>&1; then
         gh pr edit --body-file "$body"
       else
-        title=$(gh issue view "$issue" --json title -q .title)
+        title=$(loopfile data get implement.title | head -n 1)
+        # A bad title fails the PR title check, which is not a problem fix-ci can fix.
+        scripts/check-pr-title.sh "$title" || title="chore: $(gh issue view "$issue" --json title -q .title)"
         gh pr create --title "$title" --body-file "$body"
       fi
       ci_green=yes
