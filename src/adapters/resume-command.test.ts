@@ -22,6 +22,7 @@ import { modelDigest } from "../application/workflow-run.ts";
 import type { RunEvent } from "../domain/events.ts";
 import { type LaunchIo, launchCommand } from "./launch-command.ts";
 import type { MonitorIo } from "./monitor.ts";
+import { removeAfterOwnersExit } from "./owner-cleanup.test.ts";
 import { resumeCommand } from "./resume-command.ts";
 import { type RunPaths, runPaths } from "./run-directory.ts";
 import { pingOwner } from "./run-owner.ts";
@@ -37,7 +38,7 @@ const gitEnv = {
 };
 
 const root = await realpath(await mkdtemp(join(tmpdir(), "loopfile-resume-")));
-after(() => rm(root, { recursive: true, force: true }));
+after(() => removeAfterOwnersExit(root));
 let count = 0;
 
 async function base(): Promise<{ base: string; home: string; env: NodeJS.ProcessEnv }> {

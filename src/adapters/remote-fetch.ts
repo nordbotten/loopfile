@@ -28,7 +28,8 @@ export async function fetchRemote(
 ): Promise<FetchedRemote> {
   const gitEnv = { ...env, GIT_LFS_SKIP_SMUDGE: "1" };
   const sha = await defaultBranchSha(source.url, gitEnv);
-  const temporary = await mkdtemp(join(tmpdir(), "loopfile-remote-"));
+  // The caller's TMPDIR, so a test (or a sandbox) can keep the fetch out of the shared temp folder.
+  const temporary = await mkdtemp(join(env.TMPDIR || tmpdir(), "loopfile-remote-"));
   const path = join(temporary, "repo");
   try {
     await mkdir(path);
