@@ -5,10 +5,10 @@
  */
 
 import type { RunEvent } from "../domain/events.ts";
-import type { RunListEntry, RunListState } from "../domain/run-list.ts";
+import type { LoopListEntry, RunListEntry, RunListState } from "../domain/run-list.ts";
 import type { StatusMetrics, StatusProjection } from "../domain/status.ts";
 import type { RecentTransition, RunStatusView } from "../domain/status-view.ts";
-import { formatElapsed, renderRunList } from "./run-list.ts";
+import { formatElapsed, renderLoopList, renderRunList } from "./run-list.ts";
 
 /** How many transitions `status` shows. */
 export const RECENT_TRANSITION_COUNT = 5;
@@ -157,17 +157,28 @@ export function renderStatusView(view: RunStatusView): string {
   return `${lines.join("\n")}\n`;
 }
 
-/** Numbered `list` table for the picker. Newest and most active first, as `list` sorts. */
-export function renderPicker(entries: readonly RunListEntry[], ansi: boolean): string {
-  const rows = renderRunList(entries, ansi).split("\n");
-  const numbered = rows.map((row, index) => {
-    if (row === "") return row;
-    return index === 0 ? `    ${row}` : `${`${index})`.padEnd(4)}${row}`;
-  });
-  return numbered.join("\n");
+/** Numbered `list` tables for the picker. Loops come before runs. */
+export function renderPicker(
+  entries: readonly RunListEntry[],
+  ansi: boolean,
+  loops: readonly LoopListEntry[] = [],
+): string {
+  let number = 1;
+  const tables = [
+    ...(loops.length === 0 ? [] : [renderLoopList(loops, ansi)]),
+    ...(entries.length === 0 ? [] : [renderRunList(entries, ansi)]),
+  ];
+  return tables
+    .flatMap((table) =>
+      table.split("\n").map((row, index) => {
+        if (row === "") return row;
+        return index === 0 ? `    ${row}` : `${`${number++})`.padEnd(4)}${row}`;
+      }),
+    )
+    .join("\n");
 }
 
-/** The run index a picker answer names, `"quit"`, or `undefined` for anything else. */
+/** The item index a picker answer names, `"quit"`, or `undefined` for anything else. */
 export function parsePick(answer: string, count: number): number | "quit" | undefined {
   const text = answer.trim().toLowerCase();
   if (text === "q") return "quit";
