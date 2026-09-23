@@ -82,7 +82,7 @@ test("--help is a short command index", () => {
       "  check <source> [--json]",
       "  docs [<topic>]",
       "  list [--json]",
-      "  cancel <runid>",
+      "  cancel <runid|loopid> [--now|--after-run]",
       "  interrupt <runid>",
       "  resume [<runid>] [-d] [--kill-leftovers]",
       "  remove <runid> [--kill-leftovers] [--force]",
@@ -615,7 +615,7 @@ test("`docs` lists its topics", async () => {
   assert.equal(await result.code, 0);
   assert.equal(
     result.output,
-    "format: The Loopfile format\nmanifest: The v1 manifest\nruntime: How a run works\nskill: The Loopfile agent skill\n",
+    "format: The Loopfile format\nmanifest: The v1 manifest\nruntime: How a run works\npatterns: Loop patterns\nskill: The Loopfile agent skill\n",
   );
   assert.equal(result.errors, "");
 });
@@ -675,6 +675,7 @@ test("npm pack ships the docs and examples used by the CLI", () => {
     "docs/manifest-v1.md",
     "docs/loopfile-format.md",
     "docs/runtime.md",
+    "docs/loop-patterns.md",
     "skills/loopfile/SKILL.md",
     "examples/minimal/manifest.yaml",
   ]) {
@@ -688,7 +689,7 @@ test("an unknown docs topic uses the operator failure block", async () => {
   assert.equal(result.output, "");
   assert.equal(
     result.errors,
-    "error: unknown docs topic 'nope'\ncode: bad_argument\nhelp: Valid topics: format, manifest, runtime, skill\n",
+    "error: unknown docs topic 'nope'\ncode: bad_argument\nhelp: Valid topics: format, manifest, runtime, patterns, skill\n",
   );
 });
 
@@ -934,7 +935,7 @@ test("prune rejects a bad age with an operator failure", async () => {
 test("cancel is its own command and is not run as a source", async () => {
   const bare = run(["cancel"]);
   assert.equal(await bare.code, 2);
-  assert.match(bare.errors, /Usage: loopfile cancel <runid>/);
+  assert.match(bare.errors, /Usage: loopfile cancel <runid\|loopid>/);
   const unknown = run(["cancel", "no-such-run"], {
     LOOPFILE_HOME: "/tmp/loopfile-cli-test-home-that-does-not-exist",
   });

@@ -1,5 +1,6 @@
 import type {
   InputSet,
+  LoopCancelMode,
   LoopEndReason,
   LoopEvent,
   LoopRunStarted,
@@ -27,7 +28,12 @@ export type LoopAction =
     }
   | { readonly kind: "wait" }
   | { readonly kind: "pause"; readonly until: string }
-  | { readonly kind: "end"; readonly reason: LoopEndReason; readonly detail?: string };
+  | {
+      readonly kind: "end";
+      readonly reason: LoopEndReason;
+      readonly detail?: string;
+      readonly cancelMode?: LoopCancelMode;
+    };
 
 /** Options needed to decide whether the gap before the next run needs a pause. */
 export interface NextLoopActionOptions {
@@ -51,6 +57,9 @@ export function nextLoopAction(
   options: NextLoopActionOptions = {},
 ): LoopAction {
   if (lastChild.state === "running") return { kind: "wait" };
+  if (status.cancelRequested !== null) {
+    return { kind: "end", reason: "cancelled", cancelMode: status.cancelRequested };
+  }
   const failed = failedChildAction(status, lastChild, history, options);
   if (failed !== undefined) return failed;
   const childEnd = childEndAction(lastChild);

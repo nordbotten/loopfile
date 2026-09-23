@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
 import { copyFile, mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -15,6 +16,8 @@ import { ownerPids, removeAfterOwnersExit } from "./owner-cleanup.test.ts";
 import { loopPaths, runPaths } from "./run-directory.ts";
 import { pingOwner } from "./run-owner.ts";
 import { tailCommand } from "./tail-command.ts";
+
+const { version } = createRequire(import.meta.url)("../../package.json") as { version: string };
 
 const run = promisify(execFile);
 const cli = fileURLToPath(new URL("../cli.ts", import.meta.url));
@@ -470,7 +473,7 @@ test("a changed CLI ends a loop before its second run", async () => {
     assert.equal(ended?.type === "loop.ended" ? ended.reason : undefined, "program_changed");
     assert.equal(
       ended?.type === "loop.ended" ? ended.detail : undefined,
-      "loopfile changed from 0.1.0 to 0.1.0",
+      `loopfile changed from ${version} to ${version}`,
     );
     assert.equal(events.filter((event) => event.type === "loop.run_started").length, 1);
     await waitForOwnerGone(setupResult.home, loopId);
