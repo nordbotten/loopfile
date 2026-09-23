@@ -103,6 +103,22 @@ async function waitForRunStart(home: string, loopId: string): Promise<void> {
   throw new Error("the first loop run did not start");
 }
 
+async function waitForPause(
+  home: string,
+  loopId: string,
+): Promise<Extract<LoopEvent, { type: "loop.paused" }>> {
+  const path = loopPaths(home, loopId).events;
+  for (let tries = 0; tries < 800; tries += 1) {
+    const event = parseEventLog<LoopEvent>(await readFile(path, "utf8").catch(() => "")).find(
+      (candidate): candidate is Extract<LoopEvent, { type: "loop.paused" }> =>
+        candidate.type === "loop.paused",
+    );
+    if (event !== undefined) return event;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error("the loop did not pause");
+}
+
 async function waitForOwnerGone(home: string, loopId: string): Promise<void> {
   for (let tries = 0; tries < 800; tries += 1) {
     if ((await pingOwner(loopPaths(home, loopId).socket, 10)) !== loopId) return;
@@ -492,6 +508,43 @@ test("loop --times starts a detached owner and two command runs", async () => {
   }
 });
 
+test("pauses between runs and exposes the pause in status", async () => {
+  const setupResult = await setup();
+  try {
+    const captured = io();
+    const code = await loopCommand(
+      ["loop", setupResult.source, "--times", "2", "--pause", "1s", "-d"],
+      cli,
+      captured.value,
+      setupResult.env,
+      { repository: setupResult.repo, pollMs: 10, ownerPingTimeoutMs: 50 },
+    );
+    assert.equal(code, 0, captured.errors());
+    const loopId = captured.output().trim();
+    const paused = await waitForPause(setupResult.home, loopId);
+    const status = JSON.parse(await readFile(loopPaths(setupResult.home, loopId).status, "utf8"));
+    assert.equal(status.state, "running");
+    assert.equal(status.pausedUntil, paused.until);
+
+    const events = await waitForEnd(setupResult.home, loopId);
+    const started = events.filter(
+      (event): event is Extract<LoopEvent, { type: "loop.run_started" }> =>
+        event.type === "loop.run_started",
+    );
+    assert.equal(started.length, 2);
+    assert.equal(events.filter((event) => event.type === "loop.paused").length, 1);
+    assert.equal(events[0]?.type === "loop.created" ? events[0].pauseMs : undefined, 1000);
+    const firstChild = parseEventLog(
+      await readFile(runPaths(setupResult.home, started[0]?.runId ?? "").events, "utf8"),
+    );
+    const firstEnded = firstChild.at(-1);
+    assert.equal(firstEnded?.type, "run.ended");
+    assert.ok(Date.parse(started[1]?.at ?? "") - Date.parse(firstEnded?.at ?? "") >= 1000);
+  } finally {
+    await rm(setupResult.root, { recursive: true, force: true });
+  }
+});
+
 test("an attached loop reports a failed child as an operator failure", async () => {
   const setupResult = await setup(
     "formatVersion: 1\nsteps:\n  - id: work\n    kind: command\n    run: exit 1\n",
@@ -610,6 +663,10 @@ test("loop input errors happen before a loop folder exists", async () => {
       {
         args: ["--max-runs", "nope", "--times", "2", "-d"],
         message: "--max-runs must be an integer of 1 or more",
+      },
+      {
+        args: ["--pause", "nope", "--times", "2", "-d"],
+        message: "--pause must be a positive duration with the unit s, m or h, such as 30m",
       },
       {
         args: ["--times", "2", "--list", "items", "-d"],

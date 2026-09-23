@@ -6,6 +6,7 @@ import { parseInputSet } from "../application/launch-inputs.ts";
 import { loopStatus } from "../application/loop-status.ts";
 import {
   type LastChild,
+  type NextLoopActionOptions,
   type NextSourceResult,
   nextLoopAction,
 } from "../application/next-loop-action.ts";
@@ -116,10 +117,18 @@ async function driveLoop(
       deps.env,
       loopId,
       workflow,
+      created.pauseMs,
     );
 
     if (action.kind === "wait") {
       await waitForChild(home, status.currentRunId ?? status.runIds.at(-1) ?? "", deps.pollMs);
+      continue;
+    }
+    if (action.kind === "pause") {
+      await appendLoopEvent(log, history, statusPath, {
+        type: "loop.paused",
+        until: action.until,
+      });
       continue;
     }
     if (action.kind === "end") return await appendEnd(log, history, statusPath, action);
@@ -210,12 +219,15 @@ async function nextAction(
   ownerEnv: Record<string, string | undefined>,
   loopId: string,
   workflow: Workflow | undefined,
+  pauseMs: number | null,
 ): Promise<ReturnType<typeof nextLoopAction>> {
-  if (status.maxRuns !== null && status.runs >= status.maxRuns) {
-    return nextLoopAction(status, child, source, undefined, workflow);
+  const options: NextLoopActionOptions = { pauseMs };
+  const action = nextLoopAction(status, child, source, undefined, workflow, options);
+  if (source.kind !== "next" || action.kind !== "end" || action.reason !== "source_failed") {
+    return action;
   }
   const nextResult = await nextResultFor(source, child, repositoryPath, ownerEnv, loopId);
-  return nextLoopAction(status, child, source, nextResult, workflow);
+  return nextLoopAction(status, child, source, nextResult, workflow, options);
 }
 
 async function nextResultFor(
