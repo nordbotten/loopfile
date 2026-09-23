@@ -28,7 +28,7 @@ export class RemoteFetchError extends Error {
   }
 }
 
-/** Fetches one GitHub repository without running anything from it. */
+/** Fetches one Git repository without running anything from it. */
 export async function fetchRemote(
   source: RemoteSource,
   env: Record<string, string | undefined> = process.env,
@@ -221,7 +221,9 @@ async function resolveRef(
   if (source.ref === undefined) {
     const sha = refs.get("HEAD");
     if (sha !== undefined) return sha;
-    throw new RemoteFetchError(`git ls-remote returned no full HEAD SHA for ${source.url}`);
+    throw new RemoteFetchError(
+      `git ls-remote returned no full HEAD SHA for ${source.host}/${source.repo}`,
+    );
   }
 
   const advertisedSha =
@@ -258,10 +260,15 @@ async function git(
     waitForExit(child),
   ]);
   if (code !== 0) {
-    const message = stderr.trim() || `git exited with code ${code ?? "unknown"}`;
-    throw new RemoteFetchError(message, stderr.trim() || message);
+    const output = redactCredentials(stderr.trim());
+    const message = output || `git exited with code ${code ?? "unknown"}`;
+    throw new RemoteFetchError(message, message);
   }
   return { stdout };
+}
+
+function redactCredentials(text: string): string {
+  return text.replace(/((?:https?|ssh):\/\/)[^/\s@]+@/gi, "$1");
 }
 
 async function readOutput(stream: Readable): Promise<string> {

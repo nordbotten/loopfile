@@ -266,6 +266,96 @@ test("GitHub browser links refuse unsupported paths, non-.loop blobs and unknown
   }
 });
 
+test("refused Git URL forms exit 2 with their exact bad-argument help", async () => {
+  const { repo, env } = await setup();
+  for (const [source, help] of [
+    [
+      "git+http://git.example.test/org/repo",
+      "Use git+https:// so the content cannot be changed in transit.",
+    ],
+    ["git+file:///tmp/repo", "Use the local path."],
+    ["user@host:org/repo", "Write it as git+ssh://user@host/org/repo."],
+    [
+      "https://gitlab.com/org/repo",
+      "Use git+https://<host>/<org>/<repo>[@ref][#subdirectory=path].",
+    ],
+    [
+      "https://bitbucket.org/org/repo",
+      "Use git+https://<host>/<org>/<repo>[@ref][#subdirectory=path].",
+    ],
+  ] as const) {
+    const s = session();
+    assert.equal(await launchCommand([source], cli, s.io, env, { repository: repo }), 2, source);
+    assert.match(s.err(), /code: bad_argument/);
+    assert.ok(s.err().endsWith(`help: ${help}\n`), s.err());
+  }
+});
+
+test("Git fetch errors redact credentials from printed URLs", async () => {
+  const { repo, env } = await setup();
+  const bin = join(repo, "bin");
+  await mkdir(bin);
+  const wrapper = join(bin, "git");
+  await writeFile(
+    wrapper,
+    "#!/bin/sh\\nprintf '%s\\n' \"fatal: unable to access 'https://user:token@git.example.test/org/repo': denied\" >&2\\nexit 1\\n",
+  );
+  await chmod(wrapper, 0o755);
+
+  const s = session();
+  assert.equal(
+    await launchCommand(
+      ["git+https://user:token@git.example.test/org/repo", "--trust"],
+      cli,
+      s.io,
+      { ...env, PATH: `${bin}${delimiter}${process.env.PATH}` },
+      { repository: repo },
+    ),
+    2,
+  );
+  assert.match(s.err(), /code: operation_failed/);
+  assert.match(s.err(), /https:\/\/git\.example\.test\/org\/repo/);
+  assert.doesNotMatch(`${s.out()}${s.err()}`, /user|token/);
+});
+
+test("git+https launches the requested ref and subdirectory from another Git host", async () => {
+  const setupResult = await setup();
+  const fixture = await makeGitFixture(
+    { "review/manifest.yaml": markerManifest("v1-review") },
+    "grp/sub/loops.git",
+    "https://git.example.test/",
+  );
+  const tmp = await privateTmp(setupResult.base);
+  try {
+    const sha = (
+      await run("git", ["rev-parse", "HEAD"], { cwd: fixture.repository })
+    ).stdout.trim();
+    await run("git", ["tag", "v1", sha], { cwd: fixture.repository, env: fixture.env });
+    const s = session();
+    assert.equal(
+      await launchCommand(
+        ["git+https://git.example.test/grp/sub/loops.git@v1#subdirectory=review", "--trust"],
+        cli,
+        s.io,
+        { ...setupResult.env, ...fixture.env, TMPDIR: tmp },
+        { repository: setupResult.repo },
+      ),
+      0,
+      s.err(),
+    );
+    const runId = s.out().trim();
+    const events = await waitForEnd(setupResult.home, runId);
+    assert.equal(resultOf(events), "success");
+    assert.equal(
+      await readFile(join(runPaths(setupResult.home, runId).workspace, "marker.txt"), "utf8"),
+      "v1-review",
+    );
+    assert.deepEqual(await remoteFolders(tmp), []);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
 test("a trusted GitHub Remote Loopfile runs and uses the repository name", async () => {
   const { base, repo, home, env } = await setup();
   const fixture = await makeGitFixture({

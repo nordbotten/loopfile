@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { parseSource } from "./source.ts";
+import { parseSource, SourceParseError } from "./source.ts";
 
 test("parseSource reads repository paths and refs", () => {
   const cases = [
@@ -50,6 +50,104 @@ test("parseSource reads repository paths and refs", () => {
   ] as const;
 
   for (const [text, expected] of cases) assert.deepEqual(parseSource(text, false), expected, text);
+});
+
+test("pip Git sources keep the host and whole repository path without recording credentials", () => {
+  const cases = [
+    [
+      "git+https://user:token@Git.Example.Test:8443/Grp/Sub/Loops.git@feature/review#subdirectory=review",
+      "https://user:token@Git.Example.Test:8443/Grp/Sub/Loops.git",
+    ],
+    [
+      "git+ssh://user:token@Git.Example.Test:8443/Grp/Sub/Loops.git@feature/review#subdirectory=review",
+      "ssh://user:token@Git.Example.Test:8443/Grp/Sub/Loops.git",
+    ],
+  ] as const;
+
+  const parsed = cases.map(([text, url]) => {
+    const source = parseSource(text, false);
+    assert.equal(parseSource(text, true).kind, "remote");
+    assert.deepEqual(source, {
+      kind: "remote",
+      host: "git.example.test:8443",
+      repo: "grp/sub/loops",
+      url,
+      path: "review",
+      ref: "feature/review",
+    });
+    assert.doesNotMatch(
+      JSON.stringify({ host: source.host, repo: source.repo, path: source.path, ref: source.ref }),
+      /user|token/i,
+    );
+    return source;
+  });
+  assert.equal(parsed[0]?.host, parsed[1]?.host);
+  assert.equal(parsed[0]?.repo, parsed[1]?.repo);
+  assert.deepEqual(parseSource("git+ssh://Git.Example.Test:2222/Org/Repo", false), {
+    kind: "remote",
+    host: "git.example.test:2222",
+    repo: "org/repo",
+    url: "ssh://Git.Example.Test:2222/Org/Repo",
+  });
+  assert.deepEqual(parseSource("git+https://Git.Example.Test:443/Org/Repo", false), {
+    kind: "remote",
+    host: "git.example.test:443",
+    repo: "org/repo",
+    url: "https://Git.Example.Test:443/Org/Repo",
+  });
+});
+
+test("malformed Git VCS URLs are rejected", () => {
+  for (const text of [
+    "git+https://[",
+    "git+ftp://git.example.test/org/repo",
+    "git+https://git.example.test",
+    "git+https://git.example.test/org/repo?download=1",
+    "git+https://git.example.test/repo",
+    "git+https://git.example.test/org/repo@",
+    "git+https://git.example.test/org/.git",
+    "git+https://git.example.test/org/repo#branch=main",
+    "git+https://git.example.test/org/repo#subdirectory=",
+    "git+https://git.example.test/org/repo#subdirectory=a/../b",
+  ]) {
+    assert.throws(
+      () => parseSource(text, false),
+      (error: unknown) =>
+        error instanceof SourceParseError &&
+        error.help ===
+          "Use git+https:// or git+ssh:// with <host>/<org>/<repo>[@ref][#subdirectory=path].",
+      text,
+    );
+  }
+});
+
+test("refused Git source forms name the accepted form", () => {
+  const cases = [
+    [
+      "git+http://git.example.test/org/repo",
+      "Use git+https:// so the content cannot be changed in transit.",
+    ],
+    ["git+file:///tmp/repo", "Use the local path."],
+    ["user@host:org/repo", "Write it as git+ssh://user@host/org/repo."],
+    [
+      "https://gitlab.com/org/repo",
+      "Use git+https://<host>/<org>/<repo>[@ref][#subdirectory=path].",
+    ],
+    [
+      "https://bitbucket.org/org/repo",
+      "Use git+https://<host>/<org>/<repo>[@ref][#subdirectory=path].",
+    ],
+  ] as const;
+
+  for (const [text, help] of cases) {
+    for (const exists of [false, true]) {
+      assert.throws(
+        () => parseSource(text, exists),
+        (error: unknown) => error instanceof SourceParseError && error.help === help,
+        text,
+      );
+    }
+  }
 });
 
 test("GitHub browser links strip queries and fragments and accept root suffixes", () => {

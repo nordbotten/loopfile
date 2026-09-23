@@ -34,7 +34,7 @@ import {
 } from "../application/operator-error.ts";
 import { decodeMessage, encodeMessage, PING } from "../application/owner-protocol.ts";
 import { endedHelp, runEndFromStatus } from "../application/run-end.ts";
-import { parseSource, type RemoteSource } from "../application/source.ts";
+import { parseSource, type RemoteSource, SourceParseError } from "../application/source.ts";
 import { ownerGoneMessage } from "../application/tail.ts";
 import type { Workflow } from "../domain/model.ts";
 import { loadDirectory, loadInput, loadThinText } from "./directory-loader.ts";
@@ -59,12 +59,12 @@ type Out = (text: string) => void;
 type CheckIo = Pick<LaunchIo, "err" | "upgrade">;
 
 const USAGE =
-  "Usage: loopfile <directory|file.loop|github:owner/repo[/path][@ref]|-> [-d | --detach] [--trust] [--input <name>=<value>]...";
+  "Usage: loopfile <directory|file.loop|github:owner/repo[/path][@ref]|git+https://…|git+ssh://…|-> [-d | --detach] [--trust] [--input <name>=<value>]...";
 const HELP = `${USAGE}
 
 Run a Loopfile in the background. The source may be a directory, a thin file,
-a GitHub Remote Loopfile (github:owner/repo[/path][@ref]), or '-' for a manifest read from
-stdin. Without --detach, a terminal attaches the
+a GitHub or Git VCS Remote Loopfile, or '-' for a manifest read from stdin.
+Without --detach, a terminal attaches the
 live monitor; press d to detach while the run continues. With --detach, print
 the run ID and return immediately.
 
@@ -120,7 +120,13 @@ export async function launchCommand(
   try {
     parsed = parseSource(args.source, await sourceExists(args.source));
   } catch (error) {
-    return refuse(io, (error as Error).message, 2, "bad_argument");
+    return refuse(
+      io,
+      (error as Error).message,
+      2,
+      "bad_argument",
+      error instanceof SourceParseError ? error.help : USAGE,
+    );
   }
   if (parsed.kind === "local") {
     return await launchSource(args, parsed.source, undefined, undefined, cli, io, env, options);
