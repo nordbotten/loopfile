@@ -24,6 +24,29 @@ test("fetchRemote reports when Git is missing", async () => {
   );
 });
 
+test("fetchRemote rejects a repository without an advertised HEAD", async () => {
+  const fixture = await makeGitFixture({ "manifest.yaml": "formatVersion: 1\nsteps: []\n" });
+  try {
+    await run("git", ["symbolic-ref", "HEAD", "refs/heads/missing"], {
+      cwd: fixture.repository,
+    });
+    await assert.rejects(
+      fetchRemote(
+        {
+          kind: "remote",
+          host: "github.com",
+          repo: "acme/loops",
+          url: "https://github.com/acme/loops",
+        },
+        fixture.env,
+      ),
+      /git ls-remote returned no full HEAD SHA/,
+    );
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
 test("fetchRemote falls back to the resolved SHA when a branch fetch is refused", async () => {
   const fixture = await makeGitFixture({ "manifest.yaml": "formatVersion: 1\nsteps: []\n" });
   let fetched: Awaited<ReturnType<typeof fetchRemote>> | undefined;

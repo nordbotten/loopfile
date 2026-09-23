@@ -151,18 +151,23 @@ async function assertSourcePath(source: RemoteSource, path: string, sha: string)
   }
 }
 
-async function resolveRef(
-  source: RemoteSource,
-  env: Record<string, string | undefined>,
-): Promise<string | undefined> {
-  const result = await git(["ls-remote", source.url], undefined, env);
+function parseAdvertisedRefs(output: string): Map<string, string> {
   const refs = new Map<string, string>();
-  for (const line of result.stdout.trim().split("\n")) {
+  for (const line of output.trim().split("\n")) {
     const [sha, ref] = line.trim().split(/\s+/, 2);
     if (sha !== undefined && ref !== undefined && /^[0-9a-f]{40}$/i.test(sha)) {
       refs.set(ref, sha.toLowerCase());
     }
   }
+  return refs;
+}
+
+async function resolveRef(
+  source: RemoteSource,
+  env: Record<string, string | undefined>,
+): Promise<string | undefined> {
+  const result = await git(["ls-remote", source.url], undefined, env);
+  const refs = parseAdvertisedRefs(result.stdout);
   if (source.ref === undefined) {
     const sha = refs.get("HEAD");
     if (sha !== undefined) return sha;
