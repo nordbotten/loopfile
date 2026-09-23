@@ -102,6 +102,16 @@ async function remoteFolders(): Promise<readonly string[]> {
     .sort();
 }
 
+async function waitForRemoteFolders(expected: readonly string[]): Promise<void> {
+  for (let tries = 0; tries < 100; tries += 1) {
+    const actual = await remoteFolders();
+    if (actual.length === expected.length && actual.every((name, index) => name === expected[index]))
+      return;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  assert.deepEqual(await remoteFolders(), expected);
+}
+
 function resultOf(events: ReturnType<typeof parseEventLog>): string | undefined {
   const last = events.at(-1);
   return last?.type === "run.ended" ? last.result : undefined;
@@ -151,7 +161,7 @@ test("a trusted GitHub Remote Loopfile runs and uses the repository name", async
       0,
       s.err(),
     );
-    assert.deepEqual(await remoteFolders(), remoteBefore);
+    await waitForRemoteFolders(remoteBefore);
     const runId = s.out().trim();
     assert.equal(resultOf(await waitForEnd(home, runId)), "success");
     const status = JSON.parse(await readFile(runPaths(home, runId).status, "utf8")) as {
@@ -217,7 +227,7 @@ test("a remote manifest failure cleans its fetched folder", async () => {
       ),
       1,
     );
-    assert.deepEqual(await remoteFolders(), remoteBefore);
+    await waitForRemoteFolders(remoteBefore);
     await assert.rejects(stat(join(home, "runs")));
   } finally {
     await fixture.cleanup();
