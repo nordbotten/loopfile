@@ -231,6 +231,94 @@ test("remote paths run folders, thin Loopfiles and packed Loopfiles", async () =
   }
 });
 
+test("a seven-character SHA checks out a non-tip commit", async () => {
+  const setupResult = await setup();
+  const fixture = await makeGitFixture({ "manifest.yaml": markerManifest("non-tip") });
+  const tmp = await privateTmp(setupResult.base);
+  try {
+    const sha = (
+      await run("git", ["rev-parse", "HEAD"], { cwd: fixture.repository })
+    ).stdout.trim();
+    await writeFile(join(fixture.repository, "manifest.yaml"), markerManifest("tip"));
+    await run("git", ["commit", "-a", "-q", "-m", "tip"], {
+      cwd: fixture.repository,
+      env: fixture.env,
+    });
+
+    const paths = await launchRemoteAndWait(
+      `github:acme/loops@${sha.slice(0, 7)}`,
+      setupResult,
+      fixture.env,
+      tmp,
+    );
+    assert.equal(await readFile(join(paths.workspace, "marker.txt"), "utf8"), "non-tip");
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("a server refusing an unadvertised SHA falls back to full history", async () => {
+  const setupResult = await setup();
+  const fixture = await makeGitFixture({ "manifest.yaml": markerManifest("non-tip") });
+  const tmp = await privateTmp(setupResult.base);
+  try {
+    const sha = (
+      await run("git", ["rev-parse", "HEAD"], { cwd: fixture.repository })
+    ).stdout.trim();
+    await writeFile(join(fixture.repository, "manifest.yaml"), markerManifest("tip"));
+    await run("git", ["commit", "-a", "-q", "-m", "tip"], {
+      cwd: fixture.repository,
+      env: fixture.env,
+    });
+    await run("git", ["config", "uploadpack.allowAnySHA1InWant", "false"], {
+      cwd: fixture.repository,
+    });
+    await run("git", ["config", "uploadpack.allowReachableSHA1InWant", "false"], {
+      cwd: fixture.repository,
+    });
+    const env = {
+      ...fixture.env,
+      GIT_CONFIG_COUNT: "2",
+      GIT_CONFIG_KEY_1: "protocol.version",
+      GIT_CONFIG_VALUE_1: "0",
+    };
+
+    const paths = await launchRemoteAndWait(`github:acme/loops@${sha}`, setupResult, env, tmp);
+    assert.equal(await readFile(join(paths.workspace, "marker.txt"), "utf8"), "non-tip");
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("an unknown short SHA is a bad argument and leaves no remote temp folder", async () => {
+  const setupResult = await setup();
+  const fixture = await makeGitFixture({ "manifest.yaml": markerManifest("unused") });
+  const tmp = await privateTmp(setupResult.base);
+  try {
+    const sha = (
+      await run("git", ["rev-parse", "HEAD"], { cwd: fixture.repository })
+    ).stdout.trim();
+    const missing = sha.startsWith("0000000") ? "1111111" : "0000000";
+    const s = session();
+    assert.equal(
+      await launchCommand(
+        [`github:acme/loops@${missing}`, "--trust"],
+        cli,
+        s.io,
+        { ...setupResult.env, ...fixture.env, TMPDIR: tmp },
+        { repository: setupResult.repo },
+      ),
+      2,
+    );
+    assert.match(s.err(), new RegExp(`error: ref ${missing} not found in github\\.com/acme/loops`));
+    assert.match(s.err(), /code: bad_argument/);
+    assert.deepEqual(await remoteFolders(tmp), []);
+    await assert.rejects(stat(join(setupResult.home, "runs")));
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
 test("refs select branch, slash branch, lightweight and annotated tags, full SHA, and tag over branch", async () => {
   const setupResult = await setup();
   const fixture = await makeGitFixture({ "manifest.yaml": markerManifest("sha") });
