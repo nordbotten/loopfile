@@ -52,6 +52,7 @@ async function launch(manifest: string) {
     },
     err: () => undefined,
     upgrade: { out: () => undefined, err: () => undefined, isTTY: false, ask: async () => null },
+    trust: { isTTY: false, err: () => undefined, choose: async () => null },
     monitor: { input: process.stdin, output: process.stdout } as unknown as MonitorIo,
   };
   assert.equal(
