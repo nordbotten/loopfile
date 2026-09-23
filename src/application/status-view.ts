@@ -13,7 +13,7 @@ import { formatElapsed, renderRunList } from "./run-list.ts";
 /** How many transitions `status` shows. */
 export const RECENT_TRANSITION_COUNT = 5;
 
-const USAGE = "Usage: loopfile status [<runid>] [--monitor | --json]";
+const USAGE = "Usage: loopfile status [<runid>|<loopid>] [--monitor | --json]";
 
 export type StatusArgs =
   | {
