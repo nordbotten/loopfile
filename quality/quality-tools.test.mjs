@@ -22,7 +22,7 @@ import { changedCore, REPO_ROOT, zoneOf } from "./quality-zones.mjs";
 import strykerConfig from "./stryker.config.mjs";
 
 /** A minimal Istanbul report shaped the way c8 writes one. */
-function report({ statements, branches, functions }) {
+function report({ statements = [], branches = [], functions = [] }) {
   const indexed = (entries) => Object.fromEntries(entries.map((entry, index) => [index, entry]));
   return {
     fnMap: indexed(functions.map(({ loc, name }) => ({ name, decl: loc, loc }))),
@@ -58,6 +58,13 @@ test("Stryker excludes every tracked test that imports processes or the fake har
   for (const file of processTests) {
     assert.ok(!included.has(file), `${file} should not run under Stryker`);
   }
+});
+
+test("the Coverage and CRAP docs separate source complexity from c8 coverage", () => {
+  const docs = readFileSync(join(REPO_ROOT, "quality/QUALITY.md"), "utf8");
+  const section = docs.split("## Coverage and CRAP\n")[1]?.split("\n## ")[0] ?? "";
+  assert.match(section, /Complexity comes from the source/);
+  assert.match(section, /Coverage comes from `c8`/);
 });
 
 test("the Mutation docs describe the Stryker process-test exclusions", () => {
@@ -171,41 +178,131 @@ test("mentioning Stryker without disabling it is not a suppression", () => {
   assert.deepEqual(findSuppressions(source), []);
 });
 
-test("complexity counts decisions, not the paths c8 writes for them", () => {
-  const [score] = crapScores(
-    report({
-      functions: [{ name: "f", loc: wholeFile }],
-      statements: [{ line: 2, hits: 1 }],
-      branches: [
-        { line: 1, column: 0 }, // the function's own start, not a decision
-        { line: 3, column: -1 }, // the else an `if` never wrote, not a decision
-        { line: 3, column: 10 }, // one real decision
-        { line: 5, column: 12 }, // a second real decision
-      ],
-    }),
-  );
-  assert.equal(score.complexity, 3);
+test("files without source functions have no CRAP scores", () => {
+  const emptyReport = report({ functions: [{ name: "(empty-report)", loc: wholeFile }] });
+  assert.deepEqual(crapScores(emptyReport, "const value = 1;", "empty.ts"), []);
 });
 
-test("a fully covered function scores its own complexity", () => {
+test("c8 class initializer wrappers count decisions from source fields", () => {
+  const scores = crapScores(
+    report({
+      functions: [
+        {
+          name: "<static_initializer>",
+          loc: { start: { line: 2, column: 2 }, end: { line: 5, column: 32 } },
+        },
+        {
+          name: "<instance_members_initializer>",
+          loc: { start: { line: 6, column: 2 }, end: { line: 6, column: 27 } },
+        },
+      ],
+    }),
+    `class Example {
+  static {
+    if (true) {}
+  }
+  static value = true ? 1 : 2;
+  instance = false && 1;
+}`,
+    "example.ts",
+  );
+  assert.deepEqual(
+    scores.map((score) => score.complexity),
+    [3, 2],
+  );
+});
+
+test("complexity stays fixed when c8 reports more branch paths for the same source", () => {
+  const source = "function f(value) { return value ? 1 : 0; }";
+  const functions = [{ name: "f", loc: wholeFile }];
+  const fewPaths = crapScores(
+    report({ functions, statements: [{ line: 1, hits: 1 }], branches: [] }),
+    source,
+  )[0];
+  const morePaths = crapScores(
+    report({
+      functions,
+      statements: [{ line: 1, hits: 1 }],
+      branches: [
+        { line: 1, column: 20 },
+        { line: 1, column: 20 },
+        { line: 1, column: 20 },
+        { line: 1, column: 20 },
+      ],
+    }),
+    source,
+  )[0];
+
+  assert.equal(fewPaths.complexity, 2);
+  assert.equal(morePaths.complexity, 2);
+});
+
+test("generator methods match c8 at the asterisk start", () => {
+  const source = "const values = { *each() { if (true) return; } };";
+  const [score] = crapScores(
+    report({
+      functions: [
+        {
+          name: "each",
+          loc: { start: { line: 1, column: 17 }, end: { line: 1, column: 46 } },
+        },
+      ],
+    }),
+    source,
+  );
+  assert.equal(score.complexity, 2);
+});
+
+test("complexity counts every supported decision kind from source", () => {
+  const source = `function everyDecision(value, list, object) {
+  if (value) value = value ? value : 0;
+  switch (value) { case 1: value++; break; default: break; }
+  for (let i = 0; i < 1; i++) {}
+  for (const item of list) {}
+  for (const key in object) {}
+  while (false) {}
+  do {} while (false);
+  try {} catch {}
+  value && (value = 1);
+  value || (value = 2);
+  value ?? (value = 3);
+  value &&= 1;
+  value ||= 2;
+  value ??= 3;
+}`;
+  const [score] = crapScores(
+    report({ functions: [{ name: "everyDecision", loc: wholeFile }], statements: [] }),
+    source,
+  );
+
+  assert.equal(score.complexity, 16);
+});
+
+test("a fully covered function scores its source complexity", () => {
   const [score] = crapScores(
     report({
       functions: [{ name: "f", loc: wholeFile }],
-      statements: [{ line: 2, hits: 1 }],
-      branches: [{ line: 3, column: 10 }],
+      statements: [{ line: 1, hits: 1 }],
+      branches: [{ line: 1, column: 10 }],
     }),
+    "function f() { return 1; }",
   );
   assert.equal(score.coverage, 1);
-  assert.equal(score.crap, 2);
+  assert.equal(score.crap, 1);
 });
 
 test("an uncovered branchy function scores far worse than a covered one", () => {
+  const source = "function f(a, b, c, d) { if (a) {} if (b) {} if (c) {} if (d) {} }";
   const branches = [3, 5, 7, 9].map((line) => ({ line, column: 10 }));
   const functions = [{ name: "f", loc: wholeFile }];
   const covered = crapScores(
-    report({ functions, statements: [{ line: 2, hits: 1 }], branches }),
+    report({ functions, statements: [{ line: 1, hits: 1 }], branches }),
+    source,
   )[0];
-  const bare = crapScores(report({ functions, statements: [{ line: 2, hits: 0 }], branches }))[0];
+  const bare = crapScores(
+    report({ functions, statements: [{ line: 1, hits: 0 }], branches }),
+    source,
+  )[0];
   assert.equal(covered.crap, 5);
   assert.equal(bare.crap, 30);
 });
@@ -230,12 +327,21 @@ test("quiet mode drops a check's own success line", () => {
   assert.equal(quietDiagnostics("  tightened: crap.max 10 -> 8"), "");
 });
 
-test("a nested callback owns its own branches, and is not charged to its parent", () => {
+test("a nested callback is counted apart from its parent", () => {
+  const source = `function outer() {
+  if (true) {}
+  return [1].map(
+    (value) => {
+      if (value) return 1;
+      return 0;
+    },
+  );
+}`;
   const scores = crapScores(
     report({
       functions: [
         { name: "outer", loc: wholeFile },
-        { name: "callback", loc: { start: { line: 4, column: 4 }, end: { line: 6, column: 5 } } },
+        { name: "callback", loc: { start: { line: 4, column: 4 }, end: { line: 7, column: 5 } } },
       ],
       statements: [{ line: 2, hits: 1 }],
       branches: [
@@ -243,6 +349,7 @@ test("a nested callback owns its own branches, and is not charged to its parent"
         { line: 5, column: 8 },
       ],
     }),
+    source,
   );
   const byName = Object.fromEntries(scores.map((score) => [score.name, score]));
   assert.equal(byName.outer.complexity, 2);
