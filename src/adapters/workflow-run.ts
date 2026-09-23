@@ -359,12 +359,13 @@ async function prepare(
       runId: options.runId,
       eventFormatVersion: EVENT_FORMAT_VERSION,
       modelDigest: modelDigest(workflow),
-      targetFolder: workspace.repositoryPath,
+      targetFolder: workspace.targetFolder,
       workspacePath: workspace.path,
       workspaceMode: selectedMode.mode,
-      isolateKind: "worktree",
-      baseCommit: workspace.baseCommit,
-      branch: workspace.branch,
+      isolateKind: workspace.isolateKind,
+      ...(workspace.isolateKind === "worktree"
+        ? { baseCommit: workspace.baseCommit, branch: workspace.branch }
+        : {}),
       ...(options.remote === undefined ? {} : { remote: options.remote }),
       inputs,
       ...(options.loopId === undefined ? {} : { loopId: options.loopId }),
@@ -404,6 +405,10 @@ async function runSteps(
       begin,
     );
     if (ended.result !== "success") {
+      await status.flush();
+      return { result: ended.result };
+    }
+    if (workspace.isolateKind === "copy") {
       await status.flush();
       return { result: ended.result };
     }

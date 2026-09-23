@@ -66,10 +66,14 @@ test("operator failure values escape and quote non-plain values", () => {
   );
 });
 
-test("launch confirmation renders workspace and branch facts", () => {
+test("launch confirmation shows a branch only when the workspace has one", () => {
   assert.equal(
-    renderLaunchConfirmation("run-1", "isolate", "/runs/run-1/workspace"),
+    renderLaunchConfirmation("run-1", "isolate", "/runs/run-1/workspace", "loopfile/run-1"),
     "started: run-1\nworkspace: isolate · /runs/run-1/workspace\nbranch: loopfile/run-1\n",
+  );
+  assert.equal(
+    renderLaunchConfirmation("run-2", "isolate", "/runs/run-2/workspace", undefined),
+    "started: run-2\nworkspace: isolate · /runs/run-2/workspace\n",
   );
 });
 

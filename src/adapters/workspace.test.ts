@@ -66,16 +66,23 @@ test("the target repository is the one containing the directory", async () => {
   assert.equal(await targetRepository(join(repo, "src")), repo);
 });
 
-test("a directory outside a Git repository is a launch error naming it", async () => {
-  const dir = await scratch();
-  await assert.rejects(targetRepository(dir), (error: Error) => {
-    assert.ok(error instanceof WorkspaceError);
-    assert.match(error.message, /not inside a Git repository/);
-    assert.ok(error.message.includes(dir));
-    // Git's own reason is kept, so a missing or broken git does not read as a wrong folder.
-    assert.match(error.message, /not a git repository/);
-    return true;
+test("outside Git, the target is the launch folder and isolate makes a full copy", async () => {
+  const root = await scratch();
+  const dir = join(root, "target");
+  const path = join(root, "workspace");
+  await mkdir(dir);
+  await writeFile(join(dir, "visible.txt"), "visible\n");
+  await mkdir(join(dir, ".claude"));
+  await writeFile(join(dir, ".claude", "settings.local.json"), "ignored\n");
+
+  assert.equal(await targetRepository(dir), dir);
+  assert.deepEqual(await createWorkspace({ repository: dir, path, runId: "r1" }), {
+    path,
+    targetFolder: dir,
+    isolateKind: "copy",
   });
+  assert.equal(await readFile(join(path, "visible.txt"), "utf8"), "visible\n");
+  assert.equal(await readFile(join(path, ".claude", "settings.local.json"), "utf8"), "ignored\n");
 });
 
 test("the workspace is a worktree on loopfile/<runid> from HEAD, at the given path", async () => {
@@ -91,6 +98,8 @@ test("the workspace is a worktree on loopfile/<runid> from HEAD, at the given pa
 
   assert.deepEqual(workspace, {
     path,
+    targetFolder: repo,
+    isolateKind: "worktree",
     repositoryPath: repo,
     baseCommit: head,
     branch: "loopfile/20260918-120000-abcd",
@@ -134,13 +143,20 @@ test("the dirty warning names the count, and a clean repository gets none", () =
   );
 });
 
-test("a repository with no commits has no HEAD to start from", async () => {
+test("a repository with no commits gets a full copy instead of a worktree", async () => {
   const root = await scratch();
-  await git(root, "init", "-q");
-  await assert.rejects(
-    createWorkspace({ repository: root, path: join(root, "..", "ws-none"), runId: "r1" }),
-    (error: Error) => error instanceof WorkspaceError && /has no commits/.test(error.message),
-  );
+  const repo = join(root, "repo");
+  await mkdir(repo);
+  await git(repo, "init", "-q");
+  await writeFile(join(repo, "untracked.txt"), "untracked\n");
+  const path = join(root, "workspace");
+
+  assert.deepEqual(await createWorkspace({ repository: repo, path, runId: "r1" }), {
+    path,
+    targetFolder: repo,
+    isolateKind: "copy",
+  });
+  assert.equal(await readFile(join(path, "untracked.txt"), "utf8"), "untracked\n");
 });
 
 test("a git failure is a WorkspaceError with git's own message", async () => {
@@ -215,6 +231,7 @@ test("every attempt works in the workspace, and a cycle keeps the commits of ear
     `${workspace.path}\n`,
     `one\n${workspace.path}\n`,
   ]);
+  if (workspace.isolateKind !== "worktree") throw new Error("expected a Git worktree");
   assert.equal(await git(repo, "log", "--format=%s", "-1", workspace.branch), "one");
   assert.equal(await git(repo, "status", "--porcelain"), "");
 });

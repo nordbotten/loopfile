@@ -17,9 +17,9 @@ import { pruneWorktrees, removeWorkspace, workspaceFromCreated } from "./workspa
 const USAGE = "Usage: loopfile remove <runid> [--kill-leftovers] [--force]";
 const HELP = `${USAGE}
 
-Remove a run's workspace and folder, keeping its branch. A live run must be
-cancelled first. --kill-leftovers kills processes left by the run before
-removing it. --force also deletes uncommitted work in the workspace. Exit 0
+Remove a run's workspace and folder, keeping its branch when it has one. A live
+run must be cancelled first. --kill-leftovers kills processes left by the run
+before removing it. --force also deletes uncommitted work in a worktree. Exit 0
 means removal succeeded; invalid or refused work returns 2 (or 1 for a removal
 operation failure).
 `;
@@ -39,7 +39,7 @@ export type RemoveResult =
   | {
       readonly ok: true;
       readonly runId: string;
-      readonly branch: string;
+      readonly branch?: string;
       readonly warning?: string;
     }
   | { readonly ok: false; readonly failure: RemoveFailure };
@@ -83,7 +83,12 @@ export async function removeCommand(
     return result.failure.exitCode;
   }
   if (result.warning !== undefined) err(result.warning);
-  err(renderOperatorConfirmation({ removed: result.runId, branch: `${result.branch} (kept)` }));
+  err(
+    renderOperatorConfirmation({
+      removed: result.runId,
+      ...(result.branch === undefined ? {} : { branch: `${result.branch} (kept)` }),
+    }),
+  );
   return 0;
 }
 
@@ -218,11 +223,13 @@ async function removeFiles(
       return {
         ok: true,
         runId: created.runId,
-        branch: workspace.branch,
-        warning: `warning: target repository is gone: ${created.targetFolder}\n`,
+        ...(workspace.isolateKind === "worktree" ? { branch: workspace.branch } : {}),
+        warning: `warning: target folder is gone: ${created.targetFolder}\n`,
       };
     }
-    if (!(await pathExists(workspace.path))) {
+    if (workspace.isolateKind === "copy") {
+      await rm(workspace.path, { recursive: true, force: true });
+    } else if (!(await pathExists(workspace.path))) {
       await pruneWorktrees(created.targetFolder);
     } else {
       const removed = await removeWorkspace(workspace, force);
@@ -236,7 +243,11 @@ async function removeFiles(
       }
     }
     await rm(paths.root, { recursive: true, force: true });
-    return { ok: true, runId: created.runId, branch: workspace.branch };
+    return {
+      ok: true,
+      runId: created.runId,
+      ...(workspace.isolateKind === "worktree" ? { branch: workspace.branch } : {}),
+    };
   } catch (error) {
     return refused(
       error instanceof Error ? error.message : String(error),
