@@ -166,8 +166,28 @@ test("a run in a loop prints its link after the run line", () => {
   ]);
 });
 
-test("a plain run has no loop line", () => {
-  assert.doesNotMatch(renderStatusView(buildStatusView(status(), "running", [])), /^loop:/m);
+test("a plain run has no loop or remote line", () => {
+  assert.doesNotMatch(
+    renderStatusView(buildStatusView(status(), "running", [])),
+    /^(?:loop:|remote:)/m,
+  );
+});
+
+test("status prints remote source after the Loopfile name", () => {
+  const remote = {
+    host: "github.com",
+    repo: "acme/loops",
+    path: "review",
+    ref: "main",
+    sha: "4c9d077abcde1234567890abcdef1234567890ab",
+  };
+  const text = renderStatusView(buildStatusView(status({ remote }), "running", []));
+
+  assert.deepEqual(text.split("\n").slice(0, 3), [
+    "run         20260917-160300-aaaa · review-loop",
+    "remote: github.com/acme/loops/review @ main (4c9d077)",
+    "state       running",
+  ]);
 });
 
 test("an ended run shows its outcome and elapsed time, and a reported 0 is not unknown", () => {
@@ -225,6 +245,7 @@ test("renderPicker numbers each run and leaves the header unnumbered", () => {
     runId,
     loopId: null,
     loopfileName: "x",
+    remote: null,
     state,
     currentStep: null,
     startedAt: "2026-09-17T16:03:00.000Z",

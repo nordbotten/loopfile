@@ -8,6 +8,7 @@ import type { RunEvent } from "../domain/events.ts";
 import type { LoopListEntry, RunListEntry, RunListState } from "../domain/run-list.ts";
 import type { StatusMetrics, StatusProjection } from "../domain/status.ts";
 import type { RecentTransition, RunStatusView } from "../domain/status-view.ts";
+import { formatRemoteLine } from "./remote-view.ts";
 import { formatElapsed, renderLoopList, renderRunList } from "./run-list.ts";
 
 /** How many transitions `status` shows. */
@@ -132,6 +133,7 @@ function transitionText(transition: RecentTransition): string {
 export function renderStatusView(view: RunStatusView): string {
   const ended = view.endedAt !== null;
   const lines = [line("run", `${view.runId} · ${view.loopfileName}`)];
+  if (view.remote !== undefined) lines.push(formatRemoteLine(view.remote));
   if (view.loopId !== null && view.loopIndex !== null) {
     lines.push(`loop: ${view.loopId} (run ${view.loopIndex})`);
   }
