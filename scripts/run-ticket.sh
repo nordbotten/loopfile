@@ -1,9 +1,7 @@
 #!/usr/bin/env bash
-# Pick one ready issue of the current repo and start its ticket loop with a
-# pinned loopfile and a pinned, packed loop. Run it from the repo, on main.
+# Pick one ready issue of the current repo and start a run of loops/ticket on
+# it. Run it from the repo, on main.
 #
-#   run-ticket.sh pin        build loopfile from the repo and pack loops/ticket
-#                            into $LOOPFILE_PIN
 #   run-ticket.sh [--merge] [--no-ci]
 #                            pick the lowest ready issue and start a run;
 #                            --no-ci ships without waiting for CI
@@ -18,28 +16,17 @@
 #                            and pick again
 #   run-ticket.sh --dry-run  only print the issue it would pick
 #
-# The pinned loopfile is on PATH only for the run, so the run owner, the steps
-# and the agents all use it. Merged changes to loopfile or to loops/ticket do
-# not reach a run until the next pin. The run owner starts under nice -n 10, so
-# every step, agent and test process of the run is niced too.
+# It uses the loopfile on PATH, as a user does. To run the loopfile of this
+# repo, install a copy of it (a link would change on each build):
+#   npm run build && npm i -g "/tmp/$(npm pack --pack-destination /tmp)"
+# Each run copies
+# loops/ticket when it starts, so a later merge does not change a run in
+# flight. The run owner starts under nice -n 10, so every step, agent and test
+# process of the run is niced too.
 set -euo pipefail
 shopt -s inherit_errexit  # keep set -e inside $(start)
 
 root=$(git rev-parse --show-toplevel)
-pin=${LOOPFILE_PIN:-$HOME/.loopfile/ticket/pin}
-
-if [ "${1:-}" = pin ]; then
-  (cd "$root" && npm run build)
-  rm -rf "$pin"
-  mkdir -p "$pin/bin"
-  cp -r "$root/dist" "$root/package.json" "$pin/"
-  (cd "$pin" && npm install --omit=dev --no-package-lock --ignore-scripts --no-audit --no-fund)
-  chmod +x "$pin/dist/cli.js"
-  ln -s ../dist/cli.js "$pin/bin/loopfile"
-  "$pin/bin/loopfile" pack "$root/loops/ticket" -o "$pin/ticket.loop" > /dev/null
-  echo "pinned: $pin ($(git -C "$root" rev-parse --short HEAD))"
-  exit 0
-fi
 
 merge=no
 ci=yes
@@ -51,7 +38,7 @@ for arg in "$@"; do
     --no-ci) ci=no ;;
     --dry-run) dry_run=yes ;;
     --loop) loop=yes ;;
-    *) echo "usage: $0 [pin | --merge | --no-ci | --loop | --dry-run]" >&2; exit 2 ;;
+    *) echo "usage: $0 [--merge | --no-ci | --loop | --dry-run]" >&2; exit 2 ;;
   esac
 done
 
@@ -102,14 +89,12 @@ pick() {
   return 1
 }
 
-[ "$dry_run" = yes ] || [ -f "$pin/ticket.loop" ] || { echo "nothing pinned, run: $0 pin" >&2; exit 2; }
-
 # Picks one issue and starts a run on it. Prints "<runid> <issue>" on stdout,
 # or nothing when no issue is ready or on a dry run.
 start() {
   local issue title task runid rc
   # Loops that start at the same time would pick the same issue or area, so
-  # only one picks and assigns at a time. The lock is shared by every pin.
+  # only one picks and assigns at a time. The lock is shared by every loop.
   mkdir -p "$HOME/.loopfile/ticket"
   while :; do
     exec 9> "$HOME/.loopfile/ticket/pick.lock"
@@ -140,7 +125,7 @@ start() {
   task="#$issue $title
 
 $(gh issue view "$issue" --json body -q .body)"
-  runid=$(cd "$root" && PATH="$pin/bin:$PATH" nice -n 10 loopfile "$pin/ticket.loop" -d \
+  runid=$(cd "$root" && nice -n 10 loopfile loops/ticket -d \
     --input task="$task" --input issue="$issue" --input merge="$merge" --input ci="$ci")
   echo "$runid $issue"
 }
@@ -182,7 +167,7 @@ started=$(start)
 read -r runid issue <<< "$started"
 echo "run: $runid (#$issue)"
 if [ "$loop" = no ]; then
-  echo "follow: PATH=\"$pin/bin:\$PATH\" loopfile tail $runid"
+  echo "follow: loopfile tail $runid"
   exit 0
 fi
 
@@ -190,7 +175,7 @@ fi
 # not stop the loop, but 3 of them in a row do.
 fails=0
 while :; do
-  if PATH="$pin/bin:$PATH" loopfile tail "$runid"; then
+  if loopfile tail "$runid"; then
     fails=0
   else
     report_failure "$runid" "$issue"
