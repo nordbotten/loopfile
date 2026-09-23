@@ -21,7 +21,6 @@ const { version } = createRequire(import.meta.url)("../../package.json") as { ve
 
 const run = promisify(execFile);
 const cli = fileURLToPath(new URL("../cli.ts", import.meta.url));
-const { version } = createRequire(import.meta.url)("../../package.json") as { version: string };
 /**
  * The ping bound for an attached loop. A gone owner refuses the connection at
  * once and a live one answers, so this bound only ends a ping to a live owner
