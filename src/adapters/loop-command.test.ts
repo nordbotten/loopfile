@@ -539,7 +539,12 @@ test("pauses between runs and exposes the pause in status", async () => {
     assert.equal(code, 0, captured.errors());
     const loopId = captured.output().trim();
     const paused = await waitForPause(setupResult.home, loopId);
-    const status = JSON.parse(await readFile(loopPaths(setupResult.home, loopId).status, "utf8"));
+    // The owner writes status.json just after the event, so wait for it too.
+    let status = { state: "", pausedUntil: null };
+    for (let tries = 0; tries < 50 && status.pausedUntil === null; tries += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      status = JSON.parse(await readFile(loopPaths(setupResult.home, loopId).status, "utf8"));
+    }
     assert.equal(status.state, "running");
     assert.equal(status.pausedUntil, paused.until);
 
