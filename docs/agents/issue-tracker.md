@@ -29,6 +29,46 @@ example with `/to-tickets`):
 - **Write each acceptance criterion so one test can check it.** The loop's review
   blocks a criterion that has no test.
 
+## Pull request titles
+
+PRs are squash-merged, so a PR title becomes the commit title on `main`.
+release-please reads these titles to pick the next version and to write
+`CHANGELOG.md`. So every PR title is a
+[Conventional Commit](https://www.conventionalcommits.org/) title:
+
+```text
+<type>[(scope)][!]: <summary>
+```
+
+| Type | Use it for | Next version from 0.1.0 | In `CHANGELOG.md` |
+| --- | --- | --- | --- |
+| `feat` | a change a user can see or use | 0.2.0 | yes |
+| `fix` | a bug fix | 0.1.1 | yes |
+| `perf` | the same behavior, faster | 0.1.1 | yes |
+| `revert` | undo an earlier PR | 0.1.1 | yes |
+| `refactor`, `docs`, `test`, `build`, `ci`, `chore` | changes a user does not see | none | no |
+
+- Write the summary as a user would say it: `feat: status shows the loop and
+  its recent runs`, `fix(cli): list shows the right STEP for a completed run`,
+  `docs: ADR 0014 for workspace modes`.
+- The scope is optional, in lower case: `fix(tail): ...`.
+- Add `!` after the type or scope when a user must change what they do, for
+  example `feat!: rename --max-runs to --runs`. Before 1.0 this gives the next
+  minor version, not 1.0.0.
+
+`scripts/check-pr-title.sh "<title>"` checks a title. The `PR title` workflow
+runs it on every PR.
+
+### Releases
+
+The `Release` workflow keeps one open release PR, with a title that starts with
+`chore(main): release`. It holds the next version and the new `CHANGELOG.md` entries. To release, merge
+it with `gh pr merge <number> --squash --admin`. `--admin` is necessary because
+CI does not run on a PR that GITHUB_TOKEN opens. The merge tags `v<version>`,
+makes the GitHub Release and stages the package on npm. The version goes live
+only when a maintainer approves it with 2FA: `npm stage list loopfile`, then
+`npm stage approve <id>`, or on npmjs.com. An agent never approves a stage.
+
 ## Pull requests as a triage surface
 
 **PRs as a request surface: no.** _(Set to `yes` if this repo treats external PRs as feature requests; `/triage` reads this flag.)_
