@@ -819,6 +819,8 @@ export interface OwnerStart {
   readonly detach: boolean;
   /** The confirmation fact printed after the owner is ready. */
   readonly confirmation: "started" | "resumed" | "continued";
+  /** An AXI confirmation customized with the run's recorded workspace. */
+  readonly confirmationText?: string;
   /** The CLI script the run owner is started from. */
   readonly cli: string;
 }
@@ -830,7 +832,7 @@ export interface OwnerStart {
  * A new run and a resume start their run owner the same way (#64).
  */
 export async function startOwner(
-  { runId, paths, ownerEnv, detach, confirmation, cli }: OwnerStart,
+  { runId, paths, ownerEnv, detach, confirmation, confirmationText, cli }: OwnerStart,
   io: Pick<LaunchIo, "out" | "err" | "monitor">,
   env: Record<string, string | undefined>,
   options: LaunchOptions,
@@ -855,7 +857,15 @@ export async function startOwner(
     );
     return started.failure.exitCode;
   }
-  return await continueAfterReady(started.runId, detach, confirmation, io, env, options);
+  return await continueAfterReady(
+    started.runId,
+    detach,
+    confirmation,
+    io,
+    env,
+    options,
+    confirmationText,
+  );
 }
 
 export interface DetachedOwnerStart {

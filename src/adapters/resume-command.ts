@@ -13,12 +13,15 @@
 
 import { readFile } from "node:fs/promises";
 import { parseArgs } from "node:util";
-import { renderOperatorFailure } from "../application/operator-error.ts";
+import {
+  renderOperatorConfirmation,
+  renderOperatorFailure,
+} from "../application/operator-error.ts";
 import { CorruptEventLogError, parseEventLog, replay } from "../application/replay.ts";
 import { resumePlan, resumeRefusal } from "../application/resume.ts";
 import { isLoopId, renderRunList } from "../application/run-list.ts";
 import { modelDigest } from "../application/workflow-run.ts";
-import type { RunEvent } from "../domain/events.ts";
+import type { RunCreated, RunEvent } from "../domain/events.ts";
 import { type LaunchIo, type LaunchOptions, startOwner } from "./launch-command.ts";
 import { groupAlive } from "./local-executor.ts";
 import { loopResumeCommand } from "./loop-resume-command.ts";
@@ -27,6 +30,7 @@ import { loopfileHome, pathExists, type RunPaths, runPaths } from "./run-directo
 import { discoverRuns } from "./run-discovery.ts";
 import { pingOwner } from "./run-owner.ts";
 import { loadMaterialized } from "./workflow-run.ts";
+import { workspaceFromCreated } from "./workspace.ts";
 
 const USAGE = "Usage: loopfile resume <runid> [-d | --detach] [--kill-leftovers]";
 const HELP = `Usage: loopfile resume [<runid>] [-d | --detach] [--kill-leftovers]
@@ -77,7 +81,7 @@ export async function resumeCommand(
   if (runId === undefined) return await listCrashed(io, env);
 
   const paths = runPaths(loopfileHome(env as NodeJS.ProcessEnv), runId);
-  const refused = await checkResume(paths, runId, args.killLeftovers, options).catch(
+  const checked = await checkResume(paths, runId, args.killLeftovers, options).catch(
     (error: Error): ResumeFailure => ({
       summary: error.message,
       code: "operation_failed",
@@ -85,14 +89,22 @@ export async function resumeCommand(
       exitCode: 2,
     }),
   );
-  if (refused !== undefined) {
-    io.err(renderOperatorFailure(refused, refused.exitCode).stderr);
-    return refused.exitCode;
+  if ("summary" in checked) {
+    io.err(renderOperatorFailure(checked, checked.exitCode).stderr);
+    return checked.exitCode;
   }
 
   const ownerEnv = { ...env, [RESUME_ENV]: "1" };
   return await startOwner(
-    { runId, paths, ownerEnv, detach: args.detach, cli, confirmation: "resumed" },
+    {
+      runId,
+      paths,
+      ownerEnv,
+      detach: args.detach,
+      cli,
+      confirmation: "resumed",
+      confirmationText: checked.confirmationText,
+    },
     io,
     env,
     options,
@@ -162,12 +174,16 @@ interface ResumeFailure {
   readonly exitCode: 1 | 2;
 }
 
+interface ResumeReady {
+  readonly confirmationText: string;
+}
+
 async function checkResume(
   paths: RunPaths,
   runId: string,
   killLeftovers: boolean,
   options: ResumeOptions,
-): Promise<ResumeFailure | undefined> {
+): Promise<ResumeFailure | ResumeReady> {
   const log = await readResumeLog(paths, runId);
   if (typeof log !== "string") return log;
   const ownerFailure = await liveOwnerFailure(paths, runId, options);
@@ -177,9 +193,28 @@ async function checkResume(
   const workflow = await loadMaterialized(paths);
   const mismatch = resumeMismatch(parsed, modelDigest(workflow));
   if (mismatch !== undefined) return mismatch;
-  if (!(await pathExists(paths.workspace))) return workspaceFailure(paths, runId);
+  const created = parsed[0] as RunCreated;
+  const workspace = workspaceFromCreated(created, paths.workspace);
+  if (!(await pathExists(workspace.path))) return workspaceFailure(workspace.path, runId);
   const { interrupted, leftoverGroup = 0 } = resumePlan(workflow, parsed);
-  return leftoverFailure(interrupted, leftoverGroup, runId, killLeftovers);
+  const leftover = leftoverFailure(interrupted, leftoverGroup, runId, killLeftovers);
+  if (leftover !== undefined) return leftover;
+  return { confirmationText: resumeConfirmation(runId, created, workspace) };
+}
+
+function resumeConfirmation(
+  runId: string,
+  created: RunCreated,
+  workspace: ReturnType<typeof workspaceFromCreated>,
+): string {
+  const mode = created.workspaceMode ?? "isolate";
+  return renderOperatorConfirmation({
+    resumed: runId,
+    workspace: `${mode} · ${workspace.path}`,
+    ...(mode === "isolate" && workspace.isolateKind === "worktree" && created.branch !== undefined
+      ? { branch: created.branch }
+      : {}),
+  });
 }
 
 async function readResumeLog(paths: RunPaths, runId: string): Promise<string | ResumeFailure> {
@@ -250,11 +285,11 @@ function resumeMismatch(events: readonly RunEvent[], digest: string): ResumeFail
   return { summary: refused, code: "operation_failed", help, exitCode: 1 };
 }
 
-function workspaceFailure(paths: RunPaths, runId: string): ResumeFailure {
+function workspaceFailure(workspacePath: string, runId: string): ResumeFailure {
   return {
     summary: `the workspace of run ${runId} is gone`,
     code: "workspace_missing",
-    help: `Workspace path: ${paths.workspace}. Resume never makes a new one.`,
+    help: `Workspace path: ${workspacePath}. Resume never makes a new one.`,
     exitCode: 2,
   };
 }
