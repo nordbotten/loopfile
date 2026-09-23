@@ -238,6 +238,16 @@ async function waitForEnd(home: string, runId: string): Promise<ReturnType<typeo
   throw new Error("the run did not end");
 }
 
+async function blockGit(env: NodeJS.ProcessEnv, folder: string) {
+  const bin = join(folder, "no-git");
+  const calls = join(folder, "git-calls");
+  await mkdir(bin);
+  const executable = join(bin, "git");
+  await writeFile(executable, `#!/bin/sh\nprintf called >> '${calls}'\nexit 97\n`);
+  await chmod(executable, 0o755);
+  return { env: { ...env, PATH: `${bin}${delimiter}${process.env.PATH}` }, calls };
+}
+
 async function launchRemoteAndWait(
   source: string,
   setupResult: Awaited<ReturnType<typeof setup>>,
@@ -1474,6 +1484,95 @@ test("a directory, a thin .loop and a packed .loop run the same and give input.i
   assert.deepEqual(shapes[2], shapes[0]);
 });
 
+test("workspace here runs in the launch folder without Git and reports matching result paths", async () => {
+  const manifest = `formatVersion: 1
+workspace: here
+steps:
+  - id: inspect
+    kind: command
+    run: 'pwd > here.cwd; printf "%s\\n%s\\n" "$LOOPFILE_WORKSPACE" "$LOOPFILE_SCRATCH" > here.env'
+`;
+  const { base, repo, source, home, env } = await setup(manifest);
+  const guarded = await blockGit(env, base);
+  const s = session();
+  assert.equal(
+    await launchCommand([source, "-d"], cli, s.io, guarded.env, { repository: repo }),
+    0,
+    s.err(),
+  );
+  const runId = s.out().trim();
+  const paths = runPaths(home, runId);
+  assert.equal(s.err(), `started: ${runId}\nworkspace: here · ${repo}\n`);
+
+  const events = await waitForEnd(home, runId);
+  const created = events[0];
+  assert.equal(created?.type, "run.created");
+  if (created?.type !== "run.created") throw new Error("run.created is missing");
+  assert.deepEqual(
+    [created.workspaceMode, created.targetFolder, created.workspacePath],
+    ["here", repo, repo],
+  );
+  for (const field of ["branch", "baseCommit", "isolateKind"] as const) {
+    assert.equal(Object.hasOwn(created, field), false);
+  }
+  await assert.rejects(stat(paths.workspace), { code: "ENOENT" });
+  assert.equal((await readFile(join(repo, "here.cwd"), "utf8")).trim(), repo);
+  assert.deepEqual((await readFile(join(repo, "here.env"), "utf8")).trim().split("\n"), [
+    repo,
+    join(paths.attempts, "001-inspect", "scratch"),
+  ]);
+  let result = "";
+  assert.equal(
+    await resultCommand(
+      ["result", runId],
+      (text) => (result += text),
+      () => {},
+      guarded.env,
+    ),
+    0,
+  );
+  assert.match(result, new RegExp(`^target +${repo}$`, "m"));
+  assert.match(result, new RegExp(`^workspace +here · ${repo}$`, "m"));
+  assert.doesNotMatch(result, /^branch(?:\s|$)/m);
+  assert.doesNotMatch(result, /^base commit(?:\s|$)/m);
+  await assert.rejects(readFile(guarded.calls), { code: "ENOENT" });
+});
+
+test("--workspace here overrides the Manifest and two runs start in one folder", async () => {
+  const manifest = `formatVersion: 1
+workspace: isolate
+steps:
+  - id: wait
+    kind: command
+    run: 'sleep 0.5; echo done >> concurrent.txt'
+`;
+  const { base, repo, source, home, env } = await setup(manifest);
+  const guarded = await blockGit(env, base);
+  const runIds: string[] = [];
+  for (let index = 0; index < 2; index += 1) {
+    const s = session();
+    assert.equal(
+      await launchCommand([source, "--workspace", "here", "-d"], cli, s.io, guarded.env, {
+        repository: repo,
+      }),
+      0,
+      s.err(),
+    );
+    const runId = s.out().trim();
+    runIds.push(runId);
+    assert.equal(s.err(), `started: ${runId}\nworkspace: here · ${repo}\n`);
+  }
+  assert.notEqual(runIds[0], runIds[1]);
+  const events = await Promise.all(runIds.map((runId) => waitForEnd(home, runId)));
+  for (const runEvents of events) {
+    const created = runEvents[0];
+    assert.equal(created?.type === "run.created" && created.workspaceMode, "here");
+    assert.equal(created?.type === "run.created" && created.workspacePath, repo);
+  }
+  assert.equal((await readFile(join(repo, "concurrent.txt"), "utf8")).trim().split("\n").length, 2);
+  await assert.rejects(readFile(guarded.calls), { code: "ENOENT" });
+});
+
 test("a nested Git launch records its top level and creates an isolate worktree branch", async () => {
   const manifest = MANIFEST.replace("formatVersion: 1", "formatVersion: 1\nworkspace: isolate");
   const { repo, source, home, env } = await setup(manifest);
@@ -1588,12 +1687,12 @@ test("launch rejects unsupported workspace modes before making a run", async () 
   const { repo, source, home, env } = await setup();
   const s = session();
   assert.equal(
-    await launchCommand([source, "--workspace", "here", "-d"], cli, s.io, env, {
+    await launchCommand([source, "--workspace", "empty", "-d"], cli, s.io, env, {
       repository: repo,
     }),
     2,
   );
-  assert.match(s.err(), /--workspace must be one of: isolate/);
+  assert.match(s.err(), /--workspace must be one of: isolate, here/);
   await assert.rejects(stat(join(home, "runs")));
 });
 

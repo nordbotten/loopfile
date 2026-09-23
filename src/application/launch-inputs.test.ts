@@ -119,6 +119,7 @@ test("a launch request survives the environment variable", () => {
     sourceText: "formatVersion: 1",
     repository: "/r",
     inputs: { a: "1" },
+    workspaceMode: "here",
     loopfileName: "loops",
     loopId: "loop-20260922-105306-qfn3",
     loopIndex: 3,

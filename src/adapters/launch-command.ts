@@ -13,7 +13,7 @@ import { type ChildProcess, spawn } from "node:child_process";
 import { closeSync, openSync } from "node:fs";
 import { mkdir, open, readFile, rename, rm, stat } from "node:fs/promises";
 import { connect } from "node:net";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { isSeq, parseDocument } from "yaml";
 import {
@@ -627,8 +627,12 @@ async function start(
     options,
     renderLaunchConfirmation(
       started.runId,
-      request.workspaceMode ?? "isolate",
-      paths.workspace,
+      created?.type === "run.created"
+        ? (created.workspaceMode ?? request.workspaceMode ?? "isolate")
+        : (request.workspaceMode ?? "isolate"),
+      created?.type === "run.created"
+        ? (created.workspacePath ?? paths.workspace)
+        : paths.workspace,
       created?.type === "run.created" ? created.branch : undefined,
     ),
   );
@@ -671,6 +675,7 @@ export async function startRun(options: StartRunOptions): Promise<StartRunResult
   const workflow = await workflowForStart(options);
   if (!workflow.ok) return workflow;
 
+  const workspaceMode = options.workspaceMode ?? workflow.workflow.workspaceMode ?? "isolate";
   const inputs = checkAgainstDeclared(
     options.inputs,
     workflow.workflow.inputs,
@@ -692,7 +697,10 @@ export async function startRun(options: StartRunOptions): Promise<StartRunResult
   let paths: RunPaths;
   let targetFolder: string;
   try {
-    targetFolder = await targetRepository(options.repository);
+    targetFolder =
+      workspaceMode === "here"
+        ? resolve(options.repository)
+        : await targetRepository(options.repository);
     paths = await createRunDirectory({
       home,
       runId: options.runId,
@@ -712,7 +720,7 @@ export async function startRun(options: StartRunOptions): Promise<StartRunResult
     ...(options.sourceText === undefined ? {} : { sourceText: options.sourceText }),
     repository: targetFolder,
     inputs: inputs.inputs,
-    workspaceMode: options.workspaceMode,
+    workspaceMode,
     loopfileName: options.loopfileName,
     ...optionalLoopFields(options.loopId, options.loopIndex),
   };

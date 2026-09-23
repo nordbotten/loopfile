@@ -58,7 +58,7 @@ export type OutputName = string;
 export type InputName = string;
 
 /** Workspace modes accepted by this release. */
-export type WorkspaceMode = "isolate";
+export type WorkspaceMode = "isolate" | "here";
 
 /** Where a run ends. */
 export type EndState = "$success" | "$failure";

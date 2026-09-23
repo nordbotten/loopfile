@@ -530,7 +530,7 @@ test("loop --times starts a detached owner and two command runs", async () => {
   }
 });
 
-test("loop --workspace carries its mode to every child run", async () => {
+test("loop --workspace here carries its mode to every child run", async () => {
   const setupResult = await setup(`formatVersion: 1
 workspace: isolate
 steps:
@@ -542,7 +542,7 @@ steps:
     const captured = io();
     assert.equal(
       await loopCommand(
-        ["loop", setupResult.source, "--times", "1", "--workspace", "isolate", "-d"],
+        ["loop", setupResult.source, "--times", "1", "--workspace", "here", "-d"],
         cli,
         captured.value,
         setupResult.env,
@@ -554,17 +554,16 @@ steps:
     const loopId = captured.output().trim();
     const events = await waitForEnd(setupResult.home, loopId);
     const created = events[0];
-    assert.equal(created?.type === "loop.created" ? created.workspaceMode : undefined, "isolate");
+    assert.equal(created?.type === "loop.created" ? created.workspaceMode : undefined, "here");
     const child = events.find((event) => event.type === "loop.run_started");
     assert.ok(child?.type === "loop.run_started");
     const runEvents = parseEventLog(
       await readFile(runPaths(setupResult.home, child.runId).events, "utf8"),
     );
     const runCreated = runEvents[0];
-    assert.equal(
-      runCreated?.type === "run.created" ? runCreated.workspaceMode : undefined,
-      "isolate",
-    );
+    assert.equal(runCreated?.type === "run.created" ? runCreated.workspaceMode : undefined, "here");
+    assert.equal(runCreated?.type === "run.created" && runCreated.workspacePath, setupResult.repo);
+    assert.equal(runCreated?.type === "run.created" && Object.hasOwn(runCreated, "branch"), false);
   } finally {
     await removeAfterOwnersExit(setupResult.root);
   }
@@ -576,7 +575,7 @@ test("loop rejects unsupported workspace modes before making a loop", async () =
     const captured = io();
     assert.equal(
       await loopCommand(
-        ["loop", setupResult.source, "--times", "1", "--workspace", "here", "-d"],
+        ["loop", setupResult.source, "--times", "1", "--workspace", "empty", "-d"],
         cli,
         captured.value,
         setupResult.env,
@@ -584,7 +583,7 @@ test("loop rejects unsupported workspace modes before making a loop", async () =
       ),
       2,
     );
-    assert.match(captured.errors(), /--workspace must be one of: isolate/);
+    assert.match(captured.errors(), /--workspace must be one of: isolate, here/);
     await assert.rejects(stat(join(setupResult.home, "loops")));
   } finally {
     await removeAfterOwnersExit(setupResult.root);

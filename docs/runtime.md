@@ -389,13 +389,18 @@ loopfile ./fix.loop --input issue=42
 
 A run has one workspace, and all steps work in it. The optional top-level
 `workspace` field selects its mode; `--workspace <mode>` on launch or `loop`
-overrides it. `isolate` is the only accepted mode in this version and is the
-default. `loopfile check` validates the mode word without inspecting Git or the
-target folder.
+overrides it. `isolate` is the default; `here` is available only when selected
+explicitly. `loopfile check` validates the mode word without inspecting Git or
+the target folder.
 
-The **Target folder** is the Git top level when the launch folder is inside a
-Git repository, otherwise it is the launch folder. An isolated workspace lives
-at `runs/<runid>/workspace` and follows one of two paths:
+In `here` mode, the Target folder is the launch folder and is the workspace.
+Loopfile does not inspect or modify Git in the Target folder and does not create a workspace folder.
+The `LOOPFILE_WORKSPACE` environment variable points to the launch folder, and
+`LOOPFILE_SCRATCH` keeps its normal per-attempt path.
+
+In `isolate` mode, the **Target folder** is the Git top level when the launch
+folder is inside a Git repository, otherwise it is the launch folder. The
+workspace lives at `runs/<runid>/workspace` and follows one of two paths:
 
 1. When Git can make a worktree, it starts from the Target folder's `HEAD` on a
    new branch `loopfile/<runid>`. Uncommitted changes are not carried across;
@@ -412,11 +417,11 @@ A run that fails, is cancelled, or crashes keeps either workspace. Loopfile
 never deletes a run branch; commit inside a worktree if you want the work to
 survive on that branch.
 
-`run.created` records `targetFolder`, workspace path and mode, and
-`isolateKind: worktree` or `copy`. Only a worktree records `branch` and
-`baseCommit`. `loopfile result <runid>` hides those two lines when absent;
-`result --json` keeps both fields as empty strings. The JSON format version does
-not change.
+`run.created` records `targetFolder`, workspace path and mode. An `isolate` run
+also records `isolateKind: worktree` or `copy`. Only a worktree records
+`branch` and `baseCommit`; `here` records none of those three fields.
+`loopfile result <runid>` hides Git facts when absent; `result --json` keeps the
+branch and base commit as empty strings. The JSON format version does not change.
 
 ## Operator commands
 

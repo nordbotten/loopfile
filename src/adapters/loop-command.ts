@@ -21,7 +21,7 @@ import {
 import { parseStatusProjection } from "../application/status.ts";
 import { selectWorkspaceMode } from "../application/workspace-mode.ts";
 import type { InputSet, LoopEvent, LoopSource } from "../domain/events.ts";
-import type { Workflow } from "../domain/model.ts";
+import type { Workflow, WorkspaceMode } from "../domain/model.ts";
 import type { LoopStatus, StatusProjection } from "../domain/status.ts";
 import {
   materializeDirectory,
@@ -111,7 +111,7 @@ interface ValidLoopArgs {
   readonly maxRuns: number | undefined;
   readonly pauseMs: number | null;
   readonly inputs: readonly string[];
-  readonly workspaceMode?: "isolate";
+  readonly workspaceMode?: WorkspaceMode;
   readonly detach: boolean;
 }
 
@@ -581,7 +581,7 @@ function parseLoopArgs(argv: readonly string[]): LoopArgs | undefined {
 }
 
 function loopSourceArgs(
-  args: Omit<LoopArgs, "workspaceMode"> & { readonly workspaceMode?: "isolate" },
+  args: Omit<LoopArgs, "workspaceMode"> & { readonly workspaceMode?: WorkspaceMode },
   limits: {
     readonly retry: number;
     readonly maxRuns: number | undefined;

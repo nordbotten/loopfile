@@ -113,6 +113,7 @@ async function runLaunched(
     inputs: launch.inputs,
     loopId: launch.loopId,
     loopIndex: launch.loopIndex,
+    workspaceMode: launch.workspaceMode,
     loopfileName: launch.loopfileName,
     repository: launch.repository,
     executor: localExecutor(stepEnv),

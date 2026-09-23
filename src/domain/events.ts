@@ -62,7 +62,7 @@ export interface RunCreated extends EventBase {
   readonly eventFormatVersion: number;
   readonly modelDigest: string;
   readonly targetFolder: string;
-  /** Older run logs omit workspace fields; copy workspaces omit branch facts. */
+  /** Older run logs omit workspace fields; non-worktree workspaces omit Git facts. */
   readonly workspacePath?: string;
   readonly workspaceMode?: WorkspaceMode;
   readonly isolateKind?: "worktree" | "copy";
