@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
-import { copyFile, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
@@ -9,13 +10,20 @@ import { promisify } from "node:util";
 import { loopStatus } from "../application/loop-status.ts";
 import { parseEventLog } from "../application/replay.ts";
 import type { LoopEvent } from "../domain/events.ts";
-import { loopCommand } from "./loop-command.ts";
+import { childEndState, loopCommand } from "./loop-command.ts";
+import { ownerPids, removeAfterOwnersExit } from "./owner-cleanup.test.ts";
 import { loopPaths, runPaths } from "./run-directory.ts";
 import { pingOwner } from "./run-owner.ts";
 import { tailCommand } from "./tail-command.ts";
 
 const run = promisify(execFile);
 const cli = fileURLToPath(new URL("../cli.ts", import.meta.url));
+/**
+ * The ping bound for an attached loop. A gone owner refuses the connection at
+ * once and a live one answers, so this bound only ends a ping to a live owner
+ * that is slow under load, and a slow owner is not a gone one.
+ */
+const LIVE_PING_MS = 30_000;
 const gitEnv = {
   GIT_AUTHOR_NAME: "Test",
   GIT_AUTHOR_EMAIL: "test@example.invalid",
@@ -112,23 +120,31 @@ async function waitForOwnerGone(home: string, loopId: string): Promise<void> {
   throw new Error("the loop owner did not stop");
 }
 
+/**
+ * SIGKILLs the loop owner once its first child run owner has started, so no
+ * child can start after the kill and the test knows every owner that can
+ * still write into its folder.
+ */
 async function killLoopOwner(home: string, loopId: string): Promise<void> {
-  for (let tries = 0; tries < 100; tries += 1) {
+  for (let tries = 0; tries < 800; tries += 1) {
     const events = parseEventLog<LoopEvent>(
       await readFile(loopPaths(home, loopId).events, "utf8").catch(() => ""),
     );
-    const owner = events.find(
-      (event): event is Extract<LoopEvent, { type: "owner.started" }> =>
-        event.type === "owner.started",
-    );
-    if (owner !== undefined) {
-      process.kill(owner.pid, "SIGKILL");
+    const child = events.find((event) => event.type === "loop.run_started");
+    const [owner] = await ownerPids(loopPaths(home, loopId).events);
+    if (
+      owner !== undefined &&
+      child?.type === "loop.run_started" &&
+      (await ownerPids(runPaths(home, child.runId).events)).length > 0
+    ) {
+      process.kill(owner, "SIGKILL");
       return;
     }
-    await new Promise((resolve) => setTimeout(resolve, 5));
+    await new Promise((resolve) => setTimeout(resolve, 10));
   }
-  throw new Error("the loop owner did not start");
+  throw new Error("the first child run owner did not start");
 }
+
 test("loop --list starts one run per JSON line with its own input set", async () => {
   const setupResult = await setup(`formatVersion: 1
 inputs:
@@ -175,7 +191,7 @@ steps:
       );
     }
   } finally {
-    await rm(setupResult.root, { recursive: true, force: true });
+    await removeAfterOwnersExit(setupResult.root);
   }
 });
 
@@ -204,7 +220,7 @@ steps:
     assert.match(captured.errors(), /code: bad_argument/);
     await assert.rejects(stat(join(setupResult.home, "loops")));
   } finally {
-    await rm(setupResult.root, { recursive: true, force: true });
+    await removeAfterOwnersExit(setupResult.root);
   }
 });
 
@@ -235,7 +251,7 @@ steps:
     );
     await assert.rejects(stat(join(setupResult.home, "loops")));
   } finally {
-    await rm(setupResult.root, { recursive: true, force: true });
+    await removeAfterOwnersExit(setupResult.root);
   }
 });
 
@@ -261,7 +277,7 @@ test("an empty or unreadable list is a bad argument before a loop starts", async
     }
     await assert.rejects(stat(join(setupResult.home, "loops")));
   } finally {
-    await rm(setupResult.root, { recursive: true, force: true });
+    await removeAfterOwnersExit(setupResult.root);
   }
 });
 
@@ -325,7 +341,7 @@ printf 'next stderr\\n' >&2
       command: "sh next.sh",
     });
   } finally {
-    await rm(setupResult.root, { recursive: true, force: true });
+    await removeAfterOwnersExit(setupResult.root);
   }
 });
 
@@ -355,7 +371,7 @@ printf '{}\\n'
     assert.equal(loopStatus(events).endReason, "max_runs");
     assert.equal((await readFile(join(setupResult.repo, ".next-count"), "utf8")).trim(), "1");
   } finally {
-    await rm(setupResult.root, { recursive: true, force: true });
+    await removeAfterOwnersExit(setupResult.root);
   }
 });
 
@@ -377,7 +393,7 @@ test("a failing --next command ends the loop without starting a run", async () =
     assert.equal(loopStatus(events).endReason, "source_failed");
     assert.equal(loopStatus(events).detail, "--next exited 3");
   } finally {
-    await rm(setupResult.root, { recursive: true, force: true });
+    await removeAfterOwnersExit(setupResult.root);
   }
 });
 
@@ -405,7 +421,7 @@ steps:
     assert.equal(loopStatus(events).endReason, "source_failed");
     assert.equal(loopStatus(events).detail, 'input "n" is not a string');
   } finally {
-    await rm(setupResult.root, { recursive: true, force: true });
+    await removeAfterOwnersExit(setupResult.root);
   }
 });
 
@@ -444,7 +460,7 @@ test("a changed CLI ends a loop before its second run", async () => {
     await waitForOwnerGone(setupResult.home, loopId);
   } finally {
     await rm(cliCopy, { force: true });
-    await rm(setupResult.root, { recursive: true, force: true });
+    await removeAfterOwnersExit(setupResult.root);
   }
 });
 
@@ -489,7 +505,7 @@ test("loop --times starts a detached owner and two command runs", async () => {
       assert.equal(childEvents.at(-1)?.type, "run.ended");
     }
   } finally {
-    await rm(setupResult.root, { recursive: true, force: true });
+    await removeAfterOwnersExit(setupResult.root);
   }
 });
 
@@ -532,7 +548,7 @@ test("tail follows a running times loop through both children", async () => {
     assert.equal(lines.filter((line) => /loop: run \d+ \S+ completed/.test(line)).length, 2);
     assert.match(lines.at(-1) ?? "", /^loop: ended completed source_empty$/);
   } finally {
-    await rm(setupResult.root, { recursive: true, force: true });
+    await removeAfterOwnersExit(setupResult.root);
   }
 });
 
@@ -589,7 +605,7 @@ test("tail prints the full history of an ended times loop", async () => {
       ],
     );
   } finally {
-    await rm(setupResult.root, { recursive: true, force: true });
+    await removeAfterOwnersExit(setupResult.root);
   }
 });
 
@@ -614,7 +630,7 @@ test("tail returns 2 when a loop owner is gone", async () => {
     assert.match(output.errors(), /code: owner_gone/);
     assert.match(output.errors(), /loop owner/);
   } finally {
-    await rm(setupResult.root, { recursive: true, force: true });
+    await removeAfterOwnersExit(setupResult.root);
   }
 });
 
@@ -656,7 +672,7 @@ test("tail --json includes loop and child events", async () => {
     assert.equal(events.filter((event) => event.type === "run.ended").length, 2);
     assert.equal(events.at(-1)?.type, "loop.ended");
   } finally {
-    await rm(setupResult.root, { recursive: true, force: true });
+    await removeAfterOwnersExit(setupResult.root);
   }
 });
 
@@ -691,7 +707,7 @@ test("tail returns 1 for a failed loop", async () => {
     assert.equal(code, 1);
     assert.match(output, /loop: ended failed run_failed/);
   } finally {
-    await rm(setupResult.root, { recursive: true, force: true });
+    await removeAfterOwnersExit(setupResult.root);
   }
 });
 
@@ -706,7 +722,7 @@ test("an attached loop reports a failed child as an operator failure", async () 
       cli,
       captured.value,
       setupResult.env,
-      { repository: setupResult.repo, pollMs: 10, ownerPingTimeoutMs: 30_000 },
+      { repository: setupResult.repo, pollMs: 10, ownerPingTimeoutMs: LIVE_PING_MS },
     );
     assert.equal(code, 1);
     const loopId = captured.output().trim();
@@ -718,7 +734,7 @@ test("an attached loop reports a failed child as an operator failure", async () 
     assert.equal(lines[4], "code: operation_failed");
     assert.equal(lines[5], `help: See each run with: loopfile result ${loopId}`);
   } finally {
-    await rm(setupResult.root, { recursive: true, force: true });
+    await removeAfterOwnersExit(setupResult.root);
   }
 });
 
@@ -760,7 +776,7 @@ test("SIGINT detaches from an attached loop without stopping its owner", async (
   } finally {
     child?.kill("SIGKILL");
     if (loopId !== undefined) await waitForEnd(setupResult.home, loopId).catch(() => undefined);
-    await rm(setupResult.root, { recursive: true, force: true });
+    await removeAfterOwnersExit(setupResult.root);
   }
 });
 
@@ -781,7 +797,7 @@ test("an attached loop reports a gone loop owner without ending the loop", async
       cli,
       captured.value,
       setupResult.env,
-      { repository: setupResult.repo, pollMs: 10, ownerPingTimeoutMs: 50 },
+      { repository: setupResult.repo, pollMs: 10, ownerPingTimeoutMs: LIVE_PING_MS },
     );
     assert.equal(code, 2);
     await kill;
@@ -789,8 +805,7 @@ test("an attached loop reports a gone loop owner without ending the loop", async
     assert.match(captured.errors(), /help: Resume the crashed loop with: loopfile resume loop-/);
   } finally {
     await kill?.catch(() => undefined);
-    await new Promise((resolve) => setTimeout(resolve, 250));
-    await rm(setupResult.root, { recursive: true, force: true });
+    await removeAfterOwnersExit(setupResult.root);
   }
 });
 
@@ -842,7 +857,7 @@ test("loop input errors happen before a loop folder exists", async () => {
     }
     await assert.rejects(stat(join(setupResult.home, "loops")));
   } finally {
-    await rm(setupResult.root, { recursive: true, force: true });
+    await removeAfterOwnersExit(setupResult.root);
   }
 });
 
@@ -857,7 +872,7 @@ test("an attached loop stops at max-runs and exits successfully", async () => {
       cli,
       captured.value,
       setupResult.env,
-      { repository: setupResult.repo, pollMs: 10, ownerPingTimeoutMs: 50 },
+      { repository: setupResult.repo, pollMs: 10, ownerPingTimeoutMs: LIVE_PING_MS },
     );
     assert.equal(code, 0, captured.errors());
     const loopId = captured.output().trim();
@@ -868,7 +883,7 @@ test("an attached loop stops at max-runs and exits successfully", async () => {
     assert.equal(loopStatus(events).endReason, "max_runs");
     assert.match(captured.errors(), new RegExp(`ended: ${loopId} completed max_runs`));
   } finally {
-    await rm(setupResult.root, { recursive: true, force: true });
+    await removeAfterOwnersExit(setupResult.root);
   }
 });
 
@@ -886,14 +901,14 @@ test("max runs caps a retry", async () => {
       cli,
       captured.value,
       setupResult.env,
-      { repository: setupResult.repo, pollMs: 10, ownerPingTimeoutMs: 50 },
+      { repository: setupResult.repo, pollMs: 10, ownerPingTimeoutMs: LIVE_PING_MS },
     );
     assert.equal(code, 0, captured.errors());
     const events = await waitForEnd(setupResult.home, captured.output().trim());
     assert.equal(events.filter((event) => event.type === "loop.run_started").length, 1);
     assert.equal(loopStatus(events).endReason, "max_runs");
   } finally {
-    await rm(setupResult.root, { recursive: true, force: true });
+    await removeAfterOwnersExit(setupResult.root);
   }
 });
 
@@ -911,7 +926,7 @@ test("retries a failed run in a new workspace and completes", async () => {
       cli,
       captured.value,
       setupResult.env,
-      { repository: setupResult.repo, pollMs: 10, ownerPingTimeoutMs: 50 },
+      { repository: setupResult.repo, pollMs: 10, ownerPingTimeoutMs: LIVE_PING_MS },
     );
     assert.equal(code, 0, captured.errors());
     const events = await waitForEnd(setupResult.home, captured.output().trim());
@@ -928,7 +943,7 @@ test("retries a failed run in a new workspace and completes", async () => {
     );
     assert.equal(loopStatus(events).state, "completed");
   } finally {
-    await rm(setupResult.root, { recursive: true, force: true });
+    await removeAfterOwnersExit(setupResult.root);
   }
 });
 
@@ -946,14 +961,14 @@ test("retry zero fails after one run", async () => {
       cli,
       captured.value,
       setupResult.env,
-      { repository: setupResult.repo, pollMs: 10, ownerPingTimeoutMs: 50 },
+      { repository: setupResult.repo, pollMs: 10, ownerPingTimeoutMs: LIVE_PING_MS },
     );
     assert.equal(code, 1, captured.errors());
     const events = await waitForEnd(setupResult.home, captured.output().trim());
     assert.equal(events.filter((event) => event.type === "loop.run_started").length, 1);
     assert.equal(loopStatus(events).endReason, "run_failed");
   } finally {
-    await rm(setupResult.root, { recursive: true, force: true });
+    await removeAfterOwnersExit(setupResult.root);
   }
 });
 
@@ -966,7 +981,7 @@ test("an attached loop reports each run and its successful end", async () => {
       cli,
       captured.value,
       setupResult.env,
-      { repository: setupResult.repo, pollMs: 10, ownerPingTimeoutMs: 50 },
+      { repository: setupResult.repo, pollMs: 10, ownerPingTimeoutMs: LIVE_PING_MS },
     );
     assert.equal(code, 0, captured.errors());
     const loopId = captured.output().trim();
@@ -979,7 +994,7 @@ test("an attached loop reports each run and its successful end", async () => {
     assert.equal(lines[5], `ended: ${loopId} completed source_empty`);
     assert.equal(lines.length, 6);
   } finally {
-    await rm(setupResult.root, { recursive: true, force: true });
+    await removeAfterOwnersExit(setupResult.root);
   }
 });
 
@@ -1009,6 +1024,61 @@ steps:
     assert.match(captured.errors(), /\ncode: invalid_manifest\n/);
     await assert.rejects(stat(join(setupResult.home, "loops")));
   } finally {
-    await rm(setupResult.root, { recursive: true, force: true });
+    await removeAfterOwnersExit(setupResult.root);
+  }
+});
+
+/** A child run's `status.json` in `state`. */
+function childStatus(runId: string, state: "running" | "failed"): string {
+  const ended = state === "failed";
+  return JSON.stringify({
+    formatVersion: 1,
+    seq: 1,
+    updatedAt: "2026-09-22T10:00:00.000Z",
+    runId,
+    loopfileName: "source",
+    loopId: null,
+    loopIndex: null,
+    state,
+    endReason: ended ? "failure" : null,
+    startedAt: "2026-09-22T10:00:00.000Z",
+    endedAt: ended ? "2026-09-22T10:00:01.000Z" : null,
+    current: null,
+    lastActivityAt: "2026-09-22T10:00:00.000Z",
+    lastProgress: null,
+    visitedSteps: [],
+    lastTransition: null,
+    transitions: 0,
+    maxTransitions: null,
+    metrics: {
+      inputTokens: null,
+      outputTokens: null,
+      totalTokens: null,
+      costUsd: null,
+      toolCalls: null,
+      permissionDenials: null,
+    },
+  });
+}
+
+test("a child run that ends while the ping waits is failed, not crashed", async () => {
+  const setupResult = await setup();
+  const runId = "20260922-100000-abcd";
+  const paths = runPaths(setupResult.home, runId);
+  await mkdir(paths.root, { recursive: true });
+  await writeFile(paths.status, childStatus(runId, "running"));
+  // An owner that ends while it is pinged: it never answers, writes its final
+  // status, then closes the connection, as a real owner closes its socket last.
+  const owner: Server = createServer(async (socket) => {
+    await writeFile(`${paths.status}.tmp`, childStatus(runId, "failed"));
+    await rename(`${paths.status}.tmp`, paths.status);
+    socket.destroy();
+  });
+  await new Promise<void>((resolve) => owner.listen(paths.socket, () => resolve()));
+  try {
+    assert.equal(await childEndState(setupResult.home, runId, false, 30_000), "failed");
+  } finally {
+    await new Promise((resolve) => owner.close(resolve));
+    await removeAfterOwnersExit(setupResult.root);
   }
 });

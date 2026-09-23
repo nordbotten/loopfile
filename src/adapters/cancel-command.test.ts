@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
@@ -13,6 +13,7 @@ import { cancelCommand } from "./cancel-command.ts";
 import { type LaunchIo, launchCommand } from "./launch-command.ts";
 import { groupAlive } from "./local-executor.ts";
 import type { MonitorIo } from "./monitor.ts";
+import { removeAfterOwnersExit } from "./owner-cleanup.test.ts";
 import { pathExists, type RunPaths, runPaths } from "./run-directory.ts";
 
 const run = promisify(execFile);
@@ -25,7 +26,7 @@ const gitEnv = {
 };
 
 const root = await realpath(await mkdtemp(join(tmpdir(), "loopfile-cancel-")));
-after(() => rm(root, { recursive: true, force: true }));
+after(() => removeAfterOwnersExit(root));
 let count = 0;
 
 /** A target repository and a Loopfile whose one command step runs `command`. */
