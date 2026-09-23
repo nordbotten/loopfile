@@ -13,6 +13,22 @@ Issues and specs for this repo live as GitHub issues. Use the `gh` CLI for all o
 
 Infer the repo from `git remote -v` — `gh` does this automatically when run inside a clone.
 
+## Tickets for the ticket loop
+
+`scripts/run-ticket.sh` works `ready-for-agent` tickets in parallel. It starts at
+most one run per **area**, because tickets in one area change the same files and
+parallel runs on them end in merge conflicts. When you publish tickets (for
+example with `/to-tickets`):
+
+- **Give each ticket a parent.** Link it as a GitHub sub-issue of its spec or map
+  issue. The parent is the ticket's area. A ticket with no parent can have an
+  `area:<name>` label instead. A ticket with neither runs in parallel with
+  everything.
+- **Keep a ticket to about 10 changed files.** Split a ticket that you expect to
+  change more. A large ticket gives hundreds of mutants and a slow test step.
+- **Write each acceptance criterion so one test can check it.** The loop's review
+  blocks a criterion that has no test.
+
 ## Pull requests as a triage surface
 
 **PRs as a request surface: no.** _(Set to `yes` if this repo treats external PRs as feature requests; `/triage` reads this flag.)_
