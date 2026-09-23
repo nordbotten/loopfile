@@ -14,9 +14,10 @@ Single-context: one `CONTEXT.md` and `docs/adr/` at the repo root. See `docs/age
 
 ## Quality guardrails
 
-Run `npm run gate:quiet` before you finish, and `npm run quality:mutation` when
-you have changed `CORE`. CI runs both, so a failure there is one you could have
-seen locally. Never add a suppression under `src/` — no `@ts-expect-error`, no
+Run `npm run verify` before you finish. CI runs the same script, so a failure
+there is one you could have seen locally. CI and the ticket loop also run
+`npm run quality:mutation`. A loop agent never runs it. In a session with a
+person, run it when you have changed `CORE`. Never add a suppression under `src/` — no `@ts-expect-error`, no
 `biome-ignore`, no skipped test. A file under `src/` is `CORE` unless the zone
 map says otherwise, and `CORE` may not import the filesystem, processes or a
 harness SDK; that code belongs under `src/adapters/`. Never edit a bar in

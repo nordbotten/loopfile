@@ -30,30 +30,35 @@ CI failed on the pull request:
 
 {{ $run.previous.data.ship.ci }}
 {{/if}}
-{{#if $run.previous.data.ship.conflict}}
-
-Merging `origin/main` into this branch stopped on a conflict. The merge is still in
-progress. Resolve each conflicted file so that both sides keep working, then commit
-the merge:
-
-{{ $run.previous.data.ship.conflict }}
-{{/if}}
 {{/if}}
 
 ## Feedback you already handled
 
 An earlier fix visit handled each item below. Do not work on it again. It is here
-so that you know what was asked before and do not undo it.{{#each $history.review.feedback}}{{#unless new}}
+so that you know what was asked before and do not undo it.{{!
+  Every item except the newest one of the step that sent you here. Each cause
+  has its own fix step, so "new since this step's last visit" does not work.
+}}{{#if $run.previous.data.review.feedback}}{{#each $history.review.feedback}}{{#unless newest}}
 
 ### Review {{ attemptId }}
 
 {{ value }}
-{{/unless}}{{/each}}{{#each $history.ship.ci}}{{#unless new}}
+{{/unless}}{{/each}}{{else}}{{#each $history.review.feedback}}
+
+### Review {{ attemptId }}
+
+{{ value }}
+{{/each}}{{/if}}{{#if $run.previous.data.ship.ci}}{{#each $history.ship.ci}}{{#unless newest}}
 
 ### CI failure {{ attemptId }}
 
 {{ value }}
-{{/unless}}{{/each}}
+{{/unless}}{{/each}}{{else}}{{#each $history.ship.ci}}
+
+### CI failure {{ attemptId }}
+
+{{ value }}
+{{/each}}{{/if}}
 
 ## What to do
 
@@ -63,6 +68,8 @@ so that you know what was asked before and do not undo it.{{#each $history.revie
    message and leave it.
 4. Follow AGENTS.md. Do not add a suppression under `src/`, and do not edit a bar in
    `quality/quality-ratchet.json`.
-5. Commit your fix to the current branch. Do not push and do not open a pull request.
-6. Run `loopfile result done`. If you cannot go on without a person, run
+5. Run `npm run verify` before you finish. Do not run `npm run quality:mutation`.
+   The next step runs it.
+6. Commit your fix to the current branch. Do not push and do not open a pull request.
+7. Run `loopfile result done`. If you cannot go on without a person, run
    `loopfile result blocked --message "<why>"`.

@@ -77,13 +77,12 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
-      - run: npm run build
-      - run: npm run typecheck
-      - run: npm run lint
-      - run: npm test
+      # The same check as the ticket loop's test step and AGENTS.md.
+      - run: npm run verify
 
   # The ratchet compares this branch's bars with the ones on the base, so this
-  # job needs history that the default shallow checkout does not fetch.
+  # job needs history that the default shallow checkout does not fetch. The
+  # gate itself runs in check, as part of npm run verify.
   gate:
     needs: changes
     # It compares the branch with its base, so after a merge it has nothing to
@@ -102,4 +101,3 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run quality:ratchet
-      - run: npm run gate

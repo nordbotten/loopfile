@@ -52,12 +52,28 @@ async function gitRepo(repo: string, bare: string): Promise<void> {
   await run("git", ["push", "-q", "origin", "main"], { cwd: repo, env: gitEnv });
 }
 
-function fixPrompt(number: number, why: string, handled = ""): string {
+const done: FakeAction[] = [
+  { do: "dataPut", key: "implement.criteria", content: "criterion 1: a.test.ts, it works" },
+  { do: "result", outcome: "done" },
+];
+
+const approve: FakeAction[] = [
+  { do: "dataPut", key: "review.notes", content: "notes" },
+  { do: "dataPut", key: "review.sha", content: "abc123" },
+  { do: "result", outcome: "approved" },
+];
+
+/** A HOME per test, so ship's lock is not the real ~/.loopfile/ticket/ship.lock. */
+function env(bin: string, home: string): NodeJS.ProcessEnv {
+  return { ...process.env, ...gitEnv, HOME: home, PATH: `${bin}:${process.env.PATH}` };
+}
+
+function fixPrompt(number: number, max: number, why: string, handled = ""): string {
   return `You were implementing the GitHub issue below. The work is committed on the current
 branch. A check of that work came back with problems. Fix those problems. Do not
 start the issue again.
 
-This is fix visit ${number} of at most 5.
+This is fix visit ${number} of at most ${max}.
 
 ## The issue
 
@@ -80,8 +96,10 @@ so that you know what was asked before and do not undo it.${handled}
    message and leave it.
 4. Follow AGENTS.md. Do not add a suppression under \`src/\`, and do not edit a bar in
    \`quality/quality-ratchet.json\`.
-5. Commit your fix to the current branch. Do not push and do not open a pull request.
-6. Run \`loopfile result done\`. If you cannot go on without a person, run
+5. Run \`npm run verify\` before you finish. Do not run \`npm run quality:mutation\`.
+   The next step runs it.
+6. Commit your fix to the current branch. Do not push and do not open a pull request.
+7. Run \`loopfile result done\`. If you cannot go on without a person, run
    \`loopfile result blocked --message "<why>"\`.
 `;
 }
@@ -102,11 +120,11 @@ test("the ticket fixer prompt names its sender and only earlier feedback", async
   await executable(
     join(bin, "npm"),
     `if [ "$1" = ci ]; then exit 0; fi
-if [ "$1" = run ] && [ "$2" = gate:quiet ]; then
+if [ "$1" = run ] && [ "$2" = verify ]; then
   n=$(cat ${JSON.stringify(npmCount)} 2>/dev/null || printf 0)
   n=$((n + 1))
   printf %s "$n" > ${JSON.stringify(npmCount)}
-  if [ "$n" = 1 ]; then printf 'test failure\n'; exit 1; fi
+  if [ "$n" -le 2 ]; then printf 'test failure\n'; exit 1; fi
 fi
 printf 'check passed\n'
 `,
@@ -139,21 +157,17 @@ esac
     { do: "result", outcome: "done" },
   ];
   const script: FakeScript = {
-    implement: [[{ do: "result", outcome: "done" }]],
-    fix: [saveFix(1), saveFix(2), saveFix(3)],
+    implement: [done],
+    "fix-test": [saveFix(1)],
+    "fix-review": [saveFix(2)],
+    "fix-ci": [saveFix(3)],
     review: [
       [
         { do: "dataPut", key: "review.feedback", content: "review feedback" },
         { do: "result", outcome: "changes_requested" },
       ],
-      [
-        { do: "dataPut", key: "review.notes", content: "notes" },
-        { do: "result", outcome: "approved" },
-      ],
-      [
-        { do: "dataPut", key: "review.notes", content: "notes" },
-        { do: "result", outcome: "approved" },
-      ],
+      approve,
+      [{ do: "savePrompt", path: "../review-3.md" }, ...approve],
     ],
   };
   const paths = runPaths(home, runId);
@@ -165,7 +179,7 @@ esac
     source: TICKET,
     inputs: { task: TASK, issue: "273", merge: "no", ci: "yes" },
     repository: repo,
-    executor: localExecutor({ ...process.env, PATH: `${bin}:${process.env.PATH}` }),
+    executor: localExecutor(env(bin, home)),
     adapters: fakeHarnessAdapters(script),
   });
 
@@ -176,24 +190,32 @@ esac
     await prompt(1),
     fixPrompt(
       1,
+      4,
       "`test` ended with `failed`.\n\nThe test run failed. The end of its log:\n\ntest failure\n",
     ),
   );
   assert.equal(
     await prompt(2),
     fixPrompt(
-      2,
+      1,
+      3,
       "`review` ended with `changes_requested`.\n\nThe review asked for these changes:\n\nreview feedback",
     ),
   );
   assert.equal(
     await prompt(3),
     fixPrompt(
+      1,
       3,
       "`ship` ended with `ci_failed`.\n\nCI failed on the pull request:\n\nCI failure\nCI failure\n",
       "\n\n### Review 006-review\n\nreview feedback\n",
     ),
   );
+  // After a red CI, review sees its approval and reviews only the new commits.
+  const review = await readFile(join(dirname(paths.workspace), "review-3.md"), "utf8");
+  assert.match(review, /You approved commit `abc123` with these notes:\n\nnotes/);
+  assert.match(review, /git show --remerge-diff/);
+  assert.doesNotMatch(review, /git diff origin\/main\.\.\.HEAD/);
 });
 
 /** With ci=no, ship does not wait for checks, so a repository with no CI ends ready at once. */
@@ -216,15 +238,7 @@ test("the ticket Loopfile ships without CI when ci is no", async () => {
 esac
 `,
   );
-  const script: FakeScript = {
-    implement: [[{ do: "result", outcome: "done" }]],
-    review: [
-      [
-        { do: "dataPut", key: "review.notes", content: "notes" },
-        { do: "result", outcome: "approved" },
-      ],
-    ],
-  };
+  const script: FakeScript = { implement: [done], review: [approve] };
   await mkdir(runPaths(home, runId).root, { recursive: true });
 
   const ended = await executeRun({
@@ -233,7 +247,7 @@ esac
     source: TICKET,
     inputs: { task: TASK, issue: "273", merge: "no", ci: "no" },
     repository: repo,
-    executor: localExecutor({ ...process.env, PATH: `${bin}:${process.env.PATH}` }),
+    executor: localExecutor(env(bin, home)),
     adapters: fakeHarnessAdapters(script),
   });
 
@@ -261,15 +275,7 @@ test("the ticket Loopfile ships again when the merge is behind main", async () =
 esac
 `,
   );
-  const script: FakeScript = {
-    implement: [[{ do: "result", outcome: "done" }]],
-    review: [
-      [
-        { do: "dataPut", key: "review.notes", content: "notes" },
-        { do: "result", outcome: "approved" },
-      ],
-    ],
-  };
+  const script: FakeScript = { implement: [done], review: [approve] };
   await mkdir(runPaths(home, runId).root, { recursive: true });
 
   const ended = await executeRun({
@@ -278,7 +284,7 @@ esac
     source: TICKET,
     inputs: { task: TASK, issue: "273", merge: "yes", ci: "no" },
     repository: repo,
-    executor: localExecutor({ ...process.env, ...gitEnv, PATH: `${bin}:${process.env.PATH}` }),
+    executor: localExecutor(env(bin, home)),
     adapters: fakeHarnessAdapters(script),
   });
 
@@ -286,26 +292,90 @@ esac
   assert.equal(await readFile(merges, "utf8"), "xx");
 });
 
-/** A PR that main moved past goes to fix with the conflict, then ships. */
-test("the ticket Loopfile sends a conflict with main to fix", async () => {
+/** test merges main first, so a conflict goes to resolve before review, then ships. */
+test("the ticket Loopfile sends a conflict with main to resolve", async () => {
   const dir = join(root, "conflict");
   const repo = join(dir, "repo");
   const bin = join(dir, "bin");
   const home = join(dir, "home");
   const runId = "20260921-120000-conflict";
+  const git = (await run("sh", ["-c", "command -v git"])).stdout.trim();
   await mkdir(bin, { recursive: true });
   await loopfileCommand(bin);
   await gitRepo(repo, join(dir, "origin.git"));
   // setup changes README on the run's branch and, as another run would, on main.
-  // gate commits the fix agent's resolved file, which the fake agent cannot do.
   await executable(
     join(bin, "npm"),
     `if [ "$1" = ci ]; then
   printf 'branch\\n' > README.md && git commit -qam branch
   cd ${JSON.stringify(repo)} && printf 'main\\n' > README.md && git commit -qam main && git push -q origin main
 fi
-if [ "$2" = gate:quiet ] && git rev-parse -q --verify MERGE_HEAD > /dev/null; then
-  git add -A && git commit -q --no-edit
+exit 0
+`,
+  );
+  // The fake agent cannot commit, so the next fetch commits the merge it resolved.
+  await executable(
+    join(bin, "git"),
+    `if [ "$1" = fetch ] && ${JSON.stringify(git)} rev-parse -q --verify MERGE_HEAD > /dev/null; then
+  ${JSON.stringify(git)} add -A && ${JSON.stringify(git)} commit -q --no-edit
+fi
+exec ${JSON.stringify(git)} "$@"
+`,
+  );
+  await executable(
+    join(bin, "gh"),
+    `case "$1 $2" in
+  "pr view") exit 1 ;;
+  "issue view") printf 'Ticket title\\n' ;;
+esac
+`,
+  );
+  const script: FakeScript = {
+    implement: [done],
+    resolve: [
+      [
+        { do: "savePrompt", path: "../resolve-1.md" },
+        { do: "write", path: "README.md", content: "resolved\n" },
+        { do: "result", outcome: "done" },
+      ],
+    ],
+    review: [approve],
+  };
+  const paths = runPaths(home, runId);
+  await mkdir(paths.root, { recursive: true });
+
+  const ended = await executeRun({
+    home,
+    runId,
+    source: TICKET,
+    inputs: { task: TASK, issue: "273", merge: "no", ci: "no" },
+    repository: repo,
+    executor: localExecutor(env(bin, home)),
+    adapters: fakeHarnessAdapters(script),
+  });
+
+  assert.equal(ended.result, "success");
+  const prompt = await readFile(join(dirname(paths.workspace), "resolve-1.md"), "utf8");
+  assert.match(prompt, /The merge is still in progress\.[\s\S]*CONFLICT[\s\S]*README\.md/);
+});
+
+/** A verify that passes on its second try is a flaky test, so the run goes on to review. */
+test("the ticket Loopfile records a flaky test and does not send it to fix", async () => {
+  const dir = join(root, "flake");
+  const repo = join(dir, "repo");
+  const bin = join(dir, "bin");
+  const home = join(dir, "home");
+  const runId = "20260921-120000-flake";
+  const count = join(dir, "count");
+  await mkdir(bin, { recursive: true });
+  await loopfileCommand(bin);
+  await gitRepo(repo, join(dir, "origin.git"));
+  await executable(
+    join(bin, "npm"),
+    `if [ "$2" = verify ]; then
+  n=$(cat ${JSON.stringify(count)} 2>/dev/null || printf 0)
+  printf %s "$((n + 1))" > ${JSON.stringify(count)}
+  if [ "$n" = 0 ]; then printf 'flaky failure\\n'; exit 1; fi
 fi
 exit 0
 `,
@@ -318,21 +388,7 @@ exit 0
 esac
 `,
   );
-  const approve: FakeAction[] = [
-    { do: "dataPut", key: "review.notes", content: "notes" },
-    { do: "result", outcome: "approved" },
-  ];
-  const script: FakeScript = {
-    implement: [[{ do: "result", outcome: "done" }]],
-    fix: [
-      [
-        { do: "savePrompt", path: "../fix-1.md" },
-        { do: "write", path: "README.md", content: "resolved\n" },
-        { do: "result", outcome: "done" },
-      ],
-    ],
-    review: [approve, approve],
-  };
+  const script: FakeScript = { implement: [done], review: [approve] };
   const paths = runPaths(home, runId);
   await mkdir(paths.root, { recursive: true });
 
@@ -342,12 +398,13 @@ esac
     source: TICKET,
     inputs: { task: TASK, issue: "273", merge: "no", ci: "no" },
     repository: repo,
-    executor: localExecutor({ ...process.env, ...gitEnv, PATH: `${bin}:${process.env.PATH}` }),
+    executor: localExecutor(env(bin, home)),
     adapters: fakeHarnessAdapters(script),
   });
 
   assert.equal(ended.result, "success");
-  const prompt = await readFile(join(dirname(paths.workspace), "fix-1.md"), "utf8");
-  assert.match(prompt, /`ship` ended with `conflict`/);
-  assert.match(prompt, /stopped on a conflict[\s\S]*CONFLICT[\s\S]*README\.md/);
+  const events = await readFile(join(paths.root, "events.jsonl"), "utf8");
+  assert.doesNotMatch(events, /"stepId":"fix-test"/);
+  const flake = await readFile(join(paths.attempts, "003-test", "data", "test.flake"), "utf8");
+  assert.match(flake, /flaky failure/);
 });

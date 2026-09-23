@@ -30,6 +30,7 @@ top-level directory is a decision, not an oversight.
 ## Entry points
 
 ```text
+npm run verify                # build, lint, gate:quiet and the checks' own tests
 npm run quality               # every check, every result, ALWAYS exits 0
 npm run gate                  # every check, every result, exits 1 if any failed
 npm run gate:quiet            # the same gate, reported for repair
@@ -39,8 +40,11 @@ npm test                      # the suite, including the checks' own tests
 ```
 
 `quality` reports and never fails, which is what you want when you are looking
-at the state of things. `gate` is the same run with an exit code, which is what
-CI wants.
+at the state of things. `gate` is the same run with an exit code.
+
+`verify` is the one check that CI's `check` job, the ticket loop and agents all
+run. It adds the build, lint and the checks' own tests to `gate:quiet`, so a
+branch that passes it locally passes CI's `check` job too.
 
 `gate:quiet` is for local repair. Every check still runs, and each one still
 gets a block saying what it answers and whether it passed — but a passing check
