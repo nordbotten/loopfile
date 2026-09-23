@@ -3,6 +3,8 @@
 ### Issue tracker
 
 Issues live in GitHub Issues for `nordbotten/loopfile`, used through the `gh` CLI. See `docs/agents/issue-tracker.md`.
+PR titles are Conventional Commits, for example `feat: ...` or `fix: ...`. See
+"Pull request titles" in that file.
 
 ### Triage labels
 

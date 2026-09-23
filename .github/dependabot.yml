@@ -5,3 +5,6 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    # Gives "ci: bump ..." PR titles, which the PR title check accepts.
+    commit-message:
+      prefix: ci
