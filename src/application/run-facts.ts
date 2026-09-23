@@ -6,7 +6,7 @@ export interface RunFacts extends PromptDataView {
   readonly runId: string;
   readonly loopfileName: string;
   readonly startedAt: string;
-  readonly repositoryPath: string;
+  readonly targetFolder: string;
   readonly branch: string;
   readonly baseCommit: string;
   readonly transitions: number;
@@ -88,7 +88,7 @@ interface RunDetails {
   readonly runId: string;
   readonly loopfileName: string;
   readonly startedAt: string;
-  readonly repositoryPath: string;
+  readonly targetFolder: string;
   readonly branch: string;
   readonly baseCommit: string;
 }
@@ -110,7 +110,7 @@ function runIdentity(created: Created | undefined, loopfileName: string) {
 
 function runLocation(created: Created | undefined) {
   return {
-    repositoryPath: created?.repositoryPath ?? "",
+    targetFolder: created?.targetFolder ?? "",
     branch: created?.branch ?? "",
     baseCommit: created?.baseCommit ?? "",
   };

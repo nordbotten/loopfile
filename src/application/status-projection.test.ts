@@ -77,7 +77,7 @@ const created: EventWithoutSeq = {
   runId: "r-1",
   eventFormatVersion: 1,
   modelDigest: "sha256:model",
-  repositoryPath: "/home/me/project",
+  targetFolder: "/home/me/project",
   baseCommit: "9f1c0de",
   branch: "loopfile/r-1",
   inputs: [],

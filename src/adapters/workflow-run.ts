@@ -228,11 +228,11 @@ export async function resumeRun(options: ResumeRunOptions): Promise<ExecutedRun>
     const created = (await readEvents(paths))[0] as RunCreated;
     const workspace: Workspace = {
       path: paths.workspace,
-      repositoryPath: created.repositoryPath,
+      repositoryPath: created.targetFolder,
       baseCommit: created.baseCommit,
       branch: created.branch,
     };
-    const run = { ...options, source: paths.loopfile, repository: created.repositoryPath };
+    const run = { ...options, source: paths.loopfile, repository: created.targetFolder };
     return await runSteps(run, owner, { workflow, workspace }, await loopfileNameOf(paths), (t) =>
       resumeFrom(workflow, t),
     );
@@ -258,11 +258,11 @@ export async function continueRun(options: ContinueRunOptions): Promise<Executed
     const created = history[0] as RunCreated;
     const workspace: Workspace = {
       path: paths.workspace,
-      repositoryPath: created.repositoryPath,
+      repositoryPath: created.targetFolder,
       baseCommit: created.baseCommit,
       branch: created.branch,
     };
-    const run = { ...options, source: paths.loopfile, repository: created.repositoryPath };
+    const run = { ...options, source: paths.loopfile, repository: created.targetFolder };
     return await runSteps(
       run,
       owner,
@@ -360,7 +360,7 @@ async function prepare(
       runId: options.runId,
       eventFormatVersion: EVENT_FORMAT_VERSION,
       modelDigest: modelDigest(workflow),
-      repositoryPath: workspace.repositoryPath,
+      targetFolder: workspace.repositoryPath,
       baseCommit: workspace.baseCommit,
       branch: workspace.branch,
       inputs,

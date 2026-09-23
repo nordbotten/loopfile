@@ -61,7 +61,7 @@ export interface ResultView {
   readonly endReason: StatusEndReason | null;
   readonly startedAt: string;
   readonly endedAt: string | null;
-  readonly repositoryPath: string;
+  readonly targetFolder: string;
   readonly branch: string;
   readonly baseCommit: string;
   readonly metrics: StatusMetrics;
@@ -98,7 +98,7 @@ export function buildResultView(
     endReason: lifecycle.endReason,
     startedAt: created.at,
     endedAt: ended?.at ?? null,
-    repositoryPath: created.repositoryPath,
+    targetFolder: created.targetFolder,
     branch: created.branch,
     baseCommit: created.baseCommit,
     metrics: resultMetrics(events, metrics),
@@ -127,7 +127,7 @@ export function renderResultView(view: ResultView): string {
       "ended",
       view.endedAt === null ? "not yet" : `${view.endReason ?? "unknown"} at ${view.endedAt}`,
     ),
-    resultLine("repository", view.repositoryPath),
+    resultLine("repository", view.targetFolder),
     resultLine("branch", view.branch),
     resultLine("base commit", view.baseCommit),
     resultLine("last outcome", outcomeText(view.lastOutcome)),

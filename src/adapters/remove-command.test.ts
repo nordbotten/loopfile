@@ -47,7 +47,7 @@ async function setup() {
         runId,
         eventFormatVersion: 1,
         modelDigest: "digest",
-        repositoryPath: repo,
+        targetFolder: repo,
         baseCommit: "0".repeat(40),
         branch: `loopfile/${runId}`,
         inputs: [],

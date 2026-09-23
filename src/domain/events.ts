@@ -44,16 +44,16 @@ export interface LaunchInputRecord {
 /**
  * The run's first event. It fixes what the rest of the log is read against:
  * the event format version, the digest of the built model that resume checks
- * (ADR 0006), and the workspace the run started from. The base commit is the
- * target repository's `HEAD` at launch, which moves, so the log must hold the
- * commit the run actually started from.
+ * (ADR 0006), and the target folder the run started from. The base commit is
+ * that folder's `HEAD` at launch, which moves, so the log must hold the commit
+ * the run actually started from.
  */
 export interface RunCreated extends EventBase {
   readonly type: "run.created";
   readonly runId: string;
   readonly eventFormatVersion: number;
   readonly modelDigest: string;
-  readonly repositoryPath: string;
+  readonly targetFolder: string;
   readonly baseCommit: string;
   /** `loopfile/<runid>`. */
   readonly branch: string;
