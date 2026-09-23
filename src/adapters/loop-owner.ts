@@ -3,7 +3,7 @@
 import { hostname } from "node:os";
 import type { LoopEvent } from "../domain/events.ts";
 import { openEventLog } from "./event-log.ts";
-import { runLoop } from "./loop-run.ts";
+import { createLoopCancelRequests, runLoop } from "./loop-run.ts";
 import { loopfileHome, loopPaths } from "./run-directory.ts";
 import { startControlOwner } from "./run-owner.ts";
 
@@ -22,11 +22,13 @@ export async function loopOwnerCommand(
 
   const home = loopfileHome(env as NodeJS.ProcessEnv);
   const paths = loopPaths(home, loopId);
+  const cancelRequests = createLoopCancelRequests();
   try {
     const owner = await startControlOwner({
       socketPath: paths.socket,
       ownerId: loopId,
       ownerKind: "loop",
+      onLoopCancel: (mode) => cancelRequests.request(mode),
       beforeReady: async () => {
         const log = await openEventLog<LoopEvent>(paths.events);
         try {
@@ -37,8 +39,9 @@ export async function loopOwnerCommand(
       },
     });
     try {
-      await runLoop(home, loopId, { cli, env });
+      await runLoop(home, loopId, { cli, env, cancelRequests });
     } finally {
+      cancelRequests.close();
       await owner.close();
     }
     return 0;

@@ -32,13 +32,17 @@ import {
   checkAttemptCall,
   confirmsCancel,
   confirmsInterrupt,
+  confirmsLoopCancel,
   controlReply,
   encodeMessage,
   INTERRUPT,
+  LOOP_CANCEL,
+  loopCancelRequest,
   PING,
   readyMessage,
   refusesInterrupt,
 } from "../application/owner-protocol.ts";
+import type { LoopCancelMode } from "../domain/events.ts";
 import { withActivityHook } from "./activity-log.ts";
 import { type EventLog, type NewEvent, openEventLog } from "./event-log.ts";
 import { checkSocketPathLength, type RunPaths, runPaths } from "./run-directory.ts";
@@ -206,6 +210,8 @@ export interface StartControlOwnerOptions {
   readonly socketPath: string;
   readonly ownerId: string;
   readonly ownerKind: "run" | "loop";
+  /** Records a loop cancellation before confirming it on the socket. */
+  readonly onLoopCancel?: (mode: LoopCancelMode) => Promise<boolean>;
   /** Runs after the socket is bound and before ready is sent. */
   readonly beforeReady: () => Promise<void>;
   readonly probeTimeoutMs?: number;
@@ -219,9 +225,7 @@ export async function startControlOwner(options: StartControlOwnerOptions): Prom
   const control = lineServer((socket) => {
     if (greet) greet(socket);
     else waiting.add(socket);
-    onLine(socket, (line) => {
-      socket.write(encodeMessage(controlReply(line, options.ownerId, false)));
-    });
+    onLine(socket, (line) => answerControlLine(socket, line, options));
   });
   await bindExclusive(
     control,
@@ -250,6 +254,25 @@ export async function startControlOwner(options: StartControlOwnerOptions): Prom
   waiting.clear();
   const stopped = new Promise<void>((resolve) => control.server.once("close", resolve));
   return { ownerId: options.ownerId, stopped, close };
+}
+
+function answerControlLine(socket: Socket, line: string, options: StartControlOwnerOptions): void {
+  const request = loopCancelRequest(line);
+  if (request !== undefined && options.onLoopCancel !== undefined) {
+    void options.onLoopCancel(request.mode).then(
+      (accepted) =>
+        socket.write(
+          encodeMessage(
+            accepted
+              ? { type: "loop_cancelling", loopId: options.ownerId, mode: request.mode }
+              : { type: "error", message: "a different loop cancellation is already requested" },
+          ),
+        ),
+      (error: unknown) => socket.write(encodeMessage({ type: "error", message: String(error) })),
+    );
+    return;
+  }
+  socket.write(encodeMessage(controlReply(line, options.ownerId, false)));
 }
 
 /** A controller that also aborts when `outside` does. */
@@ -434,6 +457,17 @@ export async function requestCancel(
 ): Promise<boolean> {
   const confirm = (line: string) => (confirmsCancel(line, runId) ? true : undefined);
   return (await askOwner(path, { type: CANCEL }, confirm, timeoutMs)) === true;
+}
+
+/** Asks a loop owner to record a cancellation request of the given mode. */
+export async function requestLoopCancel(
+  path: string,
+  loopId: string,
+  mode: LoopCancelMode,
+  timeoutMs = PROBE_TIMEOUT_MS,
+): Promise<boolean> {
+  const confirm = (line: string) => (confirmsLoopCancel(line, loopId, mode) ? true : undefined);
+  return (await askOwner(path, { type: LOOP_CANCEL, mode }, confirm, timeoutMs)) === true;
 }
 
 /**
