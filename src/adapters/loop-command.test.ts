@@ -18,6 +18,9 @@ import { tailCommand } from "./tail-command.ts";
 
 const run = promisify(execFile);
 const cli = fileURLToPath(new URL("../cli.ts", import.meta.url));
+const packageVersion = JSON.parse(
+  await readFile(new URL("../../package.json", import.meta.url), "utf8"),
+).version as string;
 /**
  * The ping bound for an attached loop. A gone owner refuses the connection at
  * once and a live one answers, so this bound only ends a ping to a live owner
@@ -470,7 +473,7 @@ test("a changed CLI ends a loop before its second run", async () => {
     assert.equal(ended?.type === "loop.ended" ? ended.reason : undefined, "program_changed");
     assert.equal(
       ended?.type === "loop.ended" ? ended.detail : undefined,
-      "loopfile changed from 0.1.0 to 0.1.0",
+      `loopfile changed from ${packageVersion} to ${packageVersion}`,
     );
     assert.equal(events.filter((event) => event.type === "loop.run_started").length, 1);
     await waitForOwnerGone(setupResult.home, loopId);
