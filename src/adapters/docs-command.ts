@@ -8,6 +8,7 @@ const TOPICS = {
   format: { summary: "The Loopfile format", file: "../../docs/loopfile-format.md" },
   manifest: { summary: "The v1 manifest", file: "../../docs/manifest-v1.md" },
   runtime: { summary: "How a run works", file: "../../docs/runtime.md" },
+  patterns: { summary: "Loop patterns", file: "../../docs/loop-patterns.md" },
   skill: { summary: "The Loopfile agent skill", file: "../../skills/loopfile/SKILL.md" },
 } as const;
 
