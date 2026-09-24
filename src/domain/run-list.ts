@@ -29,11 +29,12 @@ export type RunListState = RunLifecycle | "crashed" | "unknown" | "unreadable";
  * One run's row.
  *
  * `loopfileName` and `currentStep` are `null` when `status.json` could not be
- * read (`state` is `unreadable`) or, for `currentStep`, when the run has not
- * started a step yet. `startedAt` is `null` only when the run ID itself does
- * not carry a start time (`src/application/run-list.ts`), which never happens
- * for a run this tool created. `elapsedMs` is `null` exactly when `startedAt`
- * is, so a consumer needs one check for both.
+ * read (`state` is `unreadable`); `currentStep` is also `null` when no step has
+ * been attempted. Otherwise it is the open or most recent known attempt's step.
+ * `startedAt` is `null` only when the run ID itself does not carry a start
+ * time (`src/application/run-list.ts`), which never happens for a run this
+ * tool created. `elapsedMs` is `null` exactly when `startedAt` is, so a
+ * consumer needs one check for both.
  */
 export interface RunListEntry {
   readonly runId: RunId;

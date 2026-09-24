@@ -141,6 +141,77 @@ test("list shows a loop row when there are no runs", async () => {
   assert.match(r.output, new RegExp(`${loopId}\\s+completed\\s+times 2\\s+2`));
 });
 
+test("list shows the last attempted step, not the last first-visited step, after completion", async () => {
+  const listHome = join(home, "completed-run-step");
+  const runId = "20260917-160305-abcd";
+  const paths = runPaths(listHome, runId);
+  await mkdir(paths.root, { recursive: true });
+  await writeFile(
+    paths.status,
+    JSON.stringify(
+      statusBody(runId, {
+        visitedSteps: [
+          { stepId: "ship", attempts: 2 },
+          { stepId: "fix", attempts: 1 },
+          { stepId: "retest", attempts: 1 },
+        ],
+        lastTransition: { from: "ship", to: "$success", cause: "on", outcome: "merged" },
+      }),
+    ),
+  );
+  const json = runner();
+  assert.equal(
+    await listCommand(["list", "--json"], json.out, json.err, { LOOPFILE_HOME: listHome }, false),
+    0,
+  );
+  assert.equal(JSON.parse(json.output).runs[0].currentStep, "ship");
+
+  const human = runner();
+  assert.equal(
+    await listCommand(["list"], human.out, human.err, { LOOPFILE_HOME: listHome }, false),
+    0,
+  );
+  assert.match(human.output, new RegExp(`${runId}\\s+-\\s+completed\\s+ship`));
+});
+
+test("list finds the last attempt on a cancelled run rather than using its incoming transition", async () => {
+  const listHome = join(home, "cancelled-run-step");
+  const runId = "20260917-160306-abcd";
+  const paths = runPaths(listHome, runId);
+  await mkdir(paths.root, { recursive: true });
+  await writeFile(
+    paths.status,
+    JSON.stringify(
+      statusBody(runId, {
+        state: "cancelled",
+        endReason: "cancelled",
+        visitedSteps: [
+          { stepId: "retest", attempts: 1 },
+          { stepId: "ship", attempts: 1 },
+        ],
+        lastTransition: { from: "ship", to: "retest", cause: "on", outcome: "changes_requested" },
+      }),
+    ),
+  );
+  await writeFile(
+    paths.events,
+    `${[
+      { type: "run.created", seq: 1, at: "2026-09-17T16:03:00.000Z", runId },
+      { type: "attempt.started", seq: 2, at: "2026-09-17T16:04:00.000Z", stepId: "ship" },
+      { type: "attempt.started", seq: 3, at: "2026-09-17T16:04:01.000Z", stepId: "retest" },
+    ]
+      .map((event) => JSON.stringify(event))
+      .join("\n")}\n`,
+  );
+
+  const r = runner();
+  assert.equal(
+    await listCommand(["list", "--json"], r.out, r.err, { LOOPFILE_HOME: listHome }, false),
+    0,
+  );
+  assert.equal(JSON.parse(r.output).runs[0].currentStep, "retest");
+});
+
 test("list shows a run as a table row and exits 0", async () => {
   const runId = "20260917-160300-cccc";
   await mkdir(runPaths(home, runId).root, { recursive: true });

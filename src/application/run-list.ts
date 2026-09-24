@@ -9,7 +9,7 @@
  * finding the last `owner.started` host is `src/adapters/run-discovery.ts`.
  */
 
-import type { RunId } from "../domain/model.ts";
+import { isEndState, type RunId } from "../domain/model.ts";
 import {
   LIST_FORMAT_VERSION,
   type LoopListEntry,
@@ -65,6 +65,8 @@ export interface DeriveRunListEntryInput {
    * ended run's host never changes what happened.
    */
   readonly ownerHost: string | undefined;
+  /** The most recently started attempt, or `null` when the log has no attempts. */
+  readonly lastAttemptStepId?: string | null;
   readonly thisHost: string;
   /**
    * Whether `owner.sock` answered with this run's ID. Ignored unless a
@@ -90,7 +92,7 @@ export function deriveRunListEntry(input: DeriveRunListEntryInput): RunListEntry
     loopfileName: status.loopfileName,
     remote: status.remote ?? null,
     state: derivedState(status.state, input.ownerHost, input.thisHost, input.alive),
-    currentStep: currentOrLastStep(status),
+    currentStep: currentOrLastStep(status, input.lastAttemptStepId),
     startedAt: status.startedAt,
     elapsedMs: elapsedMs(status.startedAt, endedAtOf(status), now),
   };
@@ -154,8 +156,15 @@ function derivedState(
   return alive ? "running" : "crashed";
 }
 
-function currentOrLastStep(status: StatusProjection): string | null {
-  return status.current?.stepId ?? status.visitedSteps.at(-1)?.stepId ?? null;
+function currentOrLastStep(
+  status: StatusProjection,
+  lastAttemptStepId: string | null | undefined,
+): string | null {
+  if (status.current !== null) return status.current.stepId;
+  if (lastAttemptStepId !== undefined) return lastAttemptStepId;
+  const lastTransition = status.lastTransition;
+  if (lastTransition !== null && isEndState(lastTransition.to)) return lastTransition.from;
+  return status.state === "running" ? (status.visitedSteps.at(-1)?.stepId ?? null) : null;
 }
 
 /** `status.json`'s own `endedAt`, `null` while the file itself says `"running"`. */
