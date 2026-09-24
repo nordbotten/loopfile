@@ -233,6 +233,51 @@ test("a running run with no known owner host falls back to the liveness check", 
   assert.equal(entry.state, "running");
 });
 
+test("currentStep uses the latest attempt for an ended run that revisits a step", () => {
+  const entry = deriveRunListEntry({
+    runId: RUN_ID,
+    status: status({
+      state: "completed",
+      endReason: "success",
+      endedAt: "2026-09-17T16:09:00.000Z",
+      visitedSteps: [
+        { stepId: "ship", attempts: 2 },
+        { stepId: "fix", attempts: 1 },
+        { stepId: "retest", attempts: 1 },
+      ],
+      lastTransition: { from: "ship", to: "$success", cause: "on", outcome: "merged" },
+    }),
+    lastAttemptStepId: "ship",
+    ownerHost: undefined,
+    thisHost: "host-a",
+    alive: false,
+    now: NOW,
+  });
+  assert.equal(entry.currentStep, "ship");
+});
+
+test("currentStep uses the last attempt for a cancellation after a step transition", () => {
+  const entry = deriveRunListEntry({
+    runId: RUN_ID,
+    status: status({
+      state: "cancelled",
+      endReason: "cancelled",
+      endedAt: "2026-09-17T16:09:00.000Z",
+      visitedSteps: [
+        { stepId: "retest", attempts: 1 },
+        { stepId: "ship", attempts: 1 },
+      ],
+      lastTransition: { from: "ship", to: "retest", cause: "on", outcome: "changes_requested" },
+    }),
+    lastAttemptStepId: "retest",
+    ownerHost: undefined,
+    thisHost: "host-a",
+    alive: false,
+    now: NOW,
+  });
+  assert.equal(entry.currentStep, "retest");
+});
+
 test("currentStep is the open attempt's step when there is one", () => {
   const entry = deriveRunListEntry({
     runId: RUN_ID,
@@ -250,6 +295,7 @@ test("currentStep is the open attempt's step when there is one", () => {
       },
       visitedSteps: [{ stepId: "plan", attempts: 1 }],
     }),
+    lastAttemptStepId: "plan",
     ownerHost: "host-a",
     thisHost: "host-a",
     alive: true,
@@ -457,7 +503,7 @@ test("NO_RUNS_MESSAGE is a short, plain line", () => {
   assert.equal(NO_RUNS_MESSAGE, "no runs found\n");
 });
 
-test("renderRunList prints a header and one row per entry, with no ANSI when ansi is false", () => {
+test("renderRunList shows '-' when a run has no attempt, with no ANSI when ansi is false", () => {
   const entry = deriveRunListEntry({
     runId: RUN_ID,
     status: status(),
@@ -472,6 +518,7 @@ test("renderRunList prints a header and one row per entry, with no ANSI when ans
   assert.match(lines[0] as string, /RUN ID/);
   assert.doesNotMatch(lines[0] as string, /remote/i);
   assert.match(lines[1] as string, new RegExp(RUN_ID));
+  assert.match(lines[1] as string, new RegExp(`${RUN_ID}\\s+-\\s+running\\s+-`));
   assert.equal(hasAnsi(text), false);
 });
 

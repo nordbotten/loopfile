@@ -6,12 +6,10 @@
  * status` (#36) reuses it rather than scan the folder its own way, so the two
  * commands can never disagree about what a crashed or unknown run is.
  *
- * Read-only, like `logs` and `tail`: a run folder is opened only to read
- * `status.json` and, for a run that folder's own file still calls
- * `"running"`, `events.jsonl` (for the last `owner.started` host, ADR 0008)
- * and a ping of `owner.sock` (ADR 0008). An ended run needs neither — nothing
- * about a finished run can still be crashed or unknown — so most rows cost
- * one file read.
+ * Read-only, like `logs` and `tail`: a run folder is opened to read
+ * `status.json` and, when its last transition does not identify its most
+ * recent attempt, `events.jsonl`. A run that still says `"running"` also needs
+ * the last `owner.started` host and a ping of `owner.sock` (ADR 0008).
  */
 
 import { readdir, readFile } from "node:fs/promises";
@@ -21,7 +19,8 @@ import type { OperatorErrorCode, OperatorFailure } from "../application/operator
 import { CorruptEventLogError, parseEventLog } from "../application/replay.ts";
 import { deriveRunListEntry, isRunId, sortRunListEntries } from "../application/run-list.ts";
 import { parseStatusProjection } from "../application/status.ts";
-import type { OwnerStarted } from "../domain/events.ts";
+import type { EventRecord, OwnerStarted } from "../domain/events.ts";
+import { isEndState } from "../domain/model.ts";
 import type { RunListEntry } from "../domain/run-list.ts";
 import type { StatusProjection } from "../domain/status.ts";
 import { loopfileHome, type RunPaths, runPaths } from "./run-directory.ts";
@@ -145,12 +144,10 @@ export async function discoverRun(
 }
 
 /**
- * One run's row. `status.json` is always read. `events.jsonl` is read next
- * only when the file itself still says `"running"`, and `owner.sock` is
- * pinged only once that host is known to be this one — a run whose last
- * `owner.started` names another host is unknown whatever the socket says
- * (ADR 0008), so pinging it would only wait out `pingTimeoutMs` for an answer
- * `deriveRunListEntry` will throw away.
+ * One run's row. `status.json` is always read; `events.jsonl` supplies the
+ * latest attempt unless a final transition already names it. A `"running"`
+ * run also needs its last owner host and, when that host is this one, a ping
+ * of `owner.sock` (ADR 0008).
  */
 async function discoverOneRun(
   runId: string,
@@ -161,18 +158,42 @@ async function discoverOneRun(
   validateEventLog: boolean,
 ): Promise<DiscoveredRun> {
   const status = await readStatus(paths.status);
-  const derive = (ownerHost: string | undefined, alive: boolean): DiscoveredRun => ({
+  const derive = (
+    ownerHost: string | undefined,
+    alive: boolean,
+    lastAttemptStepId?: string | null,
+  ): DiscoveredRun => ({
     status,
-    entry: deriveRunListEntry({ runId, status, ownerHost, thisHost, alive, now }),
+    entry: deriveRunListEntry({
+      runId,
+      status,
+      ownerHost,
+      ...(lastAttemptStepId === undefined ? {} : { lastAttemptStepId }),
+      thisHost,
+      alive,
+      now,
+    }),
   });
-  if (status === undefined || status.state !== "running") return derive(undefined, false);
+  if (status === undefined) return derive(undefined, false);
+  if (status.state !== "running") {
+    const lastTransition = status.lastTransition;
+    const lastAttemptStepId =
+      lastTransition !== null && isEndState(lastTransition.to)
+        ? undefined
+        : await lastAttemptStepFromLog(paths.events, runId);
+    return derive(undefined, false, lastAttemptStepId);
+  }
 
-  if (validateEventLog) await readEventLog(paths.events, runId);
+  const lastAttemptStepId = validateEventLog
+    ? lastAttemptStep(await readEventLog(paths.events, runId))
+    : undefined;
   const ownerHost = await lastOwnerStartedHost(paths.events);
-  if (ownerHost !== undefined && ownerHost !== thisHost) return derive(ownerHost, false);
+  if (ownerHost !== undefined && ownerHost !== thisHost) {
+    return derive(ownerHost, false, lastAttemptStepId);
+  }
 
   const answer = await pingOwner(paths.socket, pingTimeoutMs);
-  return derive(ownerHost, answer === runId);
+  return derive(ownerHost, answer === runId, lastAttemptStepId);
 }
 
 /** `status.json`, parsed and validated, or `undefined` for any reason it could not be used as-is. */
@@ -198,6 +219,22 @@ export async function lastOwnerStartedHost(path: string): Promise<string | undef
         events.findLast((event): event is OwnerStarted => event.type === "owner.started")?.host,
     )
     .catch(() => undefined);
+}
+
+async function lastAttemptStepFromLog(
+  path: string,
+  runId: string,
+): Promise<string | null | undefined> {
+  try {
+    return lastAttemptStep(await readEventLog(path, runId));
+  } catch {
+    return undefined;
+  }
+}
+
+function lastAttemptStep(events: readonly EventRecord[]): string | null {
+  const attempt = events.findLast((event) => event.type === "attempt.started");
+  return attempt?.type === "attempt.started" ? attempt.stepId : null;
 }
 
 /** Every run ID under `runsDir`: a directory whose name is a run ID this tool could have made. */
