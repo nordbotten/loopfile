@@ -619,10 +619,19 @@ async function visit(
   const startedAt = new Date().toISOString();
   const attempt = await createAttemptDirectory(owner.paths.attempts, attemptId);
   let current: AttemptIdentity | undefined;
+  // Calls can arrive as soon as the process starts; keep them behind the start event.
+  let markStarted!: () => void;
+  const startedRecorded = new Promise<void>((resolve) => {
+    markStarted = resolve;
+  });
+  const handle = dispatch(tracked, owner, step);
   const served = await owner.serveAttempt({
     socketPath: attempt.socket,
     current: () => current,
-    handle: dispatch(tracked, owner, step),
+    handle: async (call) => {
+      await startedRecorded;
+      return await handle(call);
+    },
   });
   const guard = attemptGuard(
     workflow,
@@ -659,14 +668,16 @@ async function visit(
         setCurrent: (identity) => {
           current = identity;
         },
-        onProcess: (processGroupId) =>
-          tracked.log.append({
+        onProcess: async (processGroupId) => {
+          await tracked.log.append({
             type: "attempt.started",
             attemptId,
             stepId: step.id,
             processGroupId,
             at: startedAt,
-          }),
+          });
+          markStarted();
+        },
       },
     );
     const by = guard.stoppedBy();
