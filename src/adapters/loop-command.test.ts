@@ -476,7 +476,9 @@ test("a changed CLI ends a loop before its second run", async () => {
     await new Promise((resolve) => setTimeout(resolve, 50));
     const changed = await readFile(cliCopy);
     changed[changed.length - 1] = 0x20;
-    await writeFile(cliCopy, changed);
+    const replacement = `${cliCopy}.changed`;
+    await writeFile(replacement, changed);
+    await rename(replacement, cliCopy);
 
     const events = await waitForEnd(setupResult.home, loopId);
     const ended = events.at(-1);
@@ -490,6 +492,7 @@ test("a changed CLI ends a loop before its second run", async () => {
     await waitForOwnerGone(setupResult.home, loopId);
   } finally {
     await rm(cliCopy, { force: true });
+    await rm(`${cliCopy}.changed`, { force: true });
     await removeAfterOwnersExit(setupResult.root);
   }
 });
