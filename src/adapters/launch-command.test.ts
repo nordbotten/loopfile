@@ -1510,6 +1510,14 @@ test("a run started from code rejects bad inputs before making its run folder", 
   await assert.rejects(stat(join(home, "runs")));
 });
 
+test("launch still rejects a missing required input", async () => {
+  const { repo, source, home, env } = await setup();
+  const s = session();
+  assert.equal(await launchCommand([source], cli, s.io, env, { repository: repo }), 2);
+  assert.match(s.err(), /error: missing --input issue: The issue number/);
+  await assert.rejects(stat(join(home, "runs")));
+});
+
 test("a thin manifest from stdin starts a run and materializes the manifest", async () => {
   const { repo, home, env } = await setup();
   const s = session();

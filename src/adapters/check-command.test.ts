@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmod, mkdir, mkdtemp, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
@@ -178,24 +178,61 @@ test("check reports stdin, source and manifest read failures", async () => {
   assert.match(failure.errors, /not valid YAML/);
 });
 
-test("a non-JSON check prints prose and applies launch input validation", async () => {
+test("a non-JSON check passes without launch input values", async () => {
   const directory = await source(VALID);
   const io = capture();
-  assert.equal(await checkCommand(["check", directory], io.out, io.err), 2);
-  assert.equal(io.output, "");
-  assert.equal(
-    io.errors,
-    "error: missing --input issue: The issue number\n" +
-      "code: bad_argument\n" +
-      "help: Give each with --input <name>=<value>.\n",
-  );
+  assert.equal(await checkCommand(["check", directory], io.out, io.err), 0);
+  assert.equal(io.output, "Loopfile is valid.\n");
+  assert.equal(io.errors, "");
+});
 
-  const valid = capture();
-  assert.equal(
-    await checkCommand(["check", directory, "--input", "issue=42"], valid.out, valid.err),
-    0,
+test("JSON check passes without launch input values", async () => {
+  const directory = await source(VALID);
+  const io = capture();
+  assert.equal(await checkCommand(["check", directory, "--json"], io.out, io.err), 0);
+  assert.equal(io.output, "[]\n");
+  assert.equal(io.errors, "");
+});
+
+test("check help and ADR 0011 distinguish manifest checks from required launch inputs", async () => {
+  const help = capture();
+  assert.equal(await checkCommand(["check", "--help"], help.out, help.err), 0);
+  assert.match(help.output, /manifest and the names of any --input\s+flags given/);
+  assert.match(help.output, /Launch still requires each input without\s+a default/);
+  assert.doesNotMatch(help.output, /validate .*launch inputs/i);
+
+  const adr = await readFile(
+    new URL("../../docs/adr/0011-operator-contract.md", import.meta.url),
+    "utf8",
   );
-  assert.equal(valid.output, "Loopfile is valid.\n");
+  assert.match(adr, /validates the manifest and the names of any `--input` flags given/);
+  assert.match(
+    adr,
+    /launch will not refuse the manifest itself; launch still checks for missing input values \(#155\)/,
+  );
+});
+
+test("check accepts some of several required input values", async () => {
+  const directory = await source(`formatVersion: 1
+inputs:
+  issue: The issue number
+  title: The issue title
+steps:
+  - id: work
+    kind: command
+    run: 'true'
+`);
+  const io = capture();
+  assert.equal(await checkCommand(["check", directory, "--input", "issue=42"], io.out, io.err), 0);
+  assert.equal(io.output, "Loopfile is valid.\n");
+  assert.equal(io.errors, "");
+});
+
+test("check rejects malformed input flags", async () => {
+  const directory = await source(VALID);
+  const io = capture();
+  assert.equal(await checkCommand(["check", directory, "--input", "issue"], io.out, io.err), 2);
+  assert.match(io.errors, /error: --input issue needs the form <name>=<value>/);
 });
 
 test("check reports every undeclared input on its own error line", async () => {
@@ -203,7 +240,7 @@ test("check reports every undeclared input on its own error line", async () => {
   const io = capture();
   assert.equal(
     await checkCommand(
-      ["check", directory, "--input", "other=1", "--input", "another=2"],
+      ["check", directory, "--input", "nope=1", "--input", "another=2"],
       io.out,
       io.err,
     ),
@@ -211,7 +248,7 @@ test("check reports every undeclared input on its own error line", async () => {
   );
   assert.equal(
     io.errors,
-    "error: --input other is not declared by the Loopfile. Declared inputs: issue.\n" +
+    "error: --input nope is not declared by the Loopfile. Declared inputs: issue.\n" +
       "error: --input another is not declared by the Loopfile. Declared inputs: issue.\n" +
       "code: bad_argument\n" +
       "help: Give each with --input <name>=<value>.\n",
