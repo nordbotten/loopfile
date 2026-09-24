@@ -1,7 +1,7 @@
 /** `loopfile check <source> [--json]`: validate without starting a run. */
 
 import { parseArgs } from "node:util";
-import { checkAgainstDeclared, inputHelp, parseInputFlags } from "../application/launch-inputs.ts";
+import { checkDeclaredInputs, inputHelp, parseInputFlags } from "../application/launch-inputs.ts";
 import type { LoadError, LoadResult } from "../application/load-workflow.ts";
 import { renderOperatorFailureLines } from "../application/operator-error.ts";
 import { formatRemoteLine } from "../application/remote-view.ts";
@@ -21,11 +21,12 @@ const USAGE =
   "Usage: loopfile check <directory|file.loop|github:owner/repo[/path][@ref]|git+https://…|git+ssh://…|-> [--json] [--input <name>=<value>]...";
 const HELP = `${USAGE}
 
-Validate a local or remote Loopfile and its launch inputs without starting a
-run. Remote Loopfiles are fetched but never checked against trust.yaml. Use '-'
-to read a thin manifest from stdin, and --json for one structured array of
-manifest problems. Check does not inspect the run environment, such as harness
-binaries.
+Validate a local or remote Loopfile manifest and the names of any --input
+flags given, without starting a run. Launch still requires each input without
+a default. Remote Loopfiles are fetched but never checked against trust.yaml.
+Use '-' to read a thin manifest from stdin, and --json for one structured
+array of manifest problems. Check does not inspect the run environment, such
+as harness binaries.
 `;
 
 interface CheckArgs {
@@ -35,7 +36,7 @@ interface CheckArgs {
   readonly trust: boolean;
 }
 
-/** Runs `check`. Returns 0 when the source and its launch inputs are valid. */
+/** Runs `check`. Returns 0 when the manifest and given input names are valid. */
 export async function checkCommand(
   argv: readonly string[],
   out: Out,
@@ -59,11 +60,7 @@ export async function checkCommand(
 
   if (!reportManifest(source.result, args.json, out)) return 1;
 
-  const inputs = checkInputs(
-    args.inputs,
-    source.result.workflow.inputs,
-    source.result.workflow.inputDefaults,
-  );
+  const inputs = checkInputs(args.inputs, source.result.workflow.inputs);
   if (!inputs.ok)
     return fail(err, inputs.messages, 2, inputHelp(source.result.workflow.inputDefaults));
 
@@ -233,10 +230,9 @@ function reportManifest(
 function checkInputs(
   flags: readonly string[],
   declared: Readonly<Record<string, string>>,
-  defaults: Readonly<Record<string, string>> | undefined,
-): ReturnType<typeof checkAgainstDeclared> {
+): ReturnType<typeof checkDeclaredInputs> {
   const given = parseInputFlags(flags);
-  return given.ok ? checkAgainstDeclared(given.inputs, declared, defaults) : given;
+  return given.ok ? checkDeclaredInputs(given.inputs, declared) : given;
 }
 
 function renderErrors(errors: readonly LoadError[]): string {
