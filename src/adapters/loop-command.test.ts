@@ -1,6 +1,16 @@
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
-import { copyFile, mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import {
+  copyFile,
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  rename,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { createRequire } from "node:module";
 import { createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
@@ -13,6 +23,7 @@ import { parseEventLog } from "../application/replay.ts";
 import type { LoopEvent } from "../domain/events.ts";
 import { childEndState, loopCommand } from "./loop-command.ts";
 import { ownerPids, removeAfterOwnersExit } from "./owner-cleanup.test.ts";
+import { makeGitFixture } from "./remote-fixture.ts";
 import { loopPaths, runPaths } from "./run-directory.ts";
 import { pingOwner } from "./run-owner.ts";
 import { tailCommand } from "./tail-command.ts";
@@ -526,6 +537,267 @@ test("loop --times starts a detached owner and two command runs", async () => {
       assert.equal(childEvents.at(-1)?.type, "run.ended");
     }
   } finally {
+    await removeAfterOwnersExit(setupResult.root);
+  }
+});
+
+test("remote loop pins one commit, records it on each run, and asks trust once", async () => {
+  const setupResult = await setup();
+  const tmp = join(setupResult.root, "tmp");
+  await mkdir(tmp);
+  const bump = join(setupResult.root, "bumped");
+  const observed = join(setupResult.root, "runs.txt");
+  const fixture = await makeGitFixture({ "README.md": "fixture\n" });
+  const updated = `formatVersion: 1\nsteps:\n  - id: work\n    kind: command\n    run: ${JSON.stringify(`echo updated >> '${observed}'`)}\n`;
+  await writeFile(join(fixture.repository, "manifest-next.yaml"), updated);
+  const command = `if [ ! -e '${bump}' ]; then cp '${fixture.repository}/manifest-next.yaml' '${fixture.repository}/manifest.yaml' && git -C '${fixture.repository}' add manifest.yaml && git -C '${fixture.repository}' commit -q -m moved && touch '${bump}'; fi; echo pinned >> '${observed}'`;
+  await writeFile(
+    join(fixture.repository, "manifest.yaml"),
+    `formatVersion: 1\nsteps:\n  - id: work\n    kind: command\n    run: ${JSON.stringify(command)}\n`,
+  );
+  await run("git", ["add", "manifest.yaml", "manifest-next.yaml"], {
+    cwd: fixture.repository,
+    env: fixture.env,
+  });
+  await run("git", ["commit", "-q", "-m", "loopfile"], {
+    cwd: fixture.repository,
+    env: fixture.env,
+  });
+  const sha = (await run("git", ["rev-parse", "HEAD"], { cwd: fixture.repository })).stdout.trim();
+  let prompts = 0;
+  try {
+    const captured = io();
+    const code = await loopCommand(
+      ["loop", "github:acme/loops@main", "--times", "2", "--workspace", "empty", "-d"],
+      cli,
+      captured.value,
+      { ...setupResult.env, ...fixture.env, TMPDIR: tmp },
+      {
+        repository: setupResult.repo,
+        trust: {
+          isTTY: true,
+          err: captured.value.err,
+          choose: async (header) => {
+            prompts += 1;
+            assert.match(header, new RegExp(sha));
+            return 0;
+          },
+        },
+      },
+    );
+    assert.equal(code, 0, captured.errors());
+    const events = await waitForEnd(setupResult.home, captured.output().trim());
+    const remote = { host: "github.com", repo: "acme/loops", ref: "main", sha };
+    assert.deepEqual(events[0]?.type === "loop.created" ? events[0].remote : undefined, remote);
+    const started = events.filter(
+      (event): event is Extract<LoopEvent, { type: "loop.run_started" }> =>
+        event.type === "loop.run_started",
+    );
+    assert.equal(started.length, 2);
+    for (const child of started) {
+      const childEvents = parseEventLog(
+        await readFile(runPaths(setupResult.home, child.runId).events, "utf8"),
+      );
+      const created = childEvents.find((event) => event.type === "run.created");
+      assert.deepEqual(created?.type === "run.created" ? created.remote : undefined, remote);
+    }
+    assert.notEqual(
+      (await run("git", ["rev-parse", "HEAD"], { cwd: fixture.repository })).stdout.trim(),
+      sha,
+    );
+    assert.equal(await readFile(observed, "utf8"), "pinned\npinned\n");
+    assert.equal(prompts, 1);
+    assert.deepEqual(await readdir(tmp), []);
+  } finally {
+    await fixture.cleanup();
+    await removeAfterOwnersExit(setupResult.root);
+  }
+});
+
+test("remote loops with --trust do not prompt", async () => {
+  const setupResult = await setup();
+  const fixture = await makeGitFixture({
+    "manifest.yaml": "formatVersion: 1\nsteps:\n  - id: work\n    kind: command\n    run: 'true'\n",
+  });
+  let prompts = 0;
+  try {
+    const captured = io();
+    assert.equal(
+      await loopCommand(
+        ["loop", "github:acme/loops", "--times", "1", "--trust", "--workspace", "empty", "-d"],
+        cli,
+        captured.value,
+        { ...setupResult.env, ...fixture.env },
+        {
+          repository: setupResult.repo,
+          trust: {
+            isTTY: true,
+            err: captured.value.err,
+            choose: async () => {
+              prompts += 1;
+              return 0;
+            },
+          },
+        },
+      ),
+      0,
+      captured.errors(),
+    );
+    await waitForEnd(setupResult.home, captured.output().trim());
+    assert.equal(prompts, 0);
+  } finally {
+    await fixture.cleanup();
+    await removeAfterOwnersExit(setupResult.root);
+  }
+});
+
+test("an untrusted remote loop without a terminal refuses before creating a loop", async () => {
+  const setupResult = await setup();
+  const fixture = await makeGitFixture({
+    "manifest.yaml": "formatVersion: 1\nsteps:\n  - id: work\n    kind: command\n    run: 'true'\n",
+  });
+  const tmp = join(setupResult.root, "tmp");
+  await mkdir(tmp);
+  try {
+    const captured = io();
+    assert.equal(
+      await loopCommand(
+        ["loop", "github:acme/loops", "--times", "1", "--workspace", "empty", "-d"],
+        cli,
+        captured.value,
+        { ...setupResult.env, ...fixture.env, TMPDIR: tmp },
+        {
+          repository: setupResult.repo,
+          trust: { isTTY: false, err: captured.value.err, choose: async () => 0 },
+        },
+      ),
+      2,
+    );
+    assert.match(captured.errors(), /code: untrusted/);
+    assert.equal(captured.output(), "");
+    await assert.rejects(stat(join(setupResult.home, "loops")));
+    assert.deepEqual(await readdir(tmp), []);
+  } finally {
+    await fixture.cleanup();
+    await removeAfterOwnersExit(setupResult.root);
+  }
+});
+
+test("loop accepts each remote source form supported by launch", async () => {
+  const setupResult = await setup();
+  const fixture = await makeGitFixture({
+    "manifest.yaml": "formatVersion: 1\nsteps:\n  - id: work\n    kind: command\n    run: 'true'\n",
+  });
+  const env = {
+    ...setupResult.env,
+    ...fixture.env,
+    GIT_CONFIG_COUNT: "3",
+    GIT_CONFIG_KEY_0: `url.file://${fixture.root}/.insteadOf`,
+    GIT_CONFIG_VALUE_0: "https://github.com/",
+    GIT_CONFIG_KEY_1: `url.file://${fixture.root}/.insteadOf`,
+    GIT_CONFIG_VALUE_1: "https://git.example.test/",
+    GIT_CONFIG_KEY_2: `url.file://${fixture.root}/.insteadOf`,
+    GIT_CONFIG_VALUE_2: "ssh://git.example.test/",
+  };
+  try {
+    for (const source of [
+      "github:acme/loops",
+      "acme/loops",
+      "https://github.com/acme/loops",
+      "git+https://git.example.test/acme/loops",
+      "git+ssh://git.example.test/acme/loops",
+    ]) {
+      const captured = io();
+      assert.equal(
+        await loopCommand(
+          ["loop", source, "--times", "1", "--trust", "--workspace", "empty", "-d"],
+          cli,
+          captured.value,
+          env,
+          { repository: setupResult.repo },
+        ),
+        0,
+        `${source}: ${captured.errors()}`,
+      );
+      await waitForEnd(setupResult.home, captured.output().trim());
+    }
+  } finally {
+    await fixture.cleanup();
+    await removeAfterOwnersExit(setupResult.root);
+  }
+});
+
+test("remote loops retain list and next input sources", async () => {
+  const setupResult = await setup();
+  const fixture = await makeGitFixture({
+    "manifest.yaml": `formatVersion: 1\ninputs:\n  issue: Issue number\nsteps:\n  - id: work\n    kind: command\n    run: 'test -n "$(node ${cli} data get input.issue)"'\n`,
+  });
+  const list = join(setupResult.root, "input-list.jsonl");
+  await writeFile(list, '{"issue":"41"}\n{"issue":"42"}\n');
+  try {
+    for (const sourceArgs of [
+      ["--list", list],
+      ["--next", `printf '%s\\n' '{"issue":"43"}'`, "--max-runs", "1"],
+    ]) {
+      const captured = io();
+      assert.equal(
+        await loopCommand(
+          ["loop", "github:acme/loops", ...sourceArgs, "--trust", "--workspace", "empty", "-d"],
+          cli,
+          captured.value,
+          { ...setupResult.env, ...fixture.env },
+          { repository: setupResult.repo },
+        ),
+        0,
+        captured.errors(),
+      );
+      const events = await waitForEnd(setupResult.home, captured.output().trim());
+      assert.ok(events.some((event) => event.type === "loop.run_started"));
+    }
+  } finally {
+    await fixture.cleanup();
+    await removeAfterOwnersExit(setupResult.root);
+  }
+});
+
+test("loop help documents remote sources and --trust", async () => {
+  const setupResult = await setup();
+  try {
+    const captured = io();
+    assert.equal(await loopCommand(["loop", "--help"], cli, captured.value, setupResult.env), 0);
+    assert.match(captured.output(), /github:owner\/repo/);
+    assert.match(captured.output(), /git\+ssh/);
+    assert.match(captured.output(), /--trust/);
+  } finally {
+    await removeAfterOwnersExit(setupResult.root);
+  }
+});
+
+test("remote loop fetch failures retain the single-run error codes", async () => {
+  const setupResult = await setup();
+  const fixture = await makeGitFixture({ "README.md": "not the source\n" }, "other/repo");
+  try {
+    for (const [env, source, code] of [
+      [{ ...setupResult.env, PATH: "" }, "github:acme/loops", "git_missing"],
+      [{ ...setupResult.env, ...fixture.env }, "github:acme/missing", "fetch_failed"],
+    ] as const) {
+      const captured = io();
+      assert.equal(
+        await loopCommand(
+          ["loop", source, "--times", "1", "--trust", "-d"],
+          cli,
+          captured.value,
+          env,
+          { repository: setupResult.repo },
+        ),
+        2,
+      );
+      assert.match(captured.errors(), new RegExp(`code: ${code}`));
+      assert.equal(captured.output(), "");
+    }
+    await assert.rejects(stat(join(setupResult.home, "loops")));
+  } finally {
+    await fixture.cleanup();
     await removeAfterOwnersExit(setupResult.root);
   }
 });

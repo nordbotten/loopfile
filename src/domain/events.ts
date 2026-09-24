@@ -371,6 +371,7 @@ export interface LoopCreated extends EventBase {
   readonly loopId: LoopId;
   readonly eventFormatVersion: typeof LOOP_EVENT_FORMAT_VERSION;
   readonly repositoryPath: string;
+  readonly remote?: RemoteRecord;
   /** A CLI override carried to every child run. */
   readonly workspaceMode?: WorkspaceMode;
   readonly loopfileName: string;
