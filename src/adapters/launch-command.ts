@@ -196,7 +196,7 @@ async function launchSource(
   }
   const trustHeader = renderTrustHeader(source.workflow, fetchedRemote, printableSource, env);
   const trustFailure = await checkRemoteTrust(
-    args,
+    args.trust,
     remote,
     trustedRemote,
     trustPath,
@@ -222,7 +222,7 @@ async function launchSource(
   return await start(args.detach, request, source.workflow, cli, io, env, options);
 }
 
-function renderTrustHeader(
+export function renderTrustHeader(
   workflow: Workflow,
   fetchedRemote: FetchedRemote | undefined,
   source: string | undefined,
@@ -237,7 +237,7 @@ function renderTrustHeader(
   );
 }
 
-function printableSource(source: string): string {
+export function printableSource(source: string): string {
   const authorityStart = source.indexOf("://") + 3;
   if (authorityStart < 3) return source;
   const pathStart = source.indexOf("/", authorityStart);
@@ -249,16 +249,16 @@ function printableSource(source: string): string {
     : `${source.slice(0, authorityStart)}${authority.slice(at + 1)}${source.slice(authorityEnd)}`;
 }
 
-async function checkRemoteTrust(
-  args: LaunchArgs,
+export async function checkRemoteTrust(
+  trustOnce: boolean,
   remote: RemoteSource | undefined,
   trustedRemote: boolean,
   trustPath: string | undefined,
   trustText: string | undefined,
   trustHeader: string,
-  io: LaunchIo,
+  io: Pick<LaunchIo, "err" | "trust">,
 ): Promise<number | undefined> {
-  if (remote === undefined || args.trust || trustedRemote) return undefined;
+  if (remote === undefined || trustOnce || trustedRemote) return undefined;
   if (!io.trust.isTTY || trustPath === undefined) {
     return refuse(
       io,
@@ -293,7 +293,7 @@ async function chooseTrustEntry(
   remote: RemoteSource,
   repoEntry: string,
   header: string,
-  io: LaunchIo,
+  io: Pick<LaunchIo, "trust">,
 ): Promise<{ readonly entry: string; readonly list: "repos" | "owners" } | undefined> {
   const ownerEntry = `${remote.host}/${remote.repo.split("/")[0]}`;
   const choice = await io.trust.choose(
@@ -306,6 +306,52 @@ async function chooseTrustEntry(
   return undefined;
 }
 
+export interface PreparedRemoteFetch {
+  readonly fetched: FetchedRemote;
+  readonly trustPath: string;
+  readonly trustText: string | undefined;
+  readonly trusted: boolean;
+}
+
+/** Reads the trust list and fetches the source once, shared by launches and loops. */
+export async function prepareRemoteFetch(
+  remote: RemoteSource,
+  io: Pick<LaunchIo, "err">,
+  env: Record<string, string | undefined>,
+): Promise<
+  | { readonly ok: true; readonly value: PreparedRemoteFetch }
+  | { readonly ok: false; readonly exitCode: number }
+> {
+  const trustPath = join(loopfileHome(env as NodeJS.ProcessEnv), "trust.yaml");
+  let trustText: string | undefined;
+  try {
+    trustText = await readFile(trustPath, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      return { ok: false, exitCode: refuseTrustList(io, trustPath, (error as Error).message) };
+    }
+  }
+  const trust = parseTrustList(trustText);
+  if (trust.status === "broken") {
+    return { ok: false, exitCode: refuseTrustList(io, trustPath, trust.reason) };
+  }
+  let fetched: FetchedRemote;
+  try {
+    fetched = await fetchRemote(remote, env);
+  } catch (error) {
+    return { ok: false, exitCode: refuseRemoteFetch(io, remote, error) };
+  }
+  return {
+    ok: true,
+    value: {
+      fetched,
+      trustPath,
+      trustText,
+      trusted: matchesTrust(trust, `${remote.host}/${remote.repo}`),
+    },
+  };
+}
+
 async function launchRemote(
   args: LaunchArgs,
   remote: RemoteSource,
@@ -314,26 +360,10 @@ async function launchRemote(
   env: Record<string, string | undefined>,
   options: LaunchOptions,
 ): Promise<number> {
-  const trustPath = join(loopfileHome(env as NodeJS.ProcessEnv), "trust.yaml");
-  let trustText: string | undefined;
+  const prepared = await prepareRemoteFetch(remote, io, env);
+  if (!prepared.ok) return prepared.exitCode;
+  const { fetched, trustPath, trustText, trusted } = prepared.value;
   try {
-    trustText = await readFile(trustPath, "utf8");
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
-      return refuseTrustList(io, trustPath, (error as Error).message);
-    }
-  }
-  const trust = parseTrustList(trustText);
-  if (trust.status === "broken") return refuseTrustList(io, trustPath, trust.reason);
-  const trusted = matchesTrust(trust, `${remote.host}/${remote.repo}`);
-
-  let fetched: FetchedRemote | undefined;
-  try {
-    try {
-      fetched = await fetchRemote(remote, env);
-    } catch (error) {
-      return refuseRemoteFetch(io, remote, error);
-    }
     return await launchSource(
       args,
       fetched.path,
@@ -350,7 +380,7 @@ async function launchRemote(
       options,
     );
   } finally {
-    await fetched?.cleanup().catch(() => undefined);
+    await fetched.cleanup().catch(() => undefined);
   }
 }
 

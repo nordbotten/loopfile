@@ -7,7 +7,7 @@ import { after, test } from "node:test";
 import { promisify } from "node:util";
 import { loopStatus } from "../application/loop-status.ts";
 import { parseEventLog } from "../application/replay.ts";
-import type { LoopEvent } from "../domain/events.ts";
+import type { LoopEvent, RemoteRecord } from "../domain/events.ts";
 import { materializeDirectory } from "./directory-loader.ts";
 import { openEventLog } from "./event-log.ts";
 import { type FakeScript, fakeHarnessAdapters } from "./fake-harness.test.ts";
@@ -37,6 +37,7 @@ async function setup(
   sourceText = `formatVersion: 1\nsteps:\n  - id: work\n    kind: command\n    run: ${JSON.stringify(command)}\n`,
   runCount = 3,
   pauseMs: number | null = null,
+  remote?: RemoteRecord,
 ) {
   count += 1;
   const base = join(root, `case-${count}`);
@@ -64,6 +65,7 @@ async function setup(
     loopId,
     eventFormatVersion: 1,
     repositoryPath: repo,
+    ...(remote === undefined ? {} : { remote }),
     loopfileName: "source",
     source: { kind: "times", count: runCount },
     fixedInputs: {},
@@ -122,6 +124,38 @@ test("runs times children in order and records their loop links", async () => {
     await readFile(loopPaths(setupResult.home, setupResult.loopId).status, "utf8"),
   );
   assert.deepEqual(status, ended);
+});
+
+test("a resumed loop passes its recorded remote commit to each child run", async () => {
+  const remote = {
+    host: "github.com",
+    repo: "acme/loops",
+    ref: "main",
+    sha: "4c9d077abcde1234567890abcdef1234567890ab",
+  };
+  const setupResult = await setup("true", undefined, 2, null, remote);
+  const log = await openEventLog<LoopEvent>(loopPaths(setupResult.home, setupResult.loopId).events);
+  await log.append({ type: "owner.started", pid: 1, host: "first-owner" });
+  await log.append({ type: "owner.started", pid: 2, host: "resumed-owner" });
+  await log.close();
+
+  const ended = await runLoop(setupResult.home, setupResult.loopId, {
+    cli,
+    env: setupResult.env,
+  });
+  assert.equal(ended.state, "completed");
+  const children = (await loopEvents(setupResult.home, setupResult.loopId)).filter(
+    (event): event is Extract<LoopEvent, { readonly type: "loop.run_started" }> =>
+      event.type === "loop.run_started",
+  );
+  assert.equal(children.length, 2);
+  for (const child of children) {
+    const runEvents = parseEventLog(
+      await readFile(runPaths(setupResult.home, child.runId).events, "utf8"),
+    );
+    const runCreated = runEvents.find((event) => event.type === "run.created");
+    assert.deepEqual(runCreated?.type === "run.created" ? runCreated.remote : undefined, remote);
+  }
 });
 
 test("waits for a child already running when the loop resumes", async () => {

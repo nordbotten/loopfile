@@ -18,9 +18,10 @@ import {
   renderOperatorFailure,
   renderOperatorFailureLines,
 } from "../application/operator-error.ts";
+import { parseSource, SourceParseError } from "../application/source.ts";
 import { parseStatusProjection } from "../application/status.ts";
 import { selectWorkspaceMode } from "../application/workspace-mode.ts";
-import type { InputSet, LoopEvent, LoopSource } from "../domain/events.ts";
+import type { InputSet, LoopEvent, LoopSource, RemoteRecord } from "../domain/events.ts";
 import type { Workflow, WorkspaceMode } from "../domain/model.ts";
 import type { LoopStatus, StatusProjection } from "../domain/status.ts";
 import {
@@ -30,11 +31,16 @@ import {
   materializeThinText,
 } from "./directory-loader.ts";
 import { openEventLog } from "./event-log.ts";
-import { readStdin } from "./input.ts";
+import { readStdin, sourceExists } from "./input.ts";
 import type { LaunchIo } from "./launch-command.ts";
 import {
+  checkRemoteTrust,
   type PreparedLaunchSource,
+  type PreparedRemoteFetch,
   prepareLaunchSource,
+  prepareRemoteFetch,
+  printableSource,
+  renderTrustHeader,
   startDetachedOwner,
 } from "./launch-command.ts";
 import { programIdentity } from "./program-identity.ts";
@@ -48,14 +54,16 @@ import {
 } from "./run-directory.ts";
 import { pingOwner } from "./run-owner.ts";
 import { statusCommand } from "./status-command.ts";
+import { type TrustIo, terminalTrustIo } from "./trust-prompt.ts";
 
 const USAGE =
-  "Usage: loopfile loop <source> (--times N | --list <file> | --next <command>) [--input k=v]... [--retry N] [--max-runs N] [--pause <duration>] [--workspace <mode>] [-d]";
+  "Usage: loopfile loop <directory|file.loop|owner/repo|github:owner/repo[/path][@ref]|https://github.com/…|git+https://…|git+ssh://…> (--times N | --list <file> | --next <command>) [--input k=v]... [--retry N] [--max-runs N] [--pause <duration>] [--workspace <mode>] [--trust] [-d]";
 const HELP = `${USAGE}
 
 Run a Loopfile repeatedly in the background. Each non-empty JSON Lines input
 set in --list starts one run. --next runs a command before each run; its stdout
 is one JSON input set, or whitespace to end the loop.
+Remote Loopfiles are fetched and trust-checked once when the loop starts. Use --trust to approve this loop once.
 `;
 export interface LoopCommandOptions {
   readonly readStdin?: () => Promise<Buffer>;
@@ -65,6 +73,8 @@ export interface LoopCommandOptions {
   readonly pollMs?: number;
   /** Overridable for tests only. */
   readonly ownerPingTimeoutMs?: number;
+  /** Overridable for tests only. */
+  readonly trust?: TrustIo;
 }
 
 type LoopIo = Pick<LaunchIo, "out" | "err" | "upgrade">;
@@ -80,6 +90,7 @@ interface LoopArgs {
   readonly inputs: readonly string[];
   readonly workspaceMode: string | undefined;
   readonly detach: boolean;
+  readonly trust: boolean;
   readonly help: boolean;
 }
 
@@ -113,6 +124,7 @@ interface ValidLoopArgs {
   readonly inputs: readonly string[];
   readonly workspaceMode?: WorkspaceMode;
   readonly detach: boolean;
+  readonly trust: boolean;
 }
 
 function validateLoopArgs(args: LoopArgs, io: LoopIo): ValidLoopArgs | number {
@@ -140,31 +152,123 @@ async function startLoop(
   env: Record<string, string | undefined>,
   options: LoopCommandOptions,
 ): Promise<number> {
-  const loaded = await prepareLaunchSource(args.source, io, options.readStdin ?? readStdin);
-  if (!loaded.ok) return loaded.exitCode;
-  const fixed = parseInputFlags(args.inputs);
-  if (!fixed.ok) return refuse(io, fixed.messages, inputHelp(loaded.workflow.inputDefaults));
+  const resolved = await resolveLoopSource(args.source, io, env);
+  if (!resolved.ok) return resolved.exitCode;
+  const { parsed, sourcePath, remotePreparation } = resolved.value;
+  const fetched = remotePreparation?.fetched;
+  try {
+    const prepared = await prepareLaunchSource(sourcePath, io, options.readStdin ?? readStdin);
+    if (!prepared.ok) return prepared.exitCode;
+    const fixed = parseInputFlags(args.inputs);
+    if (!fixed.ok) return refuse(io, fixed.messages, inputHelp(prepared.workflow.inputDefaults));
 
-  const inputs = await prepareLoopInputs(args, fixed.inputs, loaded.workflow, io);
-  if (inputs === undefined) return 2;
-  const { source, fixedInputs } = inputs;
+    const inputs = await prepareLoopInputs(args, fixed.inputs, prepared.workflow, io);
+    if (inputs === undefined) return 2;
+    const trustFailure = await approveRemoteLoop(
+      args,
+      parsed,
+      remotePreparation,
+      prepared,
+      io,
+      env,
+      options,
+    );
+    if (trustFailure !== undefined) return trustFailure;
 
-  const program = await programIdentity(cli).catch((error: Error) => {
-    refuse(io, `cannot read the CLI entry file: ${error.message}`, USAGE, 1, "operation_failed");
-    return undefined;
-  });
-  if (program === undefined) return 1;
-  return await createAndStartLoop(
-    args,
-    source,
-    fixedInputs,
-    program,
-    cli,
-    io,
-    env,
-    options,
-    loaded,
+    const program = await programIdentity(cli).catch((error: Error) => {
+      refuse(io, `cannot read the CLI entry file: ${error.message}`, USAGE, 1, "operation_failed");
+      return undefined;
+    });
+    if (program === undefined) return 1;
+    const remote = fetched === undefined ? undefined : { ...fetched.remote, sha: fetched.sha };
+    const loopfileName = loopfileNameFor(args.source, remote);
+    return await createAndStartLoop(
+      args,
+      inputs.source,
+      inputs.fixedInputs,
+      program,
+      cli,
+      io,
+      env,
+      options,
+      prepared,
+      sourcePath,
+      loopfileName,
+      remote,
+      fetched,
+    );
+  } finally {
+    await fetched?.cleanup().catch(() => undefined);
+  }
+}
+
+interface ResolvedLoopSource {
+  readonly parsed: ReturnType<typeof parseSource>;
+  readonly sourcePath: string;
+  readonly remotePreparation?: PreparedRemoteFetch;
+}
+
+async function resolveLoopSource(
+  source: string,
+  io: LoopIo,
+  env: Record<string, string | undefined>,
+): Promise<
+  | { readonly ok: true; readonly value: ResolvedLoopSource }
+  | { readonly ok: false; readonly exitCode: number }
+> {
+  let parsed: ReturnType<typeof parseSource>;
+  try {
+    parsed = parseSource(source, await sourceExists(source));
+  } catch (error) {
+    return {
+      ok: false,
+      exitCode: refuse(
+        io,
+        (error as Error).message,
+        error instanceof SourceParseError ? error.help : USAGE,
+        2,
+      ),
+    };
+  }
+  if (parsed.kind === "local") return { ok: true, value: { parsed, sourcePath: source } };
+
+  const prepared = await prepareRemoteFetch(parsed, io, env);
+  if (!prepared.ok) return prepared;
+  return {
+    ok: true,
+    value: {
+      parsed,
+      sourcePath: prepared.value.fetched.path,
+      remotePreparation: prepared.value,
+    },
+  };
+}
+
+async function approveRemoteLoop(
+  args: ValidLoopArgs,
+  parsed: ReturnType<typeof parseSource>,
+  remote: PreparedRemoteFetch | undefined,
+  prepared: Extract<PreparedLaunchSource, { readonly ok: true }>,
+  io: LoopIo,
+  env: Record<string, string | undefined>,
+  options: LoopCommandOptions,
+): Promise<number | undefined> {
+  if (parsed.kind !== "remote" || remote === undefined) return undefined;
+  return await checkRemoteTrust(
+    args.trust,
+    parsed,
+    remote.trusted,
+    remote.trustPath,
+    remote.trustText,
+    renderTrustHeader(prepared.workflow, remote.fetched, printableSource(args.source), env),
+    { err: io.err, trust: options.trust ?? terminalTrustIo(io.err) },
   );
+}
+
+function loopfileNameFor(source: string, remote: RemoteRecord | undefined): string {
+  return remote === undefined
+    ? basename(source)
+    : (remote.path?.split("/").at(-1) ?? remote.repo.slice(remote.repo.lastIndexOf("/") + 1));
 }
 
 interface PreparedLoopInputs {
@@ -208,6 +312,10 @@ async function createAndStartLoop(
   env: Record<string, string | undefined>,
   options: LoopCommandOptions,
   loaded: PreparedLaunchSource & { readonly ok: true },
+  sourcePath: string,
+  loopfileName: string,
+  remote: RemoteRecord | undefined,
+  fetched: PreparedRemoteFetch["fetched"] | undefined,
 ): Promise<number> {
   const loopId = newLoopId();
   const home = loopfileHome(env as NodeJS.ProcessEnv);
@@ -215,7 +323,8 @@ async function createAndStartLoop(
   let paths: LoopPaths;
   try {
     paths = await createLoopDirectory({ home, loopId, targetRepository: repository });
-    await materialize(loaded, args.source, paths.loopfile);
+    await materialize(loaded, sourcePath, paths.loopfile);
+    await fetched?.cleanup();
     const log = await openEventLog<LoopEvent>(paths.events);
     try {
       await log.append({
@@ -223,7 +332,8 @@ async function createAndStartLoop(
         loopId,
         eventFormatVersion: 1,
         repositoryPath: repository,
-        loopfileName: basename(args.source),
+        ...(remote === undefined ? {} : { remote }),
+        loopfileName,
         source,
         fixedInputs,
         retry: args.retry,
@@ -570,6 +680,7 @@ function parseLoopArgs(argv: readonly string[]): LoopArgs | undefined {
         input: { type: "string", multiple: true },
         workspace: { type: "string" },
         detach: { type: "boolean", short: "d" },
+        trust: { type: "boolean" },
         help: { type: "boolean", short: "h" },
       },
       allowPositionals: true,
@@ -586,6 +697,7 @@ function parseLoopArgs(argv: readonly string[]): LoopArgs | undefined {
       inputs: values.input ?? [],
       workspaceMode: values.workspace,
       detach: values.detach === true,
+      trust: values.trust === true,
       help: values.help === true,
     };
   } catch {
@@ -610,6 +722,7 @@ function loopSourceArgs(
       count,
       list: undefined,
       next: undefined,
+      trust: args.trust,
       ...limits,
       inputs: args.inputs,
       ...(args.workspaceMode === undefined ? {} : { workspaceMode: args.workspaceMode }),
@@ -622,6 +735,7 @@ function loopSourceArgs(
       count: undefined,
       list: args.list[0],
       next: undefined,
+      trust: args.trust,
       ...limits,
       inputs: args.inputs,
       ...(args.workspaceMode === undefined ? {} : { workspaceMode: args.workspaceMode }),
@@ -633,6 +747,7 @@ function loopSourceArgs(
     count: undefined,
     list: undefined,
     next: args.next[0],
+    trust: args.trust,
     ...limits,
     inputs: args.inputs,
     ...(args.workspaceMode === undefined ? {} : { workspaceMode: args.workspaceMode }),

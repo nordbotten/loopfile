@@ -329,6 +329,7 @@ async function launchStartedChild(
     repository: driver.created.repositoryPath,
     inputs: event.inputSet,
     workspaceMode: driver.created.workspaceMode,
+    ...(driver.created.remote === undefined ? {} : { remote: driver.created.remote }),
     runId: event.runId,
     loopId: driver.loopId,
     loopIndex: event.index,
