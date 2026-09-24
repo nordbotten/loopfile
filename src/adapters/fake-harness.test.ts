@@ -19,9 +19,24 @@ export type FakeAction =
   | { readonly do: "write"; readonly path: string; readonly content: string }
   | { readonly do: "activity"; readonly activity: HarnessActivity }
   | { readonly do: "savePrompt"; readonly path: string }
-  | { readonly do: "dataGet"; readonly key: string; readonly to: string }
-  | { readonly do: "dataPut"; readonly key: string; readonly content: string }
-  | { readonly do: "result"; readonly outcome: string; readonly message?: string }
+  | {
+      readonly do: "dataGet";
+      readonly key: string;
+      readonly to: string;
+      readonly expectFailure?: boolean;
+    }
+  | {
+      readonly do: "dataPut";
+      readonly key: string;
+      readonly content: string;
+      readonly expectFailure?: boolean;
+    }
+  | {
+      readonly do: "result";
+      readonly outcome: string;
+      readonly message?: string;
+      readonly expectFailure?: boolean;
+    }
   | { readonly do: "exit"; readonly code: number }
   | { readonly do: "sleep"; readonly ms: number };
 
@@ -35,7 +50,7 @@ const CLI = fileURLToPath(new URL("../cli.ts", import.meta.url));
 
 /** CommonJS, run with `node -e`. Arguments: the actions file and the CLI path. */
 const FAKE_CHILD_SOURCE = `
-const { readFileSync, writeFileSync, mkdirSync } = require("node:fs");
+const { readFileSync, writeFileSync, mkdirSync, writeSync } = require("node:fs");
 const { spawnSync } = require("node:child_process");
 const { dirname } = require("node:path");
 const [file, cli] = process.argv.slice(1);
@@ -45,18 +60,35 @@ const write = (path, content) => {
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, content);
 };
-const loopfile = (args, input) =>
-  spawnSync(process.execPath, [cli, ...args], { input, stdio: ["pipe", "pipe", "inherit"] });
+const LOOPFILE_CALL_FAILURE = 97;
+const loopfile = (args, input, expectFailure = false) => {
+  const result = spawnSync(process.execPath, [cli, ...args], { input, stdio: ["pipe", "pipe", "pipe"] });
+  const matched = expectFailure
+    ? result.status !== null && result.status !== 0
+    : result.status === 0;
+  if (!matched) {
+    if (result.stdout?.length) writeSync(2, result.stdout);
+    if (result.stderr?.length) writeSync(2, result.stderr);
+    writeSync(2, Buffer.from(expectFailure ? "expected loopfile call to fail\\n" : "loopfile call failed\\n"));
+    process.exit(LOOPFILE_CALL_FAILURE);
+  }
+  return result;
+};
 for (const a of actions) {
   if (a.do === "write") write(a.path, a.content);
   else if (a.do === "activity") process.stdout.write(JSON.stringify(a.activity) + "\\n");
   else if (a.do === "savePrompt") write(a.path, prompt);
   else if (a.do === "dataGet") {
-    const got = loopfile(["data", "get", a.key]);
+    const got = loopfile(["data", "get", a.key], undefined, a.expectFailure);
     if (got.status === 0) write(a.to, got.stdout);
-  } else if (a.do === "dataPut") loopfile(["data", "put", a.key, "-"], a.content);
+  } else if (a.do === "dataPut")
+    loopfile(["data", "put", a.key, "-"], a.content, a.expectFailure);
   else if (a.do === "result")
-    loopfile(["result", a.outcome, ...(a.message === undefined ? [] : ["--message", a.message])]);
+    loopfile(
+      ["result", a.outcome, ...(a.message === undefined ? [] : ["--message", a.message])],
+      undefined,
+      a.expectFailure,
+    );
   else if (a.do === "exit") process.exit(a.code);
   else if (a.do === "sleep") Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, a.ms);
 }

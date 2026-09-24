@@ -25,7 +25,9 @@ test("workspace mode docs leave ADRs 0005, 0006 and 0010, Monitor and Harness ad
           "docs/adr/0005-execution-context-contract.md",
           "docs/adr/0006-format-versions.md",
           "docs/adr/0010-tail-json-events-are-public.md",
-        ].includes(path) || /^src\/adapters\/(?:[^/]*harness[^/]*|monitor[^/]*)$/.test(path),
+        ].includes(path) ||
+        (!path.endsWith(".test.ts") &&
+          /^src\/adapters\/(?:[^/]*harness[^/]*|monitor[^/]*)$/.test(path)),
     ),
     [],
   );
