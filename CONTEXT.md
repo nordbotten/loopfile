@@ -97,6 +97,14 @@ The part of prompt data that the runtime writes about the run itself, such as wh
 A `{{ <name> }}` marker in a prompt that the run owner replaces with that part of prompt data before each harness call. A block, such as `{{#each <name>}}` to `{{/each}}` or `{{#if <name>}}` to `{{/if}}`, repeats its text for each item of a list or shows it only when the name has a value. Prompts hold no other logic.
 _Avoid_: Variable, template, interpolation
 
+**Field expression**:
+A `${ <expression> }` in a step field that the run owner fills from data before each call. It reads only data keys. A value that is not there fails the attempt.
+_Avoid_: Placeholder, variable, template, interpolation, dynamic field
+
+**Profile**:
+A named part of a step that a manifest declares under `profiles:`, in named groups. A step names one or more profiles as the base for its own fields, as fixed text or as a field expression.
+_Avoid_: Template, variable, preset, mixin, base step
+
 **Value history**:
 Every value put under one data key, oldest first. A step always reads the newest value. A prompt can read the whole history of any key. A plain placeholder for a key written with `data append` fills as the whole history.
 
