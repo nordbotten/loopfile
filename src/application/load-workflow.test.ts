@@ -760,7 +760,7 @@ test("$run.attempt accepts its documented fields and refuses an unknown one", ()
     loadWorkflow(
       withStep(2, {
         prompt:
-          "{{ $run.attempt.number }} {{ $run.attempt.lastAttempt }} {{ $run.attempt.iteration }} {{ $run.attempt.maxIterations }} {{ $run.attempt.lastIteration }} {{ $run.attempt.previousIteration.number }} {{ $run.attempt.previousIteration.reason }} {{ $run.attempt.fields.model }} {{ $run.attempt.fields }}",
+          "{{ $run.attempt.number }} {{ $run.attempt.lastAttempt }} {{ $run.attempt.iteration }} {{ $run.attempt.maxIterations }} {{ $run.attempt.lastIteration }} {{ $run.attempt.previousIteration.number }} {{ $run.attempt.previousIteration.reason }} {{ $run.attempt.fields.harness }} {{ $run.attempt.fields.model }} {{ $run.attempt.fields.effort }} {{ $run.attempt.fields }}",
       }),
       options,
     ).status,
@@ -781,7 +781,7 @@ test("$run accepts documented fields and rejects unknown ones, including attempt
     loadWorkflow(
       withStep(2, {
         prompt:
-          "{{ $run.runId }} {{ $run.loopfileName }} {{ $run.startedAt }} {{ $run.targetFolder }} {{ $run.workspace }} {{ $run.workspaceMode }} {{ $run.branch }} {{ $run.baseCommit }} {{ $run.transitions }} {{ $run.maxTransitions }} {{ $run.runTimeout }} {{#each $run.attempts}}{{ stepId }} {{ attemptId }} {{ number }} {{ result }} {{ reason }} {{ outcome }} {{ message }} {{ startedAt }} {{ index }} {{ newest }} {{ fields.model }}{{/each}}",
+          "{{ $run.runId }} {{ $run.loopfileName }} {{ $run.startedAt }} {{ $run.targetFolder }} {{ $run.workspace }} {{ $run.workspaceMode }} {{ $run.branch }} {{ $run.baseCommit }} {{ $run.transitions }} {{ $run.maxTransitions }} {{ $run.runTimeout }} {{#each $run.attempts}}{{ stepId }} {{ attemptId }} {{ number }} {{ result }} {{ reason }} {{ outcome }} {{ message }} {{ startedAt }} {{ index }} {{ newest }} {{ fields.harness }} {{ fields.model }} {{ fields.effort }} {{ fields }}{{/each}}",
       }),
       options,
     ).status,
@@ -802,6 +802,14 @@ test("$run accepts documented fields and rejects unknown ones, including attempt
       "steps[2].prompt",
     ),
     /\$run\.attempts\.fields\.nope/,
+  );
+  assert.match(
+    only(withStep(2, { prompt: "{{ $run.foo.barr.fields.model }}" }), "steps[2].prompt"),
+    /\$run\.foo\.barr\.fields\.model/,
+  );
+  assert.match(
+    only(withStep(2, { prompt: "{{ $run.foo.bar.fields.model }}" }), "steps[2].prompt"),
+    /\$run\.foo\.bar\.fields\.model/,
   );
   assert.match(only(withStep(2, { prompt: "{{ plan.runId }}" }), "steps[2].prompt"), /plan\.runId/);
 });

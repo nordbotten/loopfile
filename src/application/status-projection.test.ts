@@ -173,6 +173,30 @@ test("current harness comes from call fields, and is null before the first fill"
     context(),
   );
   assert.equal(status.current?.harness, "pi");
+
+  const withoutFields = projectStatus(
+    events(
+      created,
+      attempt,
+      {
+        type: "iteration.started",
+        at: at(1, 5),
+        attemptId: "001-implement",
+        iteration: 1,
+        processGroupId: 9,
+        fields: { harness: "pi", model: "m1" },
+      },
+      {
+        type: "iteration.started",
+        at: at(2),
+        attemptId: "001-implement",
+        iteration: 2,
+        processGroupId: 10,
+      },
+    ),
+    context(),
+  );
+  assert.equal(withoutFields.current?.harness, null);
 });
 
 test("a command step's current attempt has no harness and no iteration", () => {
