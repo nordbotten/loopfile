@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.4.0](https://github.com/nordbotten/loopfile/compare/v0.3.0...v0.4.0) (2026-09-25)
+
+
+### Features
+
+* expose resolved call fields to prompts and status ([#261](https://github.com/nordbotten/loopfile/issues/261)) ([b3074e8](https://github.com/nordbotten/loopfile/commit/b3074e8ad28a1274dd3df2b6a704266985f7407b))
+* fill agent models from workflow data ([#257](https://github.com/nordbotten/loopfile/issues/257)) ([f2e6013](https://github.com/nordbotten/loopfile/commit/f2e6013a90f9275f270c3cd590f5b9fa1efaa231))
+* fill Ralph models before each iteration ([#259](https://github.com/nordbotten/loopfile/issues/259)) ([f46a823](https://github.com/nordbotten/loopfile/commit/f46a823c79731ea2bcdedcf35aa474b1b65180db))
+* **result:** show last outcome call fields ([#263](https://github.com/nordbotten/loopfile/issues/263)) ([bc17d4d](https://github.com/nordbotten/loopfile/commit/bc17d4db4e73f20d698b24becf3d30ed93bee554))
+* validate effort expressions before harness calls ([#260](https://github.com/nordbotten/loopfile/issues/260)) ([9ac4318](https://github.com/nordbotten/loopfile/commit/9ac4318055ade1b797962fb6511a8639c666e43e))
+
+
+### Bug Fixes
+
+* **tail:** show resolved fields and Ralph iterations ([#262](https://github.com/nordbotten/loopfile/issues/262)) ([9816c6b](https://github.com/nordbotten/loopfile/commit/9816c6b36d79ea3d05ad844d573631009d84cb9d))
+
 ## [0.3.0](https://github.com/nordbotten/loopfile/compare/v0.2.0...v0.3.0) (2026-09-25)
 
 
