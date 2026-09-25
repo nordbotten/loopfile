@@ -50,6 +50,8 @@ export interface RalphAttemptEnd {
   readonly result: AttemptEnded["result"];
   readonly reason: AttemptEnded["reason"];
   readonly outcome?: Outcome;
+  readonly field?: AttemptEnded["field"];
+  readonly value?: AttemptEnded["value"];
 }
 
 /** The end of an attempt whose iteration reported `outcome` and exited 0. */

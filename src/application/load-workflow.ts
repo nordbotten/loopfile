@@ -383,7 +383,7 @@ function readKindStep(
   const id = typeof raw.id === "string" ? raw.id : "";
   const base = readBase(raw, id, kind !== "command", at, ctx);
   if (kind === "command") return { ...base, kind, run: readRun(raw.run, at, ctx.report) };
-  const harness = readHarnessFields(raw, id, at, ctx, kind === "agent");
+  const harness = readHarnessFields(raw, id, at, ctx);
   if (kind === "agent") return { ...base, kind, ...harness };
   const maxIterations = optionalCount(raw.maxIterations, `${at}.maxIterations`, ctx.report) ?? 10;
   return { ...base, kind, ...harness, maxIterations };
@@ -524,17 +524,11 @@ function readRun(value: unknown, at: string, report: Report): string {
   return "";
 }
 
-function readHarnessFields(
-  raw: Raw,
-  id: StepId,
-  at: string,
-  ctx: Context,
-  modelExpressionAllowed: boolean,
-) {
+function readHarnessFields(raw: Raw, id: StepId, at: string, ctx: Context) {
   const harness = readHarness(raw.harness, at, ctx.report);
   const effort = readEffort(raw.effort, harness, at, ctx.report);
   const model = readOptionalString(raw.model, `${at}.model`, ctx.report);
-  if (modelExpressionAllowed && FIELD_EXPRESSION_FIELDS.includes("model") && model !== undefined) {
+  if (FIELD_EXPRESSION_FIELDS.includes("model") && model !== undefined) {
     try {
       ctx.fieldExpressions.push({ path: `${at}.model`, reads: parseFieldExpression(model).reads });
     } catch (error) {

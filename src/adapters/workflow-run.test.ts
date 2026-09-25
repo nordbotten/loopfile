@@ -2045,6 +2045,93 @@ test("a cancel between attempts writes only run.cancelled", async () => {
   );
 });
 
+test("a Ralph model is filled again after an earlier iteration puts a new value", async () => {
+  const { ended, calls } = await executeFake(
+    `formatVersion: 1
+steps:
+  - id: triage
+    kind: ralph
+    harness: pi
+    model: '\${triage.model ?? "initial"}'
+    prompt: Triage.
+    outputs: [model]
+    maxIterations: 2
+    on:
+      done: $success
+`,
+    {
+      triage: [
+        [{ do: "dataPut", key: "triage.model", content: "new-model" }],
+        [{ do: "result", outcome: "done" }],
+      ],
+    },
+  );
+  assert.equal(ended.result, "success");
+  assert.deepEqual(
+    calls.map(({ model }) => model),
+    ["initial", "new-model"],
+  );
+});
+
+test("an undefined Ralph model fails before iteration.started and takes onFailure", async () => {
+  const { ended, events, calls } = await executeFake(
+    `formatVersion: 1
+steps:
+  - id: triage
+    kind: agent
+    harness: pi
+    prompt: Triage.
+    outputs: [model]
+    onFailure: ralph
+    on:
+      ready: ralph
+  - id: ralph
+    kind: ralph
+    harness: pi
+    model: '\${triage.model}'
+    prompt: Work.
+    maxIterations: 2
+    onFailure: fallback
+    on:
+      done: $success
+  - id: fallback
+    kind: command
+    run: "true"
+`,
+    { triage: [[{ do: "exit", code: 1 }]] },
+  );
+  assert.equal(ended.result, "success");
+  assert.equal(calls.length, 1);
+
+  const started = events.find(
+    (event) => event.type === "attempt.started" && event.stepId === "ralph",
+  );
+  assert.ok(started?.type === "attempt.started");
+  assert.equal(
+    events.some(
+      (event) => event.type === "iteration.started" && event.attemptId === started.attemptId,
+    ),
+    false,
+  );
+  const attemptEnd = events.find(
+    (event) => event.type === "attempt.ended" && event.attemptId === started.attemptId,
+  );
+  assert.equal(attemptEnd?.type, "attempt.ended");
+  assert.equal(attemptEnd?.type === "attempt.ended" && attemptEnd.reason, "bad_field");
+  assert.equal(attemptEnd?.type === "attempt.ended" && attemptEnd.field, "model");
+  assert.equal(attemptEnd?.type === "attempt.ended" && "value" in attemptEnd, false);
+  assert.ok(
+    events.some(
+      (event) =>
+        event.type === "transition" &&
+        event.from === "ralph" &&
+        event.to === "fallback" &&
+        event.cause === "onFailure" &&
+        event.reason === "bad_field",
+    ),
+  );
+});
+
 test("an agent's fixed opus model reaches the harness unchanged", async () => {
   const { ended, calls } = await executeFake(
     `formatVersion: 1

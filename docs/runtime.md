@@ -71,7 +71,7 @@ A failed attempt is any of these:
 - a timeout
 - an outcome that is not a key of `on`
 - a missing output (see [Handoffs and outputs](#handoffs-and-outputs))
-- an agent model expression that evaluates to `undefined` (`bad_field`)
+- an agent or Ralph model expression that evaluates to `undefined` (`bad_field`)
 - on a Ralph step, `iteration_limit` (see [Ralph steps](#ralph-steps))
 
 An unreachable step is a load error. `onFailure` routes count as reachable.
@@ -152,7 +152,8 @@ end reason. It ends one Ralph attempt.
 
 A Ralph step calls the same prompt in one harness call after another. Each call is
 an iteration and starts with fresh context. Changes in the workspace and data
-puts stay between iterations.
+puts stay between iterations. The run owner fills `model` before every call, so a
+later iteration sees values put by an earlier one.
 
 - An iteration that reports an outcome and exits 0 ends the attempt with that
   outcome.

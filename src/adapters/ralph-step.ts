@@ -25,7 +25,7 @@ import type { RalphStep, Step } from "../domain/model.ts";
 import { type AttemptPaths, createIterationDirectory } from "./attempt-directory.ts";
 import type { EventLog } from "./event-log.ts";
 import { startHarnessCall } from "./harness-call.ts";
-import { fillPromptForCall, type PromptFillOptions } from "./prompt-fill.ts";
+import { fillFieldForCall, fillPromptForCall, type PromptFillOptions } from "./prompt-fill.ts";
 
 export interface RalphStepOptions extends Omit<PromptFillOptions, "events"> {
   readonly executor: Executor;
@@ -108,6 +108,10 @@ async function runRalphIteration(
       iterations: iteration,
     };
   }
+  const model = step.model === undefined ? undefined : await fillFieldForCall(options, step.model);
+  if (step.model !== undefined && model === undefined) {
+    return { result: "failure", reason: "bad_field", field: "model", iterations: iteration - 1 };
+  }
   const paths = await createIterationDirectory(attempt, iteration);
   const secret = options.newSecret();
   const prompt = await fillPromptForCall(
@@ -121,7 +125,8 @@ async function runRalphIteration(
     {
       context: { ...context, attemptSecret: secret, iteration },
       prompt,
-      ...modelAndEffort(step),
+      ...(model === undefined ? {} : { model }),
+      ...(step.effort === undefined ? {} : { effort: step.effort }),
       args: step.args,
       wiringFolder: paths.wiring,
     },
@@ -167,14 +172,6 @@ async function waitForIteration(
   clearTimeout(timer);
   stopSignal?.removeEventListener("abort", stop);
   return { exit, timedOut };
-}
-
-/** The step's `model` and `effort`, each only when the manifest sets it. */
-function modelAndEffort(step: RalphStep): { model?: string; effort?: string } {
-  return {
-    ...(step.model === undefined ? {} : { model: step.model }),
-    ...(step.effort === undefined ? {} : { effort: step.effort }),
-  };
 }
 
 /** The outcome's end, unless a required output was never put by any iteration. */
