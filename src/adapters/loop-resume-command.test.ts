@@ -818,6 +818,13 @@ test("loop resume refuses live, ended, missing and invalid loops with the requir
   );
   const { loopId: endedId } = await startLoop(endedSetup, ["--times", "1", "-d"]);
   await waitForEnd(endedSetup.home, endedId);
+  await until(
+    async () =>
+      (await pingOwner(loopPaths(endedSetup.home, endedId).socket, 20)) === undefined
+        ? true
+        : undefined,
+    "ended loop owner to stop",
+  );
   const ended = await resume([endedId, "--kill-leftovers"], endedSetup.env);
   assert.equal(ended.code, 2);
   assert.match(ended.err, /code: already_ended/);
