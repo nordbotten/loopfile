@@ -105,18 +105,20 @@ which every step can read. The step ID `input` is reserved.
 | `prompt` | one of the two | — | Inline prompt text. The loader writes it to a run-owned file and treats it as `promptFile`, so the model holds only paths. |
 | `promptFile` | one of the two | — | A path relative to the manifest root that stays inside the Loopfile. An absolute path, or one that escapes, is a load error. In a thin `.loop` it is always a load error (#75). |
 | `model` | no | harness default | Fixed text or a field expression passed to the harness on each agent or Ralph call. |
-| `effort` | no | harness default | The harness's own word, checked against that harness's list. Claude: `low`, `medium`, `high`, `max`. PI: `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`. |
+| `effort` | no | harness default | A harness word or field expression. A fixed word is checked at load; a filled expression is checked before each call. Claude: `low`, `medium`, `high`, `max`. PI: `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`. |
 | `args` | no | `[]` | A list of strings. The adapter gives each one to the harness as one argument, unchanged: no shell, no templating, no `{{ ... }}` placeholders. The loader rejects an owned flag (see below). On a Ralph step every iteration gets the same `args`. |
 | `maxIterations` | ralph only, no | `10` | An integer of 1 or more, per attempt. |
 
-On an agent or Ralph step, `model` is field text written without backticks. It may mix
-fixed text with `${ <expression> }`, for example
-`model: claude-${triage.size}` or `model: ${triage.model ?? "opus"}`. Write
-`\${` for literal `${`. Expressions read declared inputs and step outputs;
-the newest value is used. The run owner fills the model before each harness
-call, so each Ralph iteration sees data from earlier iterations. A missing value
-that remains `undefined` fails the attempt with `bad_field` and takes `onFailure`.
-Allowed operators are `!`,
+On an agent or Ralph step, `model` and `effort` are field text written without
+backticks. Either may mix fixed text with `${ <expression> }`, for example
+`model: claude-${triage.size}`, `model: ${triage.model ?? "opus"}` or
+`effort: ${triage.effort}`. Write `\${` for literal `${`. Expressions read
+declared inputs and step outputs; the newest value is used. The run owner fills
+them before each harness call, so each Ralph iteration sees data from earlier
+iterations. A missing value that remains `undefined` fails the attempt with
+`bad_field` and takes `onFailure`. The loader does not check literals inside an
+effort expression; the filled value must be one of the harness's words or the
+attempt fails with `bad_field` before the call. Allowed operators are `!`,
 `&&`, `||`, `??`, `==`, `!=`, `===`, `!==`, `<`, `>`, `<=`, `>=`, `+`, `*`,
 `/`, `%` and `?:`, with parentheses. Calls, computed access, `this`, arrays,
 objects, and mixing `??` with `||` are load errors. No JavaScript is evaluated.

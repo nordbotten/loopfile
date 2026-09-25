@@ -450,7 +450,7 @@ test("harness is missing or not in the table", () => {
   }
 });
 
-test("effort must be allowed for the harness", () => {
+test("a fixed effort that is not a harness word is a load error", () => {
   assert.match(
     only(withStep(0, { effort: "xhigh" }), "steps[0].effort"),
     /for claude must be one of: low, medium, high, max/,
@@ -958,6 +958,47 @@ test("Claude's setting source flag is adapter-owned", () => {
       /args of step implement has --setting-sources, which the claude adapter sets/,
     );
   }
+});
+
+test("a literal inside an effort expression is not checked at load", () => {
+  const loaded = loadWorkflow(withStep(2, { effort: `\${review.feedback ?? "meduim"}` }), options);
+  assert.equal(loaded.status, "loaded", JSON.stringify(loaded));
+});
+
+test("effort expressions load on agent and Ralph steps", () => {
+  const result = loadWorkflow(
+    {
+      formatVersion: 1,
+      steps: [
+        {
+          id: "triage",
+          kind: "agent",
+          harness: "pi",
+          prompt: "Triage.",
+          outputs: ["effort"],
+          on: { ready: "agent" },
+        },
+        {
+          id: "agent",
+          kind: "agent",
+          harness: "claude",
+          effort: `\${triage.effort}`,
+          prompt: "Work.",
+          on: { done: "ralph" },
+        },
+        {
+          id: "ralph",
+          kind: "ralph",
+          harness: "pi",
+          effort: `\${triage.effort}`,
+          prompt: "Loop.",
+          on: { done: "$success" },
+        },
+      ],
+    },
+    options,
+  );
+  assert.equal(result.status, "loaded", JSON.stringify(result));
 });
 
 test("args on a command step is an error", () => {

@@ -21,7 +21,6 @@ export interface HarnessCall {
   /** The prompt text after the run owner filled its placeholders (#96). */
   readonly prompt: string;
   readonly model?: string;
-  /** Already checked by the loader. */
   readonly effort?: string;
   /** Passed to the harness unchanged. */
   readonly args: readonly string[];

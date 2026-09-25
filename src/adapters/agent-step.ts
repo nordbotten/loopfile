@@ -22,11 +22,20 @@ import type { RunEvent } from "../domain/events.ts";
 import type { AgentStep, Step } from "../domain/model.ts";
 import type { AttemptPaths } from "./attempt-directory.ts";
 import { startHarnessCall } from "./harness-call.ts";
-import { fillFieldForCall, fillPromptForCall, type PromptFillOptions } from "./prompt-fill.ts";
+import {
+  fillEffortForCall,
+  fillFieldForCall,
+  fillPromptForCall,
+  type PromptFillOptions,
+} from "./prompt-fill.ts";
 
 export type AgentStepStart =
   | (StartFailure & { readonly reason: "start_failed" })
-  | { readonly kind: "bad-field"; readonly field: "model"; readonly value?: string }
+  | {
+      readonly kind: "bad-field";
+      readonly field: "model" | "effort";
+      readonly value?: string;
+    }
   | (Pick<RunningProcess, "kind" | "processGroupId" | "cancel"> & {
       /** Settles after the process ended and its output files are written. */
       readonly ended: Promise<AgentEnd>;
@@ -55,6 +64,8 @@ export async function startAgentStep(
   }
   const model = step.model === undefined ? undefined : await fillFieldForCall(options, step.model);
   if (step.model !== undefined && model === undefined) return { kind: "bad-field", field: "model" };
+  const effort = await fillEffortForCall(options, step);
+  if ("field" in effort) return { kind: "bad-field", ...effort };
   const prompt = await fillPromptForCall(
     options,
     { attemptId: context.attemptId, stepId: context.stepId, startedAt, step, steps },
@@ -67,7 +78,7 @@ export async function startAgentStep(
       context,
       prompt,
       ...(model === undefined ? {} : { model }),
-      ...(step.effort === undefined ? {} : { effort: step.effort }),
+      ...effort.fields,
       args: step.args,
       wiringFolder: attempt.wiring,
     },

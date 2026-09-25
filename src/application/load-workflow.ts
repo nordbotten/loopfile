@@ -10,7 +10,7 @@
  * parser that knows lines gives `locate`, which adds the line.
  */
 
-import { HARNESSES, isHarnessName } from "../domain/harnesses.ts";
+import { HARNESSES, isHarnessEffort, isHarnessName } from "../domain/harnesses.ts";
 import {
   FORMAT_VERSION,
   type HarnessName,
@@ -528,16 +528,7 @@ function readHarnessFields(raw: Raw, id: StepId, at: string, ctx: Context) {
   const harness = readHarness(raw.harness, at, ctx.report);
   const effort = readEffort(raw.effort, harness, at, ctx.report);
   const model = readOptionalString(raw.model, `${at}.model`, ctx.report);
-  if (FIELD_EXPRESSION_FIELDS.includes("model") && model !== undefined) {
-    try {
-      ctx.fieldExpressions.push({ path: `${at}.model`, reads: parseFieldExpression(model).reads });
-    } catch (error) {
-      ctx.report(
-        `${at}.model`,
-        error instanceof Error ? error.message : "invalid field expression",
-      );
-    }
-  }
+  checkHarnessFieldExpressions(harness, model, effort, at, ctx);
   return {
     harness: harness ?? "claude",
     ...(model === undefined ? {} : { model }),
@@ -545,6 +536,38 @@ function readHarnessFields(raw: Raw, id: StepId, at: string, ctx: Context) {
     args: readArgs(raw.args, harness, `${at}.args`, id, ctx.report),
     promptFile: readPrompt(raw, id, at, ctx),
   };
+}
+
+function checkHarnessFieldExpressions(
+  harness: HarnessName | undefined,
+  model: string | undefined,
+  effort: string | undefined,
+  at: string,
+  ctx: Context,
+): void {
+  for (const field of FIELD_EXPRESSION_FIELDS) {
+    const value = field === "model" ? model : effort;
+    if (value === undefined) continue;
+    const path = `${at}.${field}`;
+    try {
+      const expression = parseFieldExpression(value);
+      ctx.fieldExpressions.push({ path, reads: expression.reads });
+      if (field === "effort") checkFixedEffort(harness, value, expression, at, ctx.report);
+    } catch (error) {
+      ctx.report(path, error instanceof Error ? error.message : "invalid field expression");
+    }
+  }
+}
+
+function checkFixedEffort(
+  harness: HarnessName | undefined,
+  value: string,
+  expression: ReturnType<typeof parseFieldExpression>,
+  at: string,
+  report: Report,
+): void {
+  if (harness === undefined || expression.template.expressions.length !== 0) return;
+  if (!isHarnessEffort(harness, value)) reportInvalidEffort(harness, at, report);
 }
 
 function readArgs(
@@ -603,10 +626,14 @@ function readEffort(
   report: Report,
 ): string | undefined {
   if (value === undefined || harness === undefined) return undefined;
-  const allowed = HARNESSES[harness].effort;
-  if (typeof value === "string" && allowed.includes(value)) return value;
-  report(`${at}.effort`, `effort for ${harness} must be one of: ${allowed.join(", ")}`);
+  if (typeof value === "string") return value;
+  reportInvalidEffort(harness, at, report);
   return undefined;
+}
+
+function reportInvalidEffort(harness: HarnessName, at: string, report: Report): void {
+  const allowed = HARNESSES[harness].effort;
+  report(`${at}.effort`, `effort for ${harness} must be one of: ${allowed.join(", ")}`);
 }
 
 function readPrompt(raw: Raw, id: StepId, at: string, ctx: Context): string {

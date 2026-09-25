@@ -21,7 +21,8 @@ import {
 } from "../application/prompt-fill.ts";
 import { runFacts } from "../application/run-facts.ts";
 import type { RunEvent } from "../domain/events.ts";
-import type { AttemptId, Step, StepId, Workflow } from "../domain/model.ts";
+import { isHarnessEffort } from "../domain/harnesses.ts";
+import type { AgentStep, AttemptId, Step, StepId, Workflow } from "../domain/model.ts";
 import { dataFile } from "./data-store.ts";
 import type { EventLog } from "./event-log.ts";
 
@@ -69,6 +70,21 @@ export async function fillFieldForCall(
     if (value !== undefined) values.set(key, value);
   }
   return evaluateFieldExpression(field, values);
+}
+
+export type EffortFieldFill =
+  | { readonly fields: { readonly effort?: string } }
+  | { readonly field: "effort"; readonly value?: string };
+
+export async function fillEffortForCall(
+  options: PromptFillOptions,
+  step: Pick<AgentStep, "effort" | "harness">,
+): Promise<EffortFieldFill> {
+  if (step.effort === undefined) return { fields: {} };
+  const value = await fillFieldForCall(options, step.effort);
+  if (value !== undefined && isHarnessEffort(step.harness, value))
+    return { fields: { effort: value } };
+  return { field: "effort", ...(value === undefined ? {} : { value }) };
 }
 
 export async function fillPromptForCall(

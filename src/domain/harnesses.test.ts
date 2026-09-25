@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { HARNESSES, isHarnessName } from "./harnesses.ts";
+import { HARNESSES, isHarnessEffort, isHarnessName } from "./harnesses.ts";
 
 test("isHarnessName is true for claude and pi only", () => {
   assert.equal(isHarnessName("claude"), true);
@@ -8,6 +8,13 @@ test("isHarnessName is true for claude and pi only", () => {
   for (const name of ["fake", "codex", "", "constructor", "toString"]) {
     assert.equal(isHarnessName(name), false, name);
   }
+});
+
+test("effort words are checked against the selected harness", () => {
+  assert.equal(isHarnessEffort("claude", "high"), true);
+  assert.equal(isHarnessEffort("claude", "xhigh"), false);
+  assert.equal(isHarnessEffort("pi", "xhigh"), true);
+  assert.equal(isHarnessEffort("pi", "huge"), false);
 });
 
 test("the effort lists are exactly the manifest's", () => {

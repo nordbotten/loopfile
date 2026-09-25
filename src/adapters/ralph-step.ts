@@ -25,7 +25,12 @@ import type { RalphStep, Step } from "../domain/model.ts";
 import { type AttemptPaths, createIterationDirectory } from "./attempt-directory.ts";
 import type { EventLog } from "./event-log.ts";
 import { startHarnessCall } from "./harness-call.ts";
-import { fillFieldForCall, fillPromptForCall, type PromptFillOptions } from "./prompt-fill.ts";
+import {
+  fillEffortForCall,
+  fillFieldForCall,
+  fillPromptForCall,
+  type PromptFillOptions,
+} from "./prompt-fill.ts";
 
 export interface RalphStepOptions extends Omit<PromptFillOptions, "events"> {
   readonly executor: Executor;
@@ -112,6 +117,10 @@ async function runRalphIteration(
   if (step.model !== undefined && model === undefined) {
     return { result: "failure", reason: "bad_field", field: "model", iterations: iteration - 1 };
   }
+  const effort = await fillEffortForCall(options, step);
+  if ("field" in effort) {
+    return { result: "failure", reason: "bad_field", ...effort, iterations: iteration - 1 };
+  }
   const paths = await createIterationDirectory(attempt, iteration);
   const secret = options.newSecret();
   const prompt = await fillPromptForCall(
@@ -126,7 +135,7 @@ async function runRalphIteration(
       context: { ...context, attemptSecret: secret, iteration },
       prompt,
       ...(model === undefined ? {} : { model }),
-      ...(step.effort === undefined ? {} : { effort: step.effort }),
+      ...effort.fields,
       args: step.args,
       wiringFolder: paths.wiring,
     },

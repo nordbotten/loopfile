@@ -5,7 +5,7 @@ jsep.plugins.register(templatePlugin);
 jsep.addIdentifierChar("-");
 
 /** The step fields that accept data expressions in this release. */
-export const FIELD_EXPRESSION_FIELDS = ["model"] as const;
+export const FIELD_EXPRESSION_FIELDS = ["model", "effort"] as const;
 
 export class FieldExpressionError extends Error {}
 

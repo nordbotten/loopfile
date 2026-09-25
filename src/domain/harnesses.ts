@@ -58,3 +58,7 @@ export const HARNESSES: Readonly<Record<HarnessName, HarnessSpec>> = {
 export function isHarnessName(name: string): name is HarnessName {
   return Object.hasOwn(HARNESSES, name);
 }
+
+export function isHarnessEffort(harness: HarnessName, effort: string): boolean {
+  return HARNESSES[harness].effort.includes(effort);
+}
