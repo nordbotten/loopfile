@@ -104,10 +104,20 @@ which every step can read. The step ID `input` is reserved.
 | `harness` | yes | — | A name in the fixed harness adapter table: `claude` or `pi` ([ADR 0004](adr/0004-internal-harness-adapters-no-plugins.md)). There is no top-level default in v1. |
 | `prompt` | one of the two | — | Inline prompt text. The loader writes it to a run-owned file and treats it as `promptFile`, so the model holds only paths. |
 | `promptFile` | one of the two | — | A path relative to the manifest root that stays inside the Loopfile. An absolute path, or one that escapes, is a load error. In a thin `.loop` it is always a load error (#75). |
-| `model` | no | harness default | A string passed to the harness unchanged. The loader does not check it. |
+| `model` | no | harness default | On an agent step, fixed text or a field expression passed to the harness. On a Ralph step, fixed text. |
 | `effort` | no | harness default | The harness's own word, checked against that harness's list. Claude: `low`, `medium`, `high`, `max`. PI: `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`. |
 | `args` | no | `[]` | A list of strings. The adapter gives each one to the harness as one argument, unchanged: no shell, no templating, no `{{ ... }}` placeholders. The loader rejects an owned flag (see below). On a Ralph step every iteration gets the same `args`. |
 | `maxIterations` | ralph only, no | `10` | An integer of 1 or more, per attempt. |
+
+On an agent step, `model` is field text written without backticks. It may mix
+fixed text with `${ <expression> }`, for example
+`model: claude-${triage.size}` or `model: ${triage.model ?? "opus"}`. Write
+`\${` for literal `${`. Expressions read declared inputs and step outputs;
+the newest value is used. A missing value that remains `undefined` fails the
+attempt with `bad_field` and takes `onFailure`. Allowed operators are `!`,
+`&&`, `||`, `??`, `==`, `!=`, `===`, `!==`, `<`, `>`, `<=`, `>=`, `+`, `*`,
+`/`, `%` and `?:`, with parentheses. Calls, computed access, `this`, arrays,
+objects, and mixing `??` with `||` are load errors. No JavaScript is evaluated.
 
 ### Claude Code permissions
 

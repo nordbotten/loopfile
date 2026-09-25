@@ -206,7 +206,8 @@ export type AttemptEndReason =
   | "missing_output"
   | "outcome_not_allowed"
   | "nonzero_exit"
-  | "start_failed";
+  | "start_failed"
+  | "bad_field";
 
 export interface AttemptEnded extends EventBase {
   readonly type: "attempt.ended";
@@ -217,6 +218,10 @@ export interface AttemptEnded extends EventBase {
   readonly outcome?: Outcome;
   /** The key that was not put, for `missing_output`. */
   readonly output?: OutputName;
+  /** The call-time field that could not be filled, for `bad_field`. */
+  readonly field?: string;
+  /** The invalid filled value, omitted when the expression gave `undefined`. */
+  readonly value?: string;
   /** This attempt's final harness metrics. Missing on logs written before this field existed. */
   readonly metrics?: StatusMetrics;
 }

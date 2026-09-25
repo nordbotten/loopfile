@@ -22,10 +22,11 @@ import type { RunEvent } from "../domain/events.ts";
 import type { AgentStep, Step } from "../domain/model.ts";
 import type { AttemptPaths } from "./attempt-directory.ts";
 import { startHarnessCall } from "./harness-call.ts";
-import { fillPromptForCall, type PromptFillOptions } from "./prompt-fill.ts";
+import { fillFieldForCall, fillPromptForCall, type PromptFillOptions } from "./prompt-fill.ts";
 
 export type AgentStepStart =
   | (StartFailure & { readonly reason: "start_failed" })
+  | { readonly kind: "bad-field"; readonly field: "model"; readonly value?: string }
   | (Pick<RunningProcess, "kind" | "processGroupId" | "cancel"> & {
       /** Settles after the process ended and its output files are written. */
       readonly ended: Promise<AgentEnd>;
@@ -52,6 +53,8 @@ export async function startAgentStep(
   if (isAbsolute(step.promptFile)) {
     throw new Error(`promptFile is not relative to the Loopfile: ${step.promptFile}`);
   }
+  const model = step.model === undefined ? undefined : await fillFieldForCall(options, step.model);
+  if (step.model !== undefined && model === undefined) return { kind: "bad-field", field: "model" };
   const prompt = await fillPromptForCall(
     options,
     { attemptId: context.attemptId, stepId: context.stepId, startedAt, step, steps },
@@ -63,7 +66,7 @@ export async function startAgentStep(
     {
       context,
       prompt,
-      ...(step.model === undefined ? {} : { model: step.model }),
+      ...(model === undefined ? {} : { model }),
       ...(step.effort === undefined ? {} : { effort: step.effort }),
       args: step.args,
       wiringFolder: attempt.wiring,

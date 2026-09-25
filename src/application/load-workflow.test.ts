@@ -469,9 +469,61 @@ test("a bad harness reports the harness only, not effort", () => {
   assert.equal(errorsOf(withStep(0, { harness: "codex" })).length, 1);
 });
 
-test("model must be a string and is not checked otherwise", () => {
+test("model must be a string and fixed text remains unchecked", () => {
   assert.match(only(withStep(0, { model: 3 }), "steps[0].model"), /must be a string/);
-  assert.equal(loadWorkflow(withStep(0, { model: "anything-goes" }), options).status, "loaded");
+  assert.equal(loadWorkflow(withStep(2, { model: "opus" }), options).status, "loaded");
+  assert.equal(loadWorkflow(withStep(2, { model: "anything-goes" }), options).status, "loaded");
+});
+
+test("agent model accepts declared inputs, outputs, mixed text and escaped interpolation", () => {
+  for (const model of [
+    `\${input.task}`,
+    `\${test.log}`,
+    `claude-\${test.log}`,
+    `\\\${input.task}`,
+    `\${test.log ?? "opus"}`,
+  ]) {
+    assert.equal(loadWorkflow(withStep(2, { model }), options).status, "loaded", model);
+  }
+});
+
+test("a backtick-wrapped model asks the author to leave out the backticks", () => {
+  assert.match(only(withStep(2, { model: "`opus`" }), "steps[2].model"), /leave out the backticks/);
+});
+
+test("agent model expressions reject calls, computed access, this, arrays and objects", () => {
+  for (const model of [
+    `\${input.task()}`,
+    `\${input.task["x"]}`,
+    `\${this.task}`,
+    `\${[input.task]}`,
+    `\${{ task: input.task }}`,
+  ]) {
+    assert.match(only(withStep(2, { model }), "steps[2].model"), /field expression/);
+  }
+});
+
+test("agent model expressions reject mixing nullish coalescing and logical-or", () => {
+  assert.match(
+    only(withStep(2, { model: `\${input.task ?? (test.log || "opus")}` }), "steps[2].model"),
+    /do not mix \\?\\? and \\|\\|/,
+  );
+});
+
+test("an undeclared field name uses the prompt placeholder error text", () => {
+  const field = only(withStep(2, { model: `\${input.nope}` }), "steps[2].model");
+  const prompt = only(withStep(2, { prompt: "{{ input.nope }}" }), "steps[2].prompt");
+  assert.equal(field, prompt.slice(prompt.indexOf("`{{")));
+  assert.match(field, /declared inputs: task/);
+});
+
+test("field expressions cannot read prompt history or run facts", () => {
+  for (const model of [`\${$history.test.log}`, `\${$run.runId}`]) {
+    assert.match(
+      only(withStep(2, { model }), "steps[2].model"),
+      /neither a declared input nor a step output/,
+    );
+  }
 });
 
 test("promptFile: absolute, outside, missing, empty, thin", () => {
