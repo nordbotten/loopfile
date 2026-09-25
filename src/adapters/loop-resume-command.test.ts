@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
 import { mkdir, mkdtemp, readFile, realpath, stat, writeFile } from "node:fs/promises";
+import { createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
@@ -311,11 +312,12 @@ test("a child crash after loop recovery still ends the live loop with internal_e
   const marker = join(root, "live-loop-child-running");
   const counter = join(root, "live-loop-child-count");
   const killLoopOwner = `pid=$(grep -m 1 '"type":"owner.started"' "$LOOPFILE_HOME"/loops/*/events.jsonl | sed -E 's/.*"pid":([0-9]+).*/\\1/'); kill -KILL "$pid"`;
+  // Let the detached child's parent observe its ready handshake before crashing it.
   const setupResult = await setup(`formatVersion: 1
 steps:
   - id: work
     kind: command
-    run: ${JSON.stringify(`n=$(cat '${counter}' 2>/dev/null || printf 0); n=$((n + 1)); printf '%s\\n' "$n" > '${counter}'; if [ "$n" = 1 ]; then ${killLoopOwner}; fi; if [ "$n" = 2 ]; then : > '${marker}'; sleep 30; fi`)}
+    run: ${JSON.stringify(`n=$(cat '${counter}' 2>/dev/null || printf 0); n=$((n + 1)); printf '%s\\n' "$n" > '${counter}'; if [ "$n" = 1 ]; then ${killLoopOwner}; fi; if [ "$n" = 2 ]; then sleep 1; : > '${marker}'; sleep 30; fi`)}
 `);
   const { loopId } = await startLoop(setupResult, ["--times", "2", "-d"]);
   const paths = loopPaths(setupResult.home, loopId);
@@ -520,22 +522,53 @@ steps:
       ),
     "child command to run",
   );
+  const attempt = await until(async () => {
+    const event = (await runEvents(setupResult.home, first.runId)).find(
+      (item) => item.type === "attempt.started",
+    );
+    return event?.type === "attempt.started" ? event : undefined;
+  }, "child attempt to start");
   const loopOwner = (await events(setupResult.home, loopId)).find(
     (event) => event.type === "owner.started",
   );
-  assert.equal(loopOwner?.type, "owner.started");
-  if (loopOwner?.type === "owner.started") process.kill(loopOwner.pid, "SIGKILL");
+  if (loopOwner?.type !== "owner.started") throw new Error("loop owner did not start");
+  process.kill(loopOwner.pid, "SIGKILL");
   process.kill(runOwner.pid, "SIGKILL");
+  await until(
+    async () =>
+      (await pingOwner(loopPaths(setupResult.home, loopId).socket, 500)) === undefined
+        ? true
+        : undefined,
+    "loop owner to stop",
+  );
+  await until(
+    async () =>
+      (await pingOwner(runPaths(setupResult.home, first.runId).socket, 500)) === undefined
+        ? true
+        : undefined,
+    "child run owner to stop",
+  );
+  await until(
+    async () => (groupAlive(attempt.processGroupId) ? true : undefined),
+    "leftover child process group",
+  );
 
   const resumed = await resume([loopId, "--kill-leftovers"], setupResult.env);
-  assert.equal(resumed.code, 0, resumed.err);
+  const ownerLog = await readFile(runPaths(setupResult.home, first.runId).ownerLog, "utf8").catch(
+    (error: unknown) => String(error),
+  );
+  const failureContext = `${resumed.err}\nchild run owner log:\n${ownerLog}`;
+  assert.equal(resumed.code, 0, failureContext);
   const childHistory = await runEvents(setupResult.home, first.runId);
-  assert.ok(childHistory.some((event) => event.type === "attempt.interrupted"));
-  assert.equal((await readFile(counter, "utf8")).trim(), "2");
+  assert.ok(
+    childHistory.some((event) => event.type === "attempt.interrupted"),
+    failureContext,
+  );
+  assert.equal((await readFile(counter, "utf8")).trim(), "2", failureContext);
   const history = await waitForEnd(setupResult.home, loopId);
   const end = history.at(-1);
-  assert.equal(end?.type, "loop.ended");
-  if (end?.type === "loop.ended") assert.equal(end.reason, "source_empty");
+  assert.equal(end?.type, "loop.ended", failureContext);
+  if (end?.type === "loop.ended") assert.equal(end.reason, "source_empty", failureContext);
 });
 
 test("resume reports a child resume refusal as a loop internal error", async () => {
@@ -802,6 +835,48 @@ steps:
       .length,
     1,
   );
+});
+
+test("loop resume refuses an ended loop even while its owner still answers pings", async () => {
+  const setupResult = await setup(
+    "formatVersion: 1\nsteps:\n  - id: work\n    kind: command\n    run: 'true'\n",
+  );
+  const loopId = "loop-20260923-000001-dddd";
+  const paths = loopPaths(setupResult.home, loopId);
+  await mkdir(paths.root, { recursive: true });
+  const log = await openEventLog<LoopEvent>(paths.events);
+  await log.append({
+    type: "loop.created",
+    loopId,
+    eventFormatVersion: 1,
+    repositoryPath: setupResult.repo,
+    loopfileName: "source",
+    source: { kind: "times", count: 1 },
+    fixedInputs: {},
+    retry: 0,
+    maxRuns: null,
+    pauseMs: null,
+    program: await programIdentity(cli),
+  });
+  await log.append({ type: "loop.ended", result: "success", reason: "source_empty" });
+  await log.close();
+
+  const owner: Server = createServer((socket) => {
+    socket.on("data", () => socket.write(`${JSON.stringify({ type: "pong", runId: loopId })}\n`));
+  });
+  await new Promise<void>((resolve, reject) => {
+    owner.once("error", reject);
+    owner.listen(paths.socket, resolve);
+  });
+  try {
+    assert.equal((await events(setupResult.home, loopId)).at(-1)?.type, "loop.ended");
+    assert.equal(await pingOwner(paths.socket, 200), loopId);
+    const ended = await resume([loopId], setupResult.env);
+    assert.equal(ended.code, 2);
+    assert.match(ended.err, /code: already_ended/);
+  } finally {
+    await new Promise<void>((resolve) => owner.close(() => resolve()));
+  }
 });
 
 test("loop resume refuses live, ended, missing and invalid loops with the required codes", async () => {
