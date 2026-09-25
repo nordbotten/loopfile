@@ -487,6 +487,25 @@ test("agent model accepts declared inputs, outputs, mixed text and escaped inter
   }
 });
 
+test("Ralph model expressions load and get the agent model checks", () => {
+  const loaded = loadWorkflow(withStep(0, { model: `\${test.log}` }), options);
+  assert.equal(loaded.status, "loaded");
+  if (loaded.status === "loaded") {
+    const ralph = loaded.workflow.steps[0];
+    assert.equal(ralph?.kind, "ralph");
+    if (ralph?.kind === "ralph") assert.equal(ralph.model, `\${test.log}`);
+  }
+
+  assert.match(
+    only(withStep(0, { model: `\${test.missing}` }), "steps[0].model"),
+    /neither a declared input nor a step output/,
+  );
+  assert.match(
+    only(withStep(0, { model: `\${test.log()}` }), "steps[0].model"),
+    /field expression/,
+  );
+});
+
 test("a backtick-wrapped model asks the author to leave out the backticks", () => {
   assert.match(only(withStep(2, { model: "`opus`" }), "steps[2].model"), /leave out the backticks/);
 });
