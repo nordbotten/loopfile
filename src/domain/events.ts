@@ -35,7 +35,8 @@ export type AttemptId = string;
 
 /** The resolved harness settings used for one call, in display order. */
 export interface CallFields {
-  readonly harness: HarnessName;
+  readonly profile?: string;
+  readonly harness?: HarnessName;
   readonly model?: string;
   readonly effort?: string;
 }

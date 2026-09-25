@@ -251,7 +251,7 @@ function statusStepKind(step: Step | undefined): StatusStepKind {
 }
 
 function harnessFromFields(fields: CallFields | undefined) {
-  return fields !== undefined && isHarnessName(fields.harness) ? fields.harness : null;
+  return fields?.harness !== undefined && isHarnessName(fields.harness) ? fields.harness : null;
 }
 
 /**

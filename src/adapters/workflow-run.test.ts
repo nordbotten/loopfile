@@ -1414,7 +1414,7 @@ test("an agent call omits fields left out by the step", async () => {
   assert.deepEqual(Object.keys(started.fields ?? {}), ["harness"]);
 });
 
-test("each Ralph iteration records its own fields, and retries read the last iteration", async () => {
+test("each Ralph iteration records its fields and one matching activity line", async () => {
   const manifest = `formatVersion: 1
 steps:
   - id: loop
@@ -1472,6 +1472,13 @@ steps:
       ["harness", "model", "effort"],
       ["harness", "model", "effort"],
     ],
+  );
+  const loggedIterations = (await readFile(paths.activity, "utf8"))
+    .split("\n")
+    .filter((line) => / iteration \d+ started(?: |$)/.test(line));
+  assert.deepEqual(
+    loggedIterations.map((line) => line.match(/iteration (\d+) started/)?.[1]),
+    iterations.map((event) => String(event.iteration)),
   );
   assert.deepEqual(
     await Promise.all(

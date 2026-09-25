@@ -42,16 +42,18 @@ test("appendActivity writes with no attempt ID when there is none", async () => 
   assert.match(contents, /^\d{2}:\d{2}:\d{2} run cancelled\n$/);
 });
 
-test("appendActivity redacts a given secret before writing", async () => {
+test("appendActivity keeps the 200-character cut and secret mask", async () => {
   const path = newPath();
-  await appendActivity(path, "001-implement", "endpoint /tmp/sock secret abc123", {
-    attemptSecret: "abc123",
-    environmentValues: ["/tmp/sock"],
+  await appendActivity(path, "001-implement", `secret ${"x".repeat(250)}`, {
+    attemptSecret: "secret",
   });
 
   const contents = await readFile(path, "utf8");
-  assert.ok(!contents.includes("abc123"));
-  assert.ok(!contents.includes("/tmp/sock"));
+  const message = contents.replace(/^\d{2}:\d{2}:\d{2} 001-implement /, "").trimEnd();
+  assert.equal(message.length, 200);
+  assert.ok(message.startsWith("*** "));
+  assert.ok(message.endsWith("…"));
+  assert.ok(!contents.includes("secret"));
 });
 
 /** A scripted `EventLog` that records what it was asked to append. */
@@ -70,7 +72,86 @@ function fakeEventLog(): EventLog & { readonly appended: RunEvent[] } {
   };
 }
 
-test("withActivityHook writes a lifecycle line for an event ADR 0007 names", async () => {
+test("attempt.started shows resolved fields in map order", async () => {
+  const path = newPath();
+  const events = withActivityHook(fakeEventLog(), path);
+
+  await events.append({
+    type: "attempt.started",
+    attemptId: "001-implement",
+    stepId: "implement",
+    processGroupId: 1,
+    fields: {
+      profile: "implement.high",
+      harness: "claude",
+      model: "claude-opus-5-5",
+      effort: "high",
+    },
+  });
+
+  const contents = await readFile(path, "utf8");
+  assert.match(
+    contents,
+    /001-implement step started profile implement\.high harness claude model claude-opus-5-5 effort high\n$/,
+  );
+});
+
+test("iteration starts show fields or no fields, and iteration ends write no line", async () => {
+  const path = newPath();
+  const events = withActivityHook(fakeEventLog(), path);
+
+  await events.append({
+    type: "iteration.started",
+    attemptId: "001-loop",
+    iteration: 2,
+    processGroupId: 1,
+    fields: { model: "opus", effort: "high" },
+  });
+  await events.append({
+    type: "iteration.ended",
+    attemptId: "001-loop",
+    iteration: 2,
+    reason: "no_outcome",
+  });
+  await events.append({
+    type: "iteration.started",
+    attemptId: "001-loop",
+    iteration: 2,
+    processGroupId: 2,
+  });
+
+  const lines = (await readFile(path, "utf8")).trimEnd().split("\n");
+  assert.equal(lines.length, 2);
+  assert.match(lines[0] ?? "", /001-loop iteration 2 started model opus effort high$/);
+  assert.match(lines[1] ?? "", /001-loop iteration 2 started$/);
+});
+
+test("bad_field attempt ends show a quoted value only when present", async () => {
+  const path = newPath();
+  const events = withActivityHook(fakeEventLog(), path);
+
+  await events.append({
+    type: "attempt.ended",
+    attemptId: "001-effort",
+    result: "failure",
+    reason: "bad_field",
+    field: "effort",
+    value: "hgih",
+  });
+  await events.append({
+    type: "attempt.ended",
+    attemptId: "002-model",
+    result: "failure",
+    reason: "bad_field",
+    field: "model",
+  });
+
+  const lines = (await readFile(path, "utf8")).split("\n");
+  assert.match(lines[0] ?? "", /001-effort step ended bad field effort "hgih"$/);
+  assert.match(lines[1] ?? "", /002-model step ended bad field model$/);
+});
+
+test("attempt.started without fields, including a Ralph attempt, stays step started", async () => {
   const path = newPath();
   const events = withActivityHook(fakeEventLog(), path);
 
@@ -80,9 +161,16 @@ test("withActivityHook writes a lifecycle line for an event ADR 0007 names", asy
     stepId: "implement",
     processGroupId: 1,
   });
+  await events.append({
+    type: "attempt.started",
+    attemptId: "002-loop",
+    stepId: "loop",
+    processGroupId: 2,
+  });
 
-  const contents = await readFile(path, "utf8");
-  assert.match(contents, /001-implement step started\n$/);
+  const lines = (await readFile(path, "utf8")).split("\n");
+  assert.match(lines[0] ?? "", /001-implement step started$/);
+  assert.match(lines[1] ?? "", /002-loop step started$/);
 });
 
 test("withActivityHook writes nothing for an event ADR 0007 does not name", async () => {
