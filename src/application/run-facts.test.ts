@@ -88,6 +88,7 @@ test("run facts expose workspace details and fill absent branch facts", () => {
         startedAt: "first",
         index: 1,
         newest: false,
+        fields: {},
       },
       {
         stepId: "work",
@@ -100,6 +101,7 @@ test("run facts expose workspace details and fill absent branch facts", () => {
         startedAt: "second",
         index: 2,
         newest: true,
+        fields: {},
       },
     ],
     attempt: {
@@ -113,6 +115,7 @@ test("run facts expose workspace details and fill absent branch facts", () => {
       maxIterations: 1,
       lastIteration: true,
       previousIteration: "",
+      fields: {},
     },
     previous: "",
   });
@@ -213,6 +216,7 @@ test("run facts list earlier attempts and declared run limits", () => {
       startedAt: "first",
       index: 1,
       newest: false,
+      fields: {},
     },
     {
       stepId: "test",
@@ -225,8 +229,90 @@ test("run facts list earlier attempts and declared run limits", () => {
       startedAt: "second",
       index: 2,
       newest: true,
+      fields: {},
     },
   ]);
+});
+
+test("call fields expose the current call and last call of each earlier attempt", () => {
+  const history: RunEvent[] = [
+    created,
+    {
+      type: "attempt.started",
+      attemptId: "001-work",
+      stepId: "work",
+      processGroupId: 1,
+      at: "first work call",
+      seq: 2,
+      fields: { harness: "claude", model: "sonnet", effort: "low" },
+    },
+    {
+      type: "attempt.ended",
+      attemptId: "001-work",
+      result: "failure",
+      reason: "nonzero_exit",
+      seq: 3,
+      at: "first work ended",
+    },
+    {
+      type: "attempt.started",
+      attemptId: "002-loop",
+      stepId: "loop",
+      processGroupId: 2,
+      at: "loop started",
+      seq: 4,
+    },
+    {
+      type: "iteration.started",
+      attemptId: "002-loop",
+      iteration: 1,
+      processGroupId: 3,
+      at: "first iteration",
+      seq: 5,
+      fields: { harness: "pi", model: "first", effort: "medium" },
+    },
+    {
+      type: "iteration.ended",
+      attemptId: "002-loop",
+      iteration: 1,
+      reason: "no_outcome",
+      seq: 6,
+      at: "first iteration ended",
+    },
+    {
+      type: "iteration.started",
+      attemptId: "002-loop",
+      iteration: 2,
+      processGroupId: 4,
+      at: "second iteration",
+      seq: 7,
+      fields: { harness: "claude", model: "opus" },
+    },
+    {
+      type: "attempt.started",
+      attemptId: "003-work",
+      stepId: "work",
+      processGroupId: 5,
+      at: "current attempt",
+      seq: 8,
+    },
+  ];
+  const facts = runFacts(history, step, {
+    attemptId: "003-work",
+    stepId: "work",
+    startedAt: "fallback",
+    fields: { harness: "pi", model: "current" },
+  });
+
+  assert.deepEqual(facts.attempt.fields, { harness: "pi", model: "current" });
+  assert.deepEqual(
+    facts.attempts.map((attempt) => attempt.fields),
+    [
+      { harness: "claude", model: "sonnet", effort: "low" },
+      { harness: "claude", model: "opus" },
+    ],
+  );
+  assert.deepEqual(Object.keys(facts.attempts[1]?.fields ?? {}), ["harness", "model"]);
 });
 
 test("run facts use the current attempt start from the event log", () => {
@@ -260,6 +346,7 @@ test("run facts use the current attempt timestamp when it is not in the event lo
     maxIterations: 1,
     lastIteration: true,
     previousIteration: "",
+    fields: {},
   });
   assert.equal(facts.previous, "");
 });
@@ -304,6 +391,7 @@ test("Ralph iteration facts give the preceding iteration's reason", () => {
       maxIterations: 3,
       lastIteration: false,
       previousIteration: { number: 1, reason: "no_outcome" },
+      fields: {},
     },
     {
       id: "001-loop",
@@ -316,6 +404,7 @@ test("Ralph iteration facts give the preceding iteration's reason", () => {
       maxIterations: 3,
       lastIteration: true,
       previousIteration: { number: 2, reason: "nonzero_exit" },
+      fields: {},
     },
   ]);
 });

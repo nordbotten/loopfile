@@ -20,7 +20,7 @@ import {
   valueSources,
 } from "../application/prompt-fill.ts";
 import { runFacts } from "../application/run-facts.ts";
-import type { RunEvent } from "../domain/events.ts";
+import type { CallFields, RunEvent } from "../domain/events.ts";
 import { isHarnessEffort } from "../domain/harnesses.ts";
 import type { AgentStep, AttemptId, Step, StepId, Workflow } from "../domain/model.ts";
 import { dataFile } from "./data-store.ts";
@@ -50,6 +50,8 @@ export interface PromptFillCall {
   readonly steps?: readonly Step[];
   /** Only on a Ralph step. */
   readonly iteration?: number;
+  /** The resolved fields for the call whose prompt is being filled. */
+  readonly fields?: CallFields;
 }
 
 /**
@@ -75,6 +77,14 @@ export async function fillFieldForCall(
 export type EffortFieldFill =
   | { readonly fields: { readonly effort?: string } }
   | { readonly field: "effort"; readonly value?: string };
+
+export function callFieldsForCall(
+  harness: CallFields["harness"],
+  model: string | undefined,
+  effort: Pick<CallFields, "effort">,
+): CallFields {
+  return { harness, ...(model === undefined ? {} : { model }), ...effort };
+}
 
 export async function fillEffortForCall(
   options: PromptFillOptions,

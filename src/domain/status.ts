@@ -103,7 +103,7 @@ export interface CurrentAttempt {
   readonly iteration: number | null;
   /** `null` on a step that is not a Ralph step. */
   readonly maxIterations: number | null;
-  /** `null` on a command step. */
+  /** `null` before the first call's fields are recorded, and on a command step. */
   readonly harness: HarnessName | null;
   readonly startedAt: Timestamp;
 }

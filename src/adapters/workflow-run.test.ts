@@ -1347,6 +1347,142 @@ steps:
   );
 });
 
+test("agent call fields are recorded and available to the current and retry prompts", async () => {
+  const manifest = `formatVersion: 1
+steps:
+  - id: work
+    kind: agent
+    harness: claude
+    model: opus
+    effort: high
+    prompt: "{{ $run.attempt.fields.harness }}|{{ $run.attempt.fields.model }}|{{ $run.attempt.fields.effort }}{{#each $run.attempts}}|{{ fields.model }}{{/each}}"
+    on:
+      again: work
+      done: $success
+`;
+  const { ended, events, paths } = await executeFake(manifest, {
+    work: [
+      [
+        { do: "savePrompt", path: "one.txt" },
+        { do: "result", outcome: "again" },
+      ],
+      [
+        { do: "savePrompt", path: "two.txt" },
+        { do: "result", outcome: "done" },
+      ],
+    ],
+  });
+
+  assert.equal(ended.result, "success");
+  const started = events.filter(
+    (event): event is Extract<RunEvent, { type: "attempt.started" }> =>
+      event.type === "attempt.started",
+  );
+  assert.deepEqual(
+    started.map((event) => event.fields),
+    [
+      { harness: "claude", model: "opus", effort: "high" },
+      { harness: "claude", model: "opus", effort: "high" },
+    ],
+  );
+  assert.deepEqual(
+    started.map((event) => Object.keys(event.fields ?? {})),
+    [
+      ["harness", "model", "effort"],
+      ["harness", "model", "effort"],
+    ],
+  );
+  assert.equal(events.find((event) => event.type === "run.created")?.eventFormatVersion, 1);
+  assert.deepEqual(
+    await Promise.all(
+      ["one.txt", "two.txt"].map((file) => readFile(join(paths.workspace, file), "utf8")),
+    ),
+    ["claude|opus|high", "claude|opus|high|opus"],
+  );
+});
+
+test("an agent call omits fields left out by the step", async () => {
+  const { ended, events } = await executeFake(
+    `formatVersion: 1\nsteps:\n  - id: work\n    kind: agent\n    harness: pi\n    prompt: Work.\n    on:\n      done: $success\n`,
+    { work: [[{ do: "result", outcome: "done" }]] },
+  );
+  assert.equal(ended.result, "success");
+  const started = events.find((event) => event.type === "attempt.started");
+  assert.equal(started?.type, "attempt.started");
+  if (started?.type !== "attempt.started") return;
+  assert.deepEqual(started.fields, { harness: "pi" });
+  assert.deepEqual(Object.keys(started.fields ?? {}), ["harness"]);
+});
+
+test("each Ralph iteration records its own fields, and retries read the last iteration", async () => {
+  const manifest = `formatVersion: 1
+steps:
+  - id: loop
+    kind: ralph
+    harness: claude
+    model: \${loop.model ?? "first"}
+    effort: high
+    maxIterations: 2
+    outputs:
+      model: [again]
+    prompt: "{{ $run.attempt.fields.model }}{{#each $run.attempts}}|{{ fields.model }}{{/each}}"
+    on:
+      again: loop
+      done: $success
+`;
+  const { ended, events, paths } = await executeFake(manifest, {
+    loop: [
+      [
+        { do: "savePrompt", path: "one-a.txt" },
+        { do: "dataPut", key: "loop.model", content: "second" },
+      ],
+      [
+        { do: "savePrompt", path: "two-a.txt" },
+        { do: "result", outcome: "again" },
+      ],
+      [
+        { do: "savePrompt", path: "one-b.txt" },
+        { do: "result", outcome: "done" },
+      ],
+    ],
+  });
+  assert.equal(ended.result, "success");
+  const attempts = events.filter(
+    (event): event is Extract<RunEvent, { type: "attempt.started" }> =>
+      event.type === "attempt.started",
+  );
+  assert.equal(attempts.length, 2);
+  assert.ok(attempts.every((event) => !Object.hasOwn(event, "fields")));
+  const iterations = events.filter(
+    (event): event is Extract<RunEvent, { type: "iteration.started" }> =>
+      event.type === "iteration.started",
+  );
+  assert.deepEqual(
+    iterations.map((event) => event.fields),
+    [
+      { harness: "claude", model: "first", effort: "high" },
+      { harness: "claude", model: "second", effort: "high" },
+      { harness: "claude", model: "second", effort: "high" },
+    ],
+  );
+  assert.deepEqual(
+    iterations.map((event) => Object.keys(event.fields ?? {})),
+    [
+      ["harness", "model", "effort"],
+      ["harness", "model", "effort"],
+      ["harness", "model", "effort"],
+    ],
+  );
+  assert.deepEqual(
+    await Promise.all(
+      ["one-a.txt", "two-a.txt", "one-b.txt"].map((file) =>
+        readFile(join(paths.workspace, file), "utf8"),
+      ),
+    ),
+    ["first", "second", "second|second"],
+  );
+});
+
 test("a prompt reads run facts, limits and earlier attempts", async () => {
   const manifest = `formatVersion: 1
 maxTransitions: 4

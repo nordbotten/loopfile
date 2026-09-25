@@ -752,6 +752,7 @@ const RUN_ATTEMPT_FIELDS = new Set([
   "maxIterations",
   "lastIteration",
 ]);
+const CALL_FIELDS = new Set(["harness", "model", "effort"]);
 const RUN_FIELDS = new Set([
   "runId",
   "loopfileName",
@@ -840,17 +841,27 @@ function isRunName(read: PromptRead, known: ReadonlySet<string>): boolean {
 function isRunAttemptsName(name: string): boolean {
   if (name === "$run.attempts") return true;
   const field = name.slice("$run.attempts.".length);
-  return name.startsWith("$run.attempts.") && RUN_EARLIER_ATTEMPT_FIELDS.has(field);
+  return (
+    name.startsWith("$run.attempts.") &&
+    (RUN_EARLIER_ATTEMPT_FIELDS.has(field) || isCallFieldName(field))
+  );
 }
 
 function isRunAttemptName(name: string): boolean {
   if (name === "$run.attempt" || name === "$run.attempt.previousIteration") return true;
   const field = name.slice("$run.attempt.".length);
   return (
-    (name.startsWith("$run.attempt.") && RUN_ATTEMPT_FIELDS.has(field)) ||
+    (name.startsWith("$run.attempt.") &&
+      (RUN_ATTEMPT_FIELDS.has(field) || isCallFieldName(field))) ||
     (name.startsWith("$run.attempt.previousIteration.") &&
       RUN_PREVIOUS_ITERATION_FIELDS.has(name.slice("$run.attempt.previousIteration.".length)))
   );
+}
+
+function isCallFieldName(name: string): boolean {
+  if (name === "fields") return true;
+  const field = name.slice("fields.".length);
+  return name.startsWith("fields.") && CALL_FIELDS.has(field);
 }
 
 function isRunPreviousName(read: PromptRead, known: ReadonlySet<string>): boolean {

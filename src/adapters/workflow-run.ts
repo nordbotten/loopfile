@@ -55,6 +55,7 @@ import {
 } from "../application/workflow-run.ts";
 import { selectWorkspaceMode } from "../application/workspace-mode.ts";
 import {
+  type CallFields,
   EVENT_FORMAT_VERSION,
   type LaunchInputRecord,
   type RemoteRecord,
@@ -668,13 +669,14 @@ async function visit(
         setCurrent: (identity) => {
           current = identity;
         },
-        onProcess: async (processGroupId) => {
+        onProcess: async (processGroupId, fields) => {
           await tracked.log.append({
             type: "attempt.started",
             attemptId,
             stepId: step.id,
             processGroupId,
             at: startedAt,
+            ...(fields === undefined ? {} : { fields }),
           });
           markStarted();
         },
@@ -706,7 +708,7 @@ interface StepStart {
   readonly stopSignal: AbortSignal;
   setCurrent(identity: AttemptIdentity | undefined): void;
   /** Records `attempt.started`. 0 is a process that never started, since no group has it. */
-  onProcess(processGroupId: number): Promise<unknown>;
+  onProcess(processGroupId: number, fields?: CallFields): Promise<unknown>;
 }
 
 /** Starts the step by its kind and waits for the attempt end. */
@@ -727,7 +729,10 @@ async function runStep(
 
   const started = await startProcessStep(options, owner, workflow, tracked, step, start, activity);
   // A process that never started has no group. 0 is that, since no group has it.
-  await start.onProcess(started.kind === "running" ? started.processGroupId : 0);
+  await start.onProcess(
+    started.kind === "running" ? started.processGroupId : 0,
+    started.kind === "running" && "fields" in started ? started.fields : undefined,
+  );
   if (started.kind === "bad-field") {
     return {
       result: "failure",
