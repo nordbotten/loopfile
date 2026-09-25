@@ -11,8 +11,13 @@
 
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { HarnessActivity, HarnessAdapter, HarnessAdapters } from "../application/harness.ts";
-import type { StepId } from "../domain/model.ts";
+import type {
+  HarnessActivity,
+  HarnessAdapter,
+  HarnessAdapters,
+  HarnessCall,
+} from "../application/harness.ts";
+import type { HarnessName, StepId } from "../domain/model.ts";
 
 /** One thing a scripted call does. Paths are relative to the workspace. */
 export type FakeAction =
@@ -45,6 +50,13 @@ export type FakeAction =
  * The count is per step, across all attempts and all Ralph iterations.
  */
 export type FakeScript = Readonly<Record<StepId, readonly (readonly FakeAction[])[]>>;
+
+export interface FakeHarnessCall {
+  readonly harness: HarnessName;
+  readonly model?: string;
+  readonly effort?: string;
+  readonly args: readonly string[];
+}
 
 const CLI = fileURLToPath(new URL("../cli.ts", import.meta.url));
 
@@ -130,8 +142,22 @@ export function fakeHarness(script: FakeScript): HarnessAdapter {
   };
 }
 
-/** The same fake instance behind every harness name, so the count is shared. */
-export function fakeHarnessAdapters(script: FakeScript): HarnessAdapters {
-  const adapter = fakeHarness(script);
-  return { claude: adapter, pi: adapter };
+/** Harness-specific wrappers record call fields while sharing the scripted call count. */
+export function fakeHarnessAdapters(
+  script: FakeScript,
+): HarnessAdapters & { readonly calls: FakeHarnessCall[] } {
+  const calls: FakeHarnessCall[] = [];
+  const shared = fakeHarness(script);
+  const named = (harness: HarnessName): HarnessAdapter => ({
+    prepare(call: HarnessCall) {
+      calls.push({
+        harness,
+        ...(call.model === undefined ? {} : { model: call.model }),
+        ...(call.effort === undefined ? {} : { effort: call.effort }),
+        args: call.args,
+      });
+      return shared.prepare(call);
+    },
+  });
+  return { claude: named("claude"), pi: named("pi"), calls };
 }

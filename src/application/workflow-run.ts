@@ -15,7 +15,10 @@ import type { Ended } from "./executor.ts";
 import { checkOutputs } from "./output-check.ts";
 
 /** What `attempt.ended` says beyond its envelope and the attempt ID. */
-export type AttemptEndFields = Pick<AttemptEnded, "result" | "reason" | "outcome" | "output">;
+export type AttemptEndFields = Pick<
+  AttemptEnded,
+  "result" | "reason" | "outcome" | "output" | "field" | "value"
+>;
 
 /**
  * How a finished attempt of `step` ended: the exit and the reported outcome

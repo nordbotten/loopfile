@@ -71,6 +71,7 @@ A failed attempt is any of these:
 - a timeout
 - an outcome that is not a key of `on`
 - a missing output (see [Handoffs and outputs](#handoffs-and-outputs))
+- an agent model expression that evaluates to `undefined` (`bad_field`)
 - on a Ralph step, `iteration_limit` (see [Ralph steps](#ralph-steps))
 
 An unreachable step is a load error. `onFailure` routes count as reachable.

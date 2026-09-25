@@ -62,7 +62,11 @@ async function setup(manifest: string) {
   return { repo, source, home, runId };
 }
 
-async function execute(manifest: string, adapters?: HarnessAdapters) {
+async function execute(
+  manifest: string,
+  adapters?: HarnessAdapters,
+  inputs?: ExecuteRunOptions["inputs"],
+) {
   const { repo, source, home, runId } = await setup(manifest);
   const ended = await executeRun({
     home,
@@ -71,10 +75,20 @@ async function execute(manifest: string, adapters?: HarnessAdapters) {
     repository: repo,
     executor: localExecutor(),
     ...(adapters === undefined ? {} : { adapters }),
+    ...(inputs === undefined ? {} : { inputs }),
   });
   const paths = runPaths(home, runId);
   const events = parseEventLog(await readFile(paths.events, "utf8"));
   return { ended, events, paths, runId, repo };
+}
+
+async function executeFake(
+  manifest: string,
+  script: FakeScript,
+  inputs?: ExecuteRunOptions["inputs"],
+) {
+  const adapters = fakeHarnessAdapters(script);
+  return { ...(await execute(manifest, adapters, inputs)), calls: adapters.calls };
 }
 
 async function executeWithDelayedAttemptStarted(
@@ -2028,5 +2042,244 @@ test("a cancel between attempts writes only run.cancelled", async () => {
   assert.deepEqual(
     events.map((event) => event.type),
     ["run.created", "owner.started", "run.cancelled"],
+  );
+});
+
+test("an agent's fixed opus model reaches the harness unchanged", async () => {
+  const { ended, calls } = await executeFake(
+    `formatVersion: 1
+steps:
+  - id: work
+    kind: agent
+    harness: pi
+    model: opus
+    effort: high
+    args: [--fast]
+    prompt: Do the work.
+    on:
+      done: $success
+`,
+    { work: [[{ do: "result", outcome: "done" }]] },
+  );
+  assert.equal(ended.result, "success");
+  assert.deepEqual(calls, [{ harness: "pi", model: "opus", effort: "high", args: ["--fast"] }]);
+});
+
+test("an agent model expression reads the newest step output value", async () => {
+  const { ended, calls } = await executeFake(
+    `formatVersion: 1
+steps:
+  - id: triage
+    kind: agent
+    harness: pi
+    model: classifier
+    prompt: Triage.
+    outputs: [model]
+    on:
+      ready: work
+  - id: work
+    kind: agent
+    harness: claude
+    model: '\${triage.model}'
+    prompt: Work.
+    on:
+      done: $success
+`,
+    {
+      triage: [
+        [
+          { do: "dataPut", key: "triage.model", content: "older" },
+          { do: "dataPut", key: "triage.model", content: "newest" },
+          { do: "result", outcome: "ready" },
+        ],
+      ],
+      work: [[{ do: "result", outcome: "done" }]],
+    },
+  );
+  assert.equal(ended.result, "success");
+  assert.equal(calls[1]?.model, "newest");
+});
+
+test("nullish coalescing supplies opus when the step output has no value", async () => {
+  const { ended, calls } = await executeFake(
+    `formatVersion: 1
+steps:
+  - id: triage
+    kind: agent
+    harness: pi
+    prompt: Triage.
+    outputs: [model]
+    onFailure: work
+    on:
+      ready: work
+  - id: work
+    kind: agent
+    harness: pi
+    model: '\${triage.model ?? "opus"}'
+    prompt: Work.
+    on:
+      done: $success
+`,
+    {
+      triage: [[{ do: "exit", code: 1 }]],
+      work: [[{ do: "result", outcome: "done" }]],
+    },
+  );
+  assert.equal(ended.result, "success");
+  assert.equal(calls[1]?.model, "opus");
+});
+
+test("an agent model mixes fixed text with a field value", async () => {
+  const { calls } = await executeFake(
+    `formatVersion: 1
+steps:
+  - id: triage
+    kind: agent
+    harness: pi
+    prompt: Triage.
+    outputs: [size]
+    on:
+      ready: work
+  - id: work
+    kind: agent
+    harness: pi
+    model: claude-\${triage.size}
+    prompt: Work.
+    on:
+      done: $success
+`,
+    {
+      triage: [
+        [
+          { do: "dataPut", key: "triage.size", content: "large" },
+          { do: "result", outcome: "ready" },
+        ],
+      ],
+      work: [[{ do: "result", outcome: "done" }]],
+    },
+  );
+  assert.equal(calls[1]?.model, "claude-large");
+});
+
+test("an agent model expression reads a declared input", async () => {
+  const { ended, calls } = await executeFake(
+    `formatVersion: 1
+inputs:
+  model: Model to use.
+steps:
+  - id: work
+    kind: agent
+    harness: pi
+    model: '\${input.model}'
+    prompt: Work.
+    on:
+      done: $success
+`,
+    { work: [[{ do: "result", outcome: "done" }]] },
+    { model: "input-model" },
+  );
+  assert.equal(ended.result, "success");
+  assert.equal(calls[0]?.model, "input-model");
+});
+
+test("an empty field value is passed to the harness as an empty model", async () => {
+  const { calls } = await executeFake(
+    `formatVersion: 1
+steps:
+  - id: triage
+    kind: agent
+    harness: pi
+    prompt: Triage.
+    outputs: [model]
+    on:
+      ready: work
+  - id: work
+    kind: agent
+    harness: pi
+    model: '\${triage.model}'
+    prompt: Work.
+    on:
+      done: $success
+`,
+    {
+      triage: [
+        [
+          { do: "dataPut", key: "triage.model", content: "" },
+          { do: "result", outcome: "ready" },
+        ],
+      ],
+      work: [[{ do: "result", outcome: "done" }]],
+    },
+  );
+  assert.deepEqual(calls[1], { harness: "pi", model: "", args: [] });
+});
+
+test("an escaped interpolation loads as literal dollar-brace text", async () => {
+  const escaped = String.raw`\${input.model}`;
+  const { calls } = await executeFake(
+    `formatVersion: 1
+steps:
+  - id: work
+    kind: agent
+    harness: pi
+    model: '${escaped}'
+    prompt: Work.
+    on:
+      done: $success
+`,
+    { work: [[{ do: "result", outcome: "done" }]] },
+  );
+  assert.equal(calls[0]?.model, `\${input.model}`);
+});
+
+test("an undefined model writes a bad_field attempt and takes onFailure without calling the harness", async () => {
+  const { ended, events, calls } = await executeFake(
+    `formatVersion: 1
+steps:
+  - id: triage
+    kind: agent
+    harness: pi
+    prompt: Triage.
+    outputs: [model]
+    onFailure: work
+    on:
+      ready: work
+  - id: work
+    kind: agent
+    harness: pi
+    model: '\${triage.model}'
+    prompt: Work.
+    onFailure: fallback
+    on:
+      done: $success
+  - id: fallback
+    kind: command
+    run: "true"
+`,
+    {
+      triage: [[{ do: "exit", code: 1 }]],
+    },
+  );
+  assert.equal(ended.result, "success");
+  assert.equal(calls.length, 1);
+  const startedIndex = events.findIndex(
+    (event) => event.type === "attempt.started" && event.stepId === "work",
+  );
+  const started = events[startedIndex];
+  const attemptEnd = events[startedIndex + 1];
+  assert.equal(started?.type === "attempt.started" && started.processGroupId, 0);
+  assert.equal(attemptEnd?.type, "attempt.ended");
+  assert.equal(attemptEnd?.type === "attempt.ended" && attemptEnd.reason, "bad_field");
+  assert.equal(attemptEnd?.type === "attempt.ended" && attemptEnd.field, "model");
+  assert.equal(attemptEnd?.type === "attempt.ended" && "value" in attemptEnd, false);
+  assert.ok(
+    events.some(
+      (event) =>
+        event.type === "transition" &&
+        event.from === "work" &&
+        event.to === "fallback" &&
+        event.cause === "onFailure" &&
+        event.reason === "bad_field",
+    ),
   );
 });

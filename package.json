@@ -45,7 +45,9 @@
     "typescript": "^5.9.3"
   },
   "dependencies": {
+    "@jsep-plugin/template": "^1.0.5",
     "handlebars": "^4.7.9",
+    "jsep": "^1.4.0",
     "tar": "^7.5.22",
     "yaml": "^2.9.1"
   },

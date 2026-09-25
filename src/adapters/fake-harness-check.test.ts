@@ -227,20 +227,26 @@ test("a call past the scripted calls throws, and so does an unknown step", () =>
   assert.throws(() => fake.prepare(call("other")), /step other has no scripted call 1/);
 });
 
-test("claude and pi are one object and share the call count", () => {
+test("claude and pi share the call count and record harness fields", () => {
   const adapters = fakeHarnessAdapters({
     impl: [[{ do: "exit", code: 1 }], [{ do: "exit", code: 2 }]],
   });
-  assert.equal(adapters.claude, adapters.pi);
+  assert.notEqual(adapters.claude, adapters.pi);
   const prepare = (harness: "claude" | "pi") =>
     adapters[harness].prepare({
       context: { stepId: "impl" } as ExecutionContext,
       prompt: "p",
-      args: [],
+      model: "opus",
+      effort: "high",
+      args: ["--fast"],
       wiringFolder: "/w",
     });
   assert.equal(prepare("claude").wiringFiles["fake-call.json"], '[{"do":"exit","code":1}]');
   assert.equal(prepare("pi").wiringFiles["fake-call.json"], '[{"do":"exit","code":2}]');
+  assert.deepEqual(adapters.calls, [
+    { harness: "claude", model: "opus", effort: "high", args: ["--fast"] },
+    { harness: "pi", model: "opus", effort: "high", args: ["--fast"] },
+  ]);
 });
 
 test("fake-call.json is in the wiring folder and the workspace is clean", async () => {

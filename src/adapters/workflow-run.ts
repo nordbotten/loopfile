@@ -728,6 +728,14 @@ async function runStep(
   const started = await startProcessStep(options, owner, workflow, tracked, step, start, activity);
   // A process that never started has no group. 0 is that, since no group has it.
   await start.onProcess(started.kind === "running" ? started.processGroupId : 0);
+  if (started.kind === "bad-field") {
+    return {
+      result: "failure",
+      reason: "bad_field",
+      field: started.field,
+      ...(started.value === undefined ? {} : { value: started.value }),
+    };
+  }
   if (started.kind !== "running") return START_FAILED_END;
   return await waitForEnd(started, step, tracked, context.attemptId);
 }

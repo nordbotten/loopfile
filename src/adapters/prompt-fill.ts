@@ -8,7 +8,8 @@
 
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { type GetSource, sha256 } from "../application/data-store.ts";
+import { type GetSource, sha256, sourceOfGet } from "../application/data-store.ts";
+import { evaluateFieldExpression, parseFieldExpression } from "../application/field-expression.ts";
 import { checkPrompt, HISTORY_ROOT } from "../application/prompt-check.ts";
 import {
   historyEntries,
@@ -54,6 +55,22 @@ export interface PromptFillCall {
  * The prompt with each placeholder filled. A prompt with no placeholders reads
  * no data, so it is returned as is and no event is appended (D2).
  */
+export async function fillFieldForCall(
+  options: PromptFillOptions,
+  text: string,
+): Promise<string | undefined> {
+  const field = parseFieldExpression(text);
+  const history = options.history();
+  const values = new Map<string, string>();
+  for (const key of field.reads) {
+    const source = sourceOfGet(history, key);
+    if (source === undefined) continue;
+    const value = await readSource(options, source, key);
+    if (value !== undefined) values.set(key, value);
+  }
+  return evaluateFieldExpression(field, values);
+}
+
 export async function fillPromptForCall(
   options: PromptFillOptions,
   call: PromptFillCall,

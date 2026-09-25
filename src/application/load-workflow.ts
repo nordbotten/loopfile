@@ -27,6 +27,7 @@ import {
   type WorkspaceMode,
 } from "../domain/model.ts";
 import { durationMillis } from "./duration.ts";
+import { FIELD_EXPRESSION_FIELDS, parseFieldExpression } from "./field-expression.ts";
 import { checkPrompt, EACH_ITEM_SCOPE, HISTORY_ROOT, type PromptRead } from "./prompt-check.ts";
 
 /** One thing wrong with a manifest, and where. */
@@ -107,11 +108,17 @@ interface PromptText {
   readonly text: string;
 }
 
+interface FieldExpressionText {
+  readonly path: string;
+  readonly reads: readonly string[];
+}
+
 interface Context {
   readonly report: Report;
   readonly root: LoopfileRoot | null;
   readonly stepIds: ReadonlySet<StepId>;
   readonly prompts: PromptText[];
+  readonly fieldExpressions: FieldExpressionText[];
 }
 
 function isRecord(value: unknown): value is Raw {
@@ -165,13 +172,20 @@ function buildWorkflow(
     report("steps", "steps must be a list of at least one step");
     return undefined;
   }
-  const ctx: Context = { report, root, stepIds: collectStepIds(rawSteps, report), prompts: [] };
+  const ctx: Context = {
+    report,
+    root,
+    stepIds: collectStepIds(rawSteps, report),
+    prompts: [],
+    fieldExpressions: [],
+  };
   const steps = rawSteps.map((raw, index) => readStep(raw, index, ctx));
   const built = steps.filter((step): step is Step => step !== undefined);
   // A step that did not build has no outputs and no targets, so checks that
   // read them would report errors that are not real.
   if (built.length !== steps.length || ctx.stepIds.size !== built.length) return undefined;
   checkPlaceholders(ctx.prompts, built, inputs.descriptions, report);
+  checkFieldExpressions(ctx.fieldExpressions, built, inputs.descriptions, report);
   checkReachable(built, report);
   return workflowModel(inputs, limits, built, workspaceMode);
 }
@@ -369,7 +383,7 @@ function readKindStep(
   const id = typeof raw.id === "string" ? raw.id : "";
   const base = readBase(raw, id, kind !== "command", at, ctx);
   if (kind === "command") return { ...base, kind, run: readRun(raw.run, at, ctx.report) };
-  const harness = readHarnessFields(raw, id, at, ctx);
+  const harness = readHarnessFields(raw, id, at, ctx, kind === "agent");
   if (kind === "agent") return { ...base, kind, ...harness };
   const maxIterations = optionalCount(raw.maxIterations, `${at}.maxIterations`, ctx.report) ?? 10;
   return { ...base, kind, ...harness, maxIterations };
@@ -510,10 +524,26 @@ function readRun(value: unknown, at: string, report: Report): string {
   return "";
 }
 
-function readHarnessFields(raw: Raw, id: StepId, at: string, ctx: Context) {
+function readHarnessFields(
+  raw: Raw,
+  id: StepId,
+  at: string,
+  ctx: Context,
+  modelExpressionAllowed: boolean,
+) {
   const harness = readHarness(raw.harness, at, ctx.report);
   const effort = readEffort(raw.effort, harness, at, ctx.report);
   const model = readOptionalString(raw.model, `${at}.model`, ctx.report);
+  if (modelExpressionAllowed && FIELD_EXPRESSION_FIELDS.includes("model") && model !== undefined) {
+    try {
+      ctx.fieldExpressions.push({ path: `${at}.model`, reads: parseFieldExpression(model).reads });
+    } catch (error) {
+      ctx.report(
+        `${at}.model`,
+        error instanceof Error ? error.message : "invalid field expression",
+      );
+    }
+  }
   return {
     harness: harness ?? "claude",
     ...(model === undefined ? {} : { model }),
@@ -647,6 +677,23 @@ function checkPlaceholders(
   const known = promptKeys(steps, inputs);
   const declared = Object.keys(inputs).join(", ") || "none";
   for (const prompt of prompts) checkPromptText(prompt, known, declared, report);
+}
+
+function checkFieldExpressions(
+  fields: readonly FieldExpressionText[],
+  steps: readonly Step[],
+  inputs: Readonly<Record<string, string>>,
+  report: Report,
+): void {
+  const known = promptKeys(steps, inputs);
+  const declared = Object.keys(inputs).join(", ") || "none";
+  for (const field of fields) {
+    for (const name of field.reads) {
+      if (!known.has(name)) {
+        report(field.path, `\`{{ ${name} }}\` ${unknownPromptNameMessage(name, declared)}`);
+      }
+    }
+  }
 }
 
 function promptKeys(steps: readonly Step[], inputs: Readonly<Record<string, string>>): Set<string> {
@@ -817,11 +864,15 @@ function reportPromptName(
   declared: string,
   report: Report,
 ): void {
-  const hint = displayKey.startsWith("input.") ? ` (declared inputs: ${declared})` : "";
   report(
     prompt.path,
-    `${prompt.file}:${read.line}: \`{{ ${displayKey} }}\` is neither a declared input nor a step output${hint}`,
+    `${prompt.file}:${read.line}: \`{{ ${displayKey} }}\` ${unknownPromptNameMessage(displayKey, declared)}`,
   );
+}
+
+function unknownPromptNameMessage(displayKey: string, declared: string): string {
+  const hint = displayKey.startsWith("input.") ? ` (declared inputs: ${declared})` : "";
+  return `is neither a declared input nor a step output${hint}`;
 }
 
 function promptDisplayKey(read: PromptRead, key: string): string {
