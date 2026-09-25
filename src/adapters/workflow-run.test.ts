@@ -77,6 +77,36 @@ async function execute(manifest: string, adapters?: HarnessAdapters) {
   return { ended, events, paths, runId, repo };
 }
 
+async function executeWithDelayedAttemptStarted(
+  manifest: string,
+  adapters: HarnessAdapters,
+  delayMs: number,
+) {
+  const { repo, source, home, runId } = await setup(manifest);
+  const paths = runPaths(home, runId);
+  const log = await openEventLog(paths.events);
+  const eventLog: EventLog = {
+    async append(event) {
+      if (event.type === "attempt.started") {
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+      }
+      return await log.append(event);
+    },
+    close: () => log.close(),
+  };
+  const ended = await executeRun({
+    home,
+    runId,
+    source,
+    repository: repo,
+    executor: localExecutor(),
+    adapters,
+    eventLog,
+  });
+  const events = parseEventLog(await readFile(paths.events, "utf8"));
+  return { ended, events, paths, runId, repo };
+}
+
 const WORKSPACE_CASES = [
   { name: "isolate worktree", mode: "isolate" },
   { name: "isolate copy", mode: "isolate", target: "copy" },
@@ -1517,6 +1547,67 @@ steps:
   assert.equal(
     await readFile(join(paths.workspace, "timeout.txt"), "utf8"),
     "work|001-work|||timeout",
+  );
+});
+
+test("a data put at process start is accepted before attempt.started is appended", async () => {
+  const manifest = `formatVersion: 1
+steps:
+  - id: review
+    kind: agent
+    harness: claude
+    prompt: review
+    outputs: [feedback]
+    on:
+      done: next
+  - id: next
+    kind: agent
+    harness: claude
+    prompt: "{{ $run.previous.data.review.feedback }}"
+    on:
+      done: $success
+`;
+  const { ended, paths } = await executeWithDelayedAttemptStarted(
+    manifest,
+    fakeHarnessAdapters({
+      review: [
+        [
+          { do: "dataPut", key: "review.feedback", content: "early handoff" },
+          { do: "result", outcome: "done" },
+        ],
+      ],
+      next: [
+        [
+          { do: "savePrompt", path: "handoff.txt" },
+          { do: "result", outcome: "done" },
+        ],
+      ],
+    }),
+    500,
+  );
+  assert.equal(ended.result, "success");
+  assert.equal(await readFile(join(paths.workspace, "handoff.txt"), "utf8"), "early handoff");
+});
+
+test("a result at process start is accepted before attempt.started is appended", async () => {
+  const manifest = `formatVersion: 1
+steps:
+  - id: work
+    kind: agent
+    harness: claude
+    prompt: work
+    on:
+      done: $success
+`;
+  const { ended, events } = await executeWithDelayedAttemptStarted(
+    manifest,
+    fakeHarnessAdapters({ work: [[{ do: "result", outcome: "done" }]] }),
+    500,
+  );
+  assert.equal(ended.result, "success");
+  assert.ok(
+    events.findIndex((event) => event.type === "attempt.started") <
+      events.findIndex((event) => event.type === "outcome.reported"),
   );
 });
 

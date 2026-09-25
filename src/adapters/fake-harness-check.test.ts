@@ -148,13 +148,29 @@ test("dataPut in attempt 1 and dataGet in attempt 2 keep the exact bytes", async
   assert.deepEqual(got, Buffer.from(content, "utf8"));
 });
 
-test("dataGet of a key with no value writes no file and later actions still run", async () => {
+test("an expected dataGet refusal writes no file and later actions still run", async () => {
   const { rig, end } = await runOne([
-    { do: "dataGet", key: "missing", to: "never.txt" },
+    { do: "dataGet", key: "missing", to: "never.txt", expectFailure: true },
     { do: "write", path: "after.txt", content: "x" },
   ]);
   assert.deepEqual(end, { kind: "exited", code: 0 });
   assert.deepEqual((await readdir(rig.workspace)).sort(), ["after.txt"]);
+});
+
+test("an unexpected dataGet refusal fails the fake and preserves CLI output", async () => {
+  const { run, end } = await runOne([{ do: "dataGet", key: "missing", to: "never.txt" }]);
+  assert.deepEqual(end, { kind: "exited", code: 97 });
+  assert.match(await readFile(run.attempt.stderr, "utf8"), /no data key "missing"/);
+});
+
+test("an unexpected dataPut refusal fails the fake", async () => {
+  const { end } = await runOne([{ do: "dataPut", key: "other.value", content: "x" }]);
+  assert.deepEqual(end, { kind: "exited", code: 97 });
+});
+
+test("an unexpected result refusal fails the fake", async () => {
+  const { end } = await runOne([{ do: "result", outcome: "not-allowed" }]);
+  assert.deepEqual(end, { kind: "exited", code: 97 });
 });
 
 test("result gives one outcome.reported with the attempt ID; no result action gives none", async () => {
