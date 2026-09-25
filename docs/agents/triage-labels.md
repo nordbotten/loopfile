@@ -13,3 +13,11 @@ The skills speak in terms of five canonical triage roles. This file maps those r
 When a skill mentions a role (e.g. "apply the AFK-ready triage label"), use the corresponding label string from this table.
 
 Edit the right-hand column to match whatever vocabulary you actually use.
+
+## Parked issues
+
+`parked` is an extra state label in this repo. It marks an issue that was
+triaged and put aside on purpose, with triage notes that say why. A parked
+issue has `parked` in place of `needs-triage`. When triage shows what needs
+attention, it does not show parked issues. To pick one up again, change
+`parked` back to `needs-triage`. `gh issue list --label parked` lists them.
