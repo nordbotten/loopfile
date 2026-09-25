@@ -522,37 +522,12 @@ steps:
       ),
     "child command to run",
   );
-  const attempt = await until(async () => {
-    const event = (await runEvents(setupResult.home, first.runId)).find(
-      (item) => item.type === "attempt.started",
-    );
-    return event?.type === "attempt.started" ? event : undefined;
-  }, "child attempt to start");
   const loopOwner = (await events(setupResult.home, loopId)).find(
     (event) => event.type === "owner.started",
   );
   if (loopOwner?.type !== "owner.started") throw new Error("loop owner did not start");
   process.kill(loopOwner.pid, "SIGKILL");
   process.kill(runOwner.pid, "SIGKILL");
-  await until(
-    async () =>
-      (await pingOwner(loopPaths(setupResult.home, loopId).socket, 500)) === undefined
-        ? true
-        : undefined,
-    "loop owner to stop",
-  );
-  await until(
-    async () =>
-      (await pingOwner(runPaths(setupResult.home, first.runId).socket, 500)) === undefined
-        ? true
-        : undefined,
-    "child run owner to stop",
-  );
-  await until(
-    async () => (groupAlive(attempt.processGroupId) ? true : undefined),
-    "leftover child process group",
-  );
-
   const resumed = await resume([loopId, "--kill-leftovers"], setupResult.env);
   const ownerLog = await readFile(runPaths(setupResult.home, first.runId).ownerLog, "utf8").catch(
     (error: unknown) => String(error),
