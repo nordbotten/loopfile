@@ -18,11 +18,12 @@ import type {
   StartFailure,
 } from "../application/executor.ts";
 import type { HarnessActivity, HarnessAdapters } from "../application/harness.ts";
-import type { RunEvent } from "../domain/events.ts";
+import type { CallFields, RunEvent } from "../domain/events.ts";
 import type { AgentStep, Step } from "../domain/model.ts";
 import type { AttemptPaths } from "./attempt-directory.ts";
 import { startHarnessCall } from "./harness-call.ts";
 import {
+  callFieldsForCall,
   fillEffortForCall,
   fillFieldForCall,
   fillPromptForCall,
@@ -37,6 +38,8 @@ export type AgentStepStart =
       readonly value?: string;
     }
   | (Pick<RunningProcess, "kind" | "processGroupId" | "cancel"> & {
+      /** Resolved fields used for the harness call. */
+      readonly fields: CallFields;
       /** Settles after the process ended and its output files are written. */
       readonly ended: Promise<AgentEnd>;
     });
@@ -66,9 +69,10 @@ export async function startAgentStep(
   if (step.model !== undefined && model === undefined) return { kind: "bad-field", field: "model" };
   const effort = await fillEffortForCall(options, step);
   if ("field" in effort) return { kind: "bad-field", ...effort };
+  const fields = callFieldsForCall(step.harness, model, effort.fields);
   const prompt = await fillPromptForCall(
     options,
-    { attemptId: context.attemptId, stepId: context.stepId, startedAt, step, steps },
+    { attemptId: context.attemptId, stepId: context.stepId, startedAt, step, steps, fields },
     await readFile(join(options.loopfileRoot, step.promptFile), "utf8"),
   );
   const started = await startHarnessCall(
@@ -90,6 +94,7 @@ export async function startAgentStep(
     kind: "running",
     processGroupId: started.processGroupId,
     cancel: () => started.cancel(),
+    fields,
     ended: started.ended.then((exit) =>
       classifyAgentEnd(step, exit, reportedOutcome(options.history(), context.attemptId)),
     ),

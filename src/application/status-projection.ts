@@ -16,8 +16,9 @@
  * it itself with one pass over the same events.
  */
 
-import type { RunEvent, Timestamp } from "../domain/events.ts";
-import type { HarnessName, Step, StepId, Workflow } from "../domain/model.ts";
+import type { CallFields, RunEvent, Timestamp } from "../domain/events.ts";
+import { isHarnessName } from "../domain/harnesses.ts";
+import type { Step, StepId, Workflow } from "../domain/model.ts";
 import {
   type CurrentAttempt,
   type LastTransition,
@@ -154,6 +155,7 @@ interface OpenAttempt {
   /** This step's attempt count so far, including this one (`current.attempt`). */
   readonly attempt: number;
   readonly iteration: number;
+  readonly fields?: CallFields;
 }
 
 /** `openAttempt`'s running state as it scans the events, one event at a time. */
@@ -202,7 +204,13 @@ function startAttempt(
 ): void {
   const attempt = (scan.attemptsPerStep.get(event.stepId) ?? 0) + 1;
   scan.attemptsPerStep.set(event.stepId, attempt);
-  scan.open = { stepId: event.stepId, attemptId: event.attemptId, startedAt: event.at, attempt };
+  scan.open = {
+    stepId: event.stepId,
+    attemptId: event.attemptId,
+    startedAt: event.at,
+    attempt,
+    ...(event.fields === undefined ? {} : { fields: event.fields }),
+  };
   scan.iteration = 0;
 }
 
@@ -210,7 +218,12 @@ function countIteration(
   scan: OpenAttemptScan,
   event: Extract<RunEvent, { type: "iteration.started" }>,
 ): void {
-  if (scan.open?.attemptId === event.attemptId) scan.iteration += 1;
+  if (scan.open?.attemptId !== event.attemptId) return;
+  scan.iteration += 1;
+  scan.open = {
+    ...scan.open,
+    ...(event.fields === undefined ? { fields: undefined } : { fields: event.fields }),
+  };
 }
 
 function currentAttempt(open: OpenAttempt, workflow: Workflow): CurrentAttempt {
@@ -224,7 +237,7 @@ function currentAttempt(open: OpenAttempt, workflow: Workflow): CurrentAttempt {
     maxAttempts: step?.maxAttempts ?? 0,
     iteration: isRalph ? open.iteration : null,
     maxIterations: step?.kind === "ralph" ? step.maxIterations : null,
-    harness: harnessOf(step),
+    harness: harnessFromFields(open.fields),
     startedAt: open.startedAt,
   };
 }
@@ -237,8 +250,8 @@ function statusStepKind(step: Step | undefined): StatusStepKind {
   return step?.kind ?? "command";
 }
 
-function harnessOf(step: Step | undefined): HarnessName | null {
-  return step !== undefined && step.kind !== "command" ? step.harness : null;
+function harnessFromFields(fields: CallFields | undefined) {
+  return fields !== undefined && isHarnessName(fields.harness) ? fields.harness : null;
 }
 
 /**

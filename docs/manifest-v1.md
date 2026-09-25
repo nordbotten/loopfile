@@ -166,9 +166,14 @@ empty `attemptId` and `outcome`. `$run` has `runId`, `loopfileName`, `startedAt`
 omitted. In `empty` mode, `$run.targetFolder` is omitted. `$run.attempts` has
 every earlier attempt, oldest first, not the running one. Each has `stepId`,
 `attemptId`, `number` (the visit number for its step), `result`, `reason`,
-`outcome`, `message`, `startedAt`, `index` (from 1), and `newest`. `$run.attempt` has `id`, `number`, `startedAt`,
-`maxAttempts`, `timeout`, `lastAttempt`, `iteration`, `maxIterations`,
-`lastIteration`, and `previousIteration`. `number` starts at 1 for each step
+`outcome`, `message`, `startedAt`, `index` (from 1), `newest`, and `fields`.
+`fields` holds the resolved harness, model and effort from the last call in that
+attempt, or an empty map if no call started. A step field it leaves out is
+absent. `$run.attempt` has `id`, `number`, `startedAt`, `maxAttempts`, `timeout`,
+`lastAttempt`, `iteration`, `maxIterations`, `lastIteration`,
+`previousIteration`, and `fields`. Its `fields` map holds the resolved values for
+the current call, filled before its prompt; omitted step fields are absent.
+`number` starts at 1 for each step
 visit, and `lastAttempt` is true on its final allowed visit. `maxAttempts` and
 `timeout` show only limits written in the manifest; either is `""` when omitted.
 On an agent step, `iteration` and `maxIterations` are both `1`, `lastIteration`

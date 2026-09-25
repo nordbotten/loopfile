@@ -16,6 +16,7 @@
  */
 
 import type {
+  HarnessName,
   InputName,
   LoopId,
   Outcome,
@@ -31,6 +32,13 @@ export const EVENT_FORMAT_VERSION = 1;
 
 /** An attempt ID, for example `007-fix`: the run-wide attempt number and the step ID. */
 export type AttemptId = string;
+
+/** The resolved harness settings used for one call, in display order. */
+export interface CallFields {
+  readonly harness: HarnessName;
+  readonly model?: string;
+  readonly effort?: string;
+}
 
 /** An ISO 8601 timestamp with a time zone, as `Date.toISOString` writes it. */
 export type Timestamp = string;
@@ -150,6 +158,8 @@ export interface AttemptStarted extends EventBase {
   readonly attemptId: AttemptId;
   readonly stepId: StepId;
   readonly processGroupId: number;
+  /** The resolved fields used by an agent step's call. */
+  readonly fields?: CallFields;
 }
 
 /**
@@ -162,6 +172,8 @@ export interface IterationStarted extends EventBase {
   readonly attemptId: AttemptId;
   readonly iteration: number;
   readonly processGroupId: number;
+  /** The resolved fields used for this Ralph iteration's call. */
+  readonly fields?: CallFields;
 }
 
 /** Why one Ralph iteration stopped. Only `outcome` ends the attempt cleanly. */

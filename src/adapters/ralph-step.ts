@@ -26,6 +26,7 @@ import { type AttemptPaths, createIterationDirectory } from "./attempt-directory
 import type { EventLog } from "./event-log.ts";
 import { startHarnessCall } from "./harness-call.ts";
 import {
+  callFieldsForCall,
   fillEffortForCall,
   fillFieldForCall,
   fillPromptForCall,
@@ -121,11 +122,12 @@ async function runRalphIteration(
   if ("field" in effort) {
     return { result: "failure", reason: "bad_field", ...effort, iterations: iteration - 1 };
   }
+  const fields = callFieldsForCall(step.harness, model, effort.fields);
   const paths = await createIterationDirectory(attempt, iteration);
   const secret = options.newSecret();
   const prompt = await fillPromptForCall(
     options,
-    { attemptId, stepId: step.id, startedAt, step, steps, iteration },
+    { attemptId, stepId: step.id, startedAt, step, steps, iteration, fields },
     template,
   );
   const started = await startHarnessCall(
@@ -150,6 +152,7 @@ async function runRalphIteration(
     attemptId,
     iteration,
     processGroupId: started.processGroupId,
+    fields,
   });
   const { exit, timedOut } = await waitForIteration(options.stopSignal, step.timeoutMs, started);
   options.setCurrent(undefined);

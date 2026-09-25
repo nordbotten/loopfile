@@ -128,13 +128,14 @@ test("a run in a loop carries its link into status", () => {
   assert.equal(status.loopIndex, 2);
 });
 
-test("an open attempt on an agent step fills current from the workflow", () => {
+test("an open agent attempt gets its current harness from call fields", () => {
   const log = events(created, {
     type: "attempt.started",
     at: at(1),
     attemptId: "001-plan",
     stepId: "plan",
     processGroupId: 1,
+    fields: { harness: "claude" },
   });
   const status = projectStatus(log, context());
 
@@ -149,6 +150,29 @@ test("an open attempt on an agent step fills current from the workflow", () => {
     harness: "claude",
     startedAt: at(1),
   });
+});
+
+test("current harness comes from call fields, and is null before the first fill", () => {
+  const attempt = {
+    type: "attempt.started" as const,
+    at: at(1),
+    attemptId: "001-implement",
+    stepId: "implement",
+    processGroupId: 1,
+  };
+  assert.equal(projectStatus(events(created, attempt), context()).current?.harness, null);
+  const status = projectStatus(
+    events(created, attempt, {
+      type: "iteration.started",
+      at: at(1, 5),
+      attemptId: "001-implement",
+      iteration: 1,
+      processGroupId: 9,
+      fields: { harness: "pi", model: "m1" },
+    }),
+    context(),
+  );
+  assert.equal(status.current?.harness, "pi");
 });
 
 test("a command step's current attempt has no harness and no iteration", () => {

@@ -88,6 +88,7 @@ test("run facts expose workspace details and fill absent branch facts", () => {
         startedAt: "first",
         index: 1,
         newest: false,
+        fields: {},
       },
       {
         stepId: "work",
@@ -100,6 +101,7 @@ test("run facts expose workspace details and fill absent branch facts", () => {
         startedAt: "second",
         index: 2,
         newest: true,
+        fields: {},
       },
     ],
     attempt: {
@@ -113,6 +115,7 @@ test("run facts expose workspace details and fill absent branch facts", () => {
       maxIterations: 1,
       lastIteration: true,
       previousIteration: "",
+      fields: {},
     },
     previous: "",
   });
@@ -213,6 +216,7 @@ test("run facts list earlier attempts and declared run limits", () => {
       startedAt: "first",
       index: 1,
       newest: false,
+      fields: {},
     },
     {
       stepId: "test",
@@ -225,6 +229,7 @@ test("run facts list earlier attempts and declared run limits", () => {
       startedAt: "second",
       index: 2,
       newest: true,
+      fields: {},
     },
   ]);
 });
@@ -260,6 +265,7 @@ test("run facts use the current attempt timestamp when it is not in the event lo
     maxIterations: 1,
     lastIteration: true,
     previousIteration: "",
+    fields: {},
   });
   assert.equal(facts.previous, "");
 });
@@ -304,6 +310,7 @@ test("Ralph iteration facts give the preceding iteration's reason", () => {
       maxIterations: 3,
       lastIteration: false,
       previousIteration: { number: 1, reason: "no_outcome" },
+      fields: {},
     },
     {
       id: "001-loop",
@@ -316,6 +323,7 @@ test("Ralph iteration facts give the preceding iteration's reason", () => {
       maxIterations: 3,
       lastIteration: true,
       previousIteration: { number: 2, reason: "nonzero_exit" },
+      fields: {},
     },
   ]);
 });

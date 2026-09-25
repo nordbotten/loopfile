@@ -1,4 +1,4 @@
-import type { RunEvent } from "../domain/events.ts";
+import type { CallFields, RunEvent } from "../domain/events.ts";
 import type { AttemptId, Step, StepId, Workflow, WorkspaceMode } from "../domain/model.ts";
 import type { PromptDataView } from "./prompt-fill.ts";
 import { type RunLocation, runLocation } from "./run-location.ts";
@@ -43,6 +43,7 @@ export interface EarlierAttemptFacts extends PromptDataView {
   readonly startedAt: string;
   readonly index: number;
   readonly newest: boolean;
+  readonly fields: PromptDataView;
 }
 
 export interface AttemptFacts extends PromptDataView {
@@ -56,6 +57,7 @@ export interface AttemptFacts extends PromptDataView {
   readonly maxIterations: number;
   readonly lastIteration: boolean;
   readonly previousIteration: "" | PreviousIterationFacts;
+  readonly fields: PromptDataView;
 }
 
 export interface PreviousIterationFacts extends PromptDataView {
@@ -72,6 +74,7 @@ export function runFacts(
     readonly stepId: StepId;
     readonly startedAt: string;
     readonly iteration?: number;
+    readonly fields?: CallFields;
   },
   loopfileName = "",
   steps: readonly Step[] = [step],
@@ -148,7 +151,17 @@ function earlierAttempt(
     startedAt: attempt.at,
     index: offset + 1,
     newest: offset === length - 1,
+    fields: lastCallFields(history, attempt.attemptId),
   };
+}
+
+function lastCallFields(history: readonly RunEvent[], attemptId: AttemptId): PromptDataView {
+  const call = history.findLast(
+    (event): event is Extract<RunEvent, { type: "attempt.started" | "iteration.started" }> =>
+      (event.type === "attempt.started" || event.type === "iteration.started") &&
+      event.attemptId === attemptId,
+  );
+  return call?.fields === undefined ? {} : { ...call.fields };
 }
 
 function attemptEnd(history: readonly RunEvent[], attemptId: AttemptId) {
@@ -229,6 +242,7 @@ function attemptFacts(
     readonly stepId: StepId;
     readonly startedAt: string;
     readonly iteration?: number;
+    readonly fields?: CallFields;
   },
 ): AttemptFacts {
   const attempts = attemptsAtStep(history, current.stepId);
@@ -242,6 +256,7 @@ function attemptFacts(
     timeout: step.declaredLimits?.timeout ?? "",
     lastAttempt: number === step.maxAttempts,
     ...iterationFacts(history, step, current.attemptId, current.iteration),
+    fields: current.fields === undefined ? {} : { ...current.fields },
   };
 }
 
