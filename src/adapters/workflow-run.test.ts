@@ -2152,6 +2152,39 @@ steps:
   assert.deepEqual(calls, [{ harness: "pi", model: "opus", effort: "high", args: ["--fast"] }]);
 });
 
+test("an agent effort expression passes a filled harness word to the harness", async () => {
+  const { ended, calls } = await executeFake(
+    `formatVersion: 1
+steps:
+  - id: triage
+    kind: agent
+    harness: pi
+    prompt: Triage.
+    outputs: [effort]
+    on:
+      ready: work
+  - id: work
+    kind: agent
+    harness: claude
+    effort: '\${triage.effort}'
+    prompt: Work.
+    on:
+      done: $success
+`,
+    {
+      triage: [
+        [
+          { do: "dataPut", key: "triage.effort", content: "high" },
+          { do: "result", outcome: "ready" },
+        ],
+      ],
+      work: [[{ do: "result", outcome: "done" }]],
+    },
+  );
+  assert.equal(ended.result, "success");
+  assert.equal(calls[1]?.effort, "high");
+});
+
 test("an agent model expression reads the newest step output value", async () => {
   const { ended, calls } = await executeFake(
     `formatVersion: 1
@@ -2369,4 +2402,91 @@ steps:
         event.reason === "bad_field",
     ),
   );
+});
+
+async function runEffortField(kind: "agent" | "ralph", value: string | undefined) {
+  const { ended, events, calls } = await executeFake(
+    `formatVersion: 1
+steps:
+  - id: triage
+    kind: agent
+    harness: pi
+    prompt: Triage.
+    outputs: [effort]
+    onFailure: work
+    on:
+      ready: work
+  - id: work
+    kind: ${kind}
+    harness: claude
+    effort: '\${triage.effort}'
+    prompt: Work.
+${kind === "ralph" ? "    maxIterations: 1\n" : ""}    onFailure: fallback
+    on:
+      done: $success
+  - id: fallback
+    kind: command
+    run: "true"
+`,
+    {
+      triage:
+        value === undefined
+          ? [[{ do: "exit", code: 1 }]]
+          : [
+              [
+                { do: "dataPut", key: "triage.effort", content: value },
+                { do: "result", outcome: "ready" },
+              ],
+            ],
+      work: [[{ do: "result", outcome: "done" }]],
+    },
+  );
+  const started = events.find(
+    (event) => event.type === "attempt.started" && event.stepId === "work",
+  );
+  assert.ok(started?.type === "attempt.started");
+  const attemptEnd = events.find(
+    (event) => event.type === "attempt.ended" && event.attemptId === started.attemptId,
+  );
+  assert.equal(attemptEnd?.type, "attempt.ended");
+  return { ended, events, calls, attemptEnd };
+}
+
+test("a filled invalid effort writes bad_field with its value and skips the agent harness", async () => {
+  const { ended, calls, attemptEnd } = await runEffortField("agent", "huge");
+  assert.equal(ended.result, "success");
+  assert.equal(calls.length, 1);
+  assert.equal(attemptEnd?.type === "attempt.ended" && attemptEnd.reason, "bad_field");
+  assert.equal(attemptEnd?.type === "attempt.ended" && attemptEnd.field, "effort");
+  assert.equal(attemptEnd?.type === "attempt.ended" && attemptEnd.value, "huge");
+});
+
+test("a Ralph effort expression passes a filled harness word to the iteration", async () => {
+  const { ended, calls } = await runEffortField("ralph", "high");
+  assert.equal(ended.result, "success");
+  assert.equal(calls[1]?.effort, "high");
+});
+
+test("an empty filled effort fails a Ralph attempt with bad_field and no harness call", async () => {
+  const { ended, calls, events, attemptEnd } = await runEffortField("ralph", "");
+  assert.equal(ended.result, "success");
+  assert.equal(calls.length, 1);
+  assert.equal(attemptEnd?.type === "attempt.ended" && attemptEnd.reason, "bad_field");
+  assert.equal(attemptEnd?.type === "attempt.ended" && attemptEnd.field, "effort");
+  assert.equal(attemptEnd?.type === "attempt.ended" && attemptEnd.value, "");
+  assert.equal(
+    events.some(
+      (event) => event.type === "iteration.started" && event.attemptId === attemptEnd?.attemptId,
+    ),
+    false,
+  );
+});
+
+test("an undefined effort writes bad_field without a value or an agent harness call", async () => {
+  const { ended, calls, attemptEnd } = await runEffortField("agent", undefined);
+  assert.equal(ended.result, "success");
+  assert.equal(calls.length, 1);
+  assert.equal(attemptEnd?.type === "attempt.ended" && attemptEnd.reason, "bad_field");
+  assert.equal(attemptEnd?.type === "attempt.ended" && attemptEnd.field, "effort");
+  assert.equal(attemptEnd?.type === "attempt.ended" && "value" in attemptEnd, false);
 });
