@@ -30,6 +30,7 @@ import type {
   StepId,
   Workflow,
 } from "../domain/model.ts";
+import { profileText } from "../domain/model.ts";
 import { dataFile } from "./data-store.ts";
 import type { EventLog } from "./event-log.ts";
 
@@ -92,7 +93,7 @@ export function callFieldsForCall(
   profile?: ProfileSelection,
 ): CallFields {
   return {
-    ...(profile === undefined ? {} : { profile }),
+    ...(profile === undefined ? {} : { profile: profileText(profile) }),
     harness,
     ...(model === undefined ? {} : { model }),
     ...effort,

@@ -66,6 +66,7 @@ import {
   type AgentStep,
   type CommandStep,
   isEndState,
+  profileText,
   type RalphStep,
   type Step,
   type StepId,
@@ -770,7 +771,8 @@ async function runStep(
 
   const started = await startProcessStep(options, owner, workflow, tracked, step, start, activity);
   // A process that never started has no group. 0 is that, since no group has it.
-  const profileFields = step.profile === undefined ? undefined : { profile: step.profile };
+  const profileFields =
+    step.profile === undefined ? undefined : { profile: profileText(step.profile) };
   await start.onProcess(
     started.kind === "running" ? started.processGroupId : 0,
     started.kind === "running" && "fields" in started ? started.fields : profileFields,
@@ -877,7 +879,7 @@ async function runRalph(run: RalphRun, step: RalphStep): Promise<AttemptEndField
   const { start, tracked } = run;
   let latest = start.context.attemptSecret;
   // The iterations start their own processes, so no one group is the attempt's.
-  await start.onProcess(0, step.profile === undefined ? undefined : { profile: step.profile });
+  await start.onProcess(0);
   const result = await runRalphStep(
     {
       executor: run.options.executor,

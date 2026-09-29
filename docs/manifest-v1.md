@@ -120,9 +120,18 @@ A step can use one profile or a list, such as `profile: [review.base,
 implement.high]`. Profiles merge left to right, then the step's own fields
 replace them. Each field is replaced whole, including lists like `args`. A
 profile cannot set `id` or `profile`. Every declared profile is checked for
-known fields and field types, even when no step uses it; a merged step receives
-the same full checks as inline fields. A field expression in a profile reads
-the same declared data keys as a step expression.
+known fields and field types, even when no step uses it. That is the only check
+of a profile that no step uses. A step with its profiles merged gets the same
+full checks as a step written inline, so a field expression or an `effort` in a
+profile is checked in the step that uses it, against that step's harness and
+the declared data keys. An error on a field that the step took from a profile
+has its step path and ends with `(from profile <name>)`. Because a field is
+replaced whole, a profile `prompt` and a step `promptFile` together are a load
+error, as they are on one step.
+
+In the `fields` map of events and `$run`, `profile` is one text value: the
+name, or the names of a list joined by `, `, for example
+`review.base, implement.high`.
 
 ## Agent and Ralph steps
 
@@ -195,7 +204,9 @@ every earlier attempt, oldest first, not the running one. Each has `stepId`,
 `attemptId`, `number` (the visit number for its step), `result`, `reason`,
 `outcome`, `message`, `startedAt`, `index` (from 1), `newest`, and `fields`.
 `fields` holds the selected `profile` (when set) and the resolved harness, model
-and effort from the last call in that attempt, or an empty map if no call started. A step field it leaves out is
+and effort from the last call in that attempt. A command attempt, or an agent
+attempt whose fill failed, has only `profile`. A Ralph attempt with no
+iteration, or an attempt with no profile and no call, has an empty map. A step field it leaves out is
 absent. `$run.attempt` has `id`, `number`, `startedAt`, `maxAttempts`, `timeout`,
 `lastAttempt`, `iteration`, `maxIterations`, `lastIteration`,
 `previousIteration`, and `fields`. Its `fields` map holds the selected `profile` (when set) and resolved values for

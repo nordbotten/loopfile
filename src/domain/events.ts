@@ -21,7 +21,6 @@ import type {
   LoopId,
   Outcome,
   OutputName,
-  ProfileSelection,
   StepId,
   Target,
   WorkspaceMode,
@@ -36,7 +35,7 @@ export type AttemptId = string;
 
 /** The profile and resolved harness settings used for one call, in display order. */
 export interface CallFields {
-  readonly profile?: ProfileSelection;
+  readonly profile?: string;
   readonly harness?: HarnessName;
   readonly model?: string;
   readonly effort?: string;

@@ -215,6 +215,40 @@ steps:
   }
 });
 
+test("a profile list merges left to right and records the list as one text value", async () => {
+  const manifest = `formatVersion: 1
+profiles:
+  review:
+    base:
+      harness: pi
+      model: sonnet
+      args: [--base]
+  implement:
+    high:
+      model: opus
+      effort: xhigh
+steps:
+  - id: work
+    kind: agent
+    profile: [review.base, implement.high]
+    effort: high
+    prompt: Work.
+    on: { done: $success }
+`;
+  const { ended, calls, events } = await executeFake(manifest, {
+    work: [[{ do: "result", outcome: "done" }]],
+  });
+  assert.equal(ended.result, "success");
+  assert.deepEqual(calls, [{ harness: "pi", model: "opus", effort: "high", args: ["--base"] }]);
+  const started = events.find((event) => event.type === "attempt.started");
+  assert.deepEqual(started?.type === "attempt.started" && started.fields, {
+    profile: "review.base, implement.high",
+    harness: "pi",
+    model: "opus",
+    effort: "high",
+  });
+});
+
 test("a fixed Ralph profile applies its fields to each iteration", async () => {
   const manifest = `formatVersion: 1
 profiles:
@@ -239,8 +273,9 @@ steps:
   assert.deepEqual(calls, [
     { harness: "claude", model: "sonnet", effort: "high", args: ["--settings", "{}"] },
   ]);
+  // The iterations hold the call fields, so the Ralph attempt has no map.
   const started = events.find((event) => event.type === "attempt.started");
-  assert.equal(started?.type === "attempt.started" && started.fields?.profile, "implement.high");
+  assert.equal(started?.type === "attempt.started" && "fields" in started, false);
   const iteration = events.find((event) => event.type === "iteration.started");
   assert.equal(iteration?.type === "iteration.started", true);
   if (iteration?.type === "iteration.started") {

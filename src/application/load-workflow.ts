@@ -121,8 +121,9 @@ interface PromptText {
 
 interface FieldExpressionText {
   readonly path: string;
-  readonly text: string;
   readonly reads: readonly string[];
+  /** The report of the step, which names the profile that set the field. */
+  readonly report: Report;
 }
 
 interface Context {
@@ -192,14 +193,14 @@ function buildWorkflow(
     prompts: [],
     fieldExpressions: [],
   };
-  checkProfiles(profiles, ctx);
-  const steps = rawSteps.map((raw, index) => readStep(raw, index, ctx, profiles));
+  const checkedProfiles = checkProfiles(profiles, ctx);
+  const steps = rawSteps.map((raw, index) => readStep(raw, index, ctx, checkedProfiles));
   const built = steps.filter((step): step is Step => step !== undefined);
   // A step that did not build has no outputs and no targets, so checks that
   // read them would report errors that are not real.
   if (built.length !== steps.length || ctx.stepIds.size !== built.length) return undefined;
   checkPlaceholders(ctx.prompts, built, inputs.descriptions, report);
-  checkFieldExpressions(ctx.fieldExpressions, built, inputs.descriptions, report);
+  checkFieldExpressions(ctx.fieldExpressions, built, inputs.descriptions);
   checkReachable(built, report);
   return workflowModel(inputs, limits, built, workspaceMode);
 }
@@ -401,20 +402,26 @@ function readProfiles(value: unknown, report: Report): Record<string, Record<str
   return profiles;
 }
 
+/**
+ * The small check of each profile alone: field names and types. A step merges
+ * only the fields that pass, so a bad field is reported once, at the profile.
+ */
 function checkProfiles(
   profiles: Readonly<Record<string, Readonly<Record<string, Raw>>>>,
   ctx: Context,
-): void {
+): Record<string, Record<string, Raw>> {
+  const checked: Record<string, Record<string, Raw>> = {};
   for (const [group, entries] of Object.entries(profiles)) {
+    checked[group] = {};
     for (const [name, fields] of Object.entries(entries)) {
-      const path = `profiles.${group}.${name}`;
-      checkProfileFields(fields, path, ctx);
-      checkProfileExpressions(fields, path, ctx);
+      checked[group][name] = checkProfileFields(fields, `profiles.${group}.${name}`, ctx);
     }
   }
+  return checked;
 }
 
-function checkProfileFields(fields: Raw, path: string, ctx: Context): void {
+function checkProfileFields(fields: Raw, path: string, ctx: Context): Raw {
+  const valid: Record<string, unknown> = {};
   for (const [field, value] of Object.entries(fields)) {
     const fieldPath = `${path}.${field}`;
     if (field === "id" || field === "profile") {
@@ -425,18 +432,17 @@ function checkProfileFields(fields: Raw, path: string, ctx: Context): void {
       ctx.report(fieldPath, `unknown field \`${field}\``);
       continue;
     }
-    checkProfileField(field, value, fieldPath, ctx);
+    let ok = true;
+    checkProfileField(field, value, fieldPath, {
+      ...ctx,
+      report: (at, message) => {
+        ok = false;
+        ctx.report(at, message);
+      },
+    });
+    if (ok) valid[field] = value;
   }
-}
-
-function checkProfileExpressions(fields: Raw, path: string, ctx: Context): void {
-  const harness =
-    typeof fields.harness === "string" && isHarnessName(fields.harness)
-      ? fields.harness
-      : undefined;
-  const model = typeof fields.model === "string" ? fields.model : undefined;
-  const effort = typeof fields.effort === "string" ? fields.effort : undefined;
-  checkHarnessFieldExpressions(harness, model, effort, path, ctx);
+  return valid;
 }
 
 type ProfileFieldCheck = (value: unknown, path: string, ctx: Context) => void;
@@ -517,19 +523,24 @@ function checkProfileArgs(value: unknown, path: string, ctx: Context): void {
   }
 }
 
+/** The step with its profiles merged, and the profile that set each field the step does not set. */
 function mergeStepProfiles(
   raw: Raw,
   at: string,
   profiles: Readonly<Record<string, Readonly<Record<string, Raw>>>>,
   report: Report,
-): Raw {
+): { readonly merged: Raw; readonly origins: ReadonlyMap<string, string> } {
+  const origins = new Map<string, string>();
   const names = readProfileSelection(raw.profile, at, report);
-  if (names === undefined) return raw;
+  if (names === undefined) return { merged: raw, origins };
   const merged: Record<string, unknown> = {};
   names.forEach((name, index) => {
-    mergeProfile(merged, name, index, Array.isArray(raw.profile), at, profiles, report);
+    const profile = mergeProfile(name, index, Array.isArray(raw.profile), at, profiles, report);
+    for (const field of Object.keys(profile ?? {})) origins.set(field, name);
+    Object.assign(merged, profile);
   });
-  return { ...merged, ...raw };
+  for (const field of Object.keys(raw)) origins.delete(field);
+  return { merged: { ...merged, ...raw }, origins };
 }
 
 function readProfileSelection(
@@ -547,26 +558,24 @@ function readProfileSelection(
 }
 
 function mergeProfile(
-  merged: Record<string, unknown>,
   name: string,
   index: number,
   list: boolean,
   at: string,
   profiles: Readonly<Record<string, Readonly<Record<string, Raw>>>>,
   report: Report,
-): void {
+): Raw | undefined {
   const path = `${at}.profile${list ? `[${index}]` : ""}`;
   const match = /^([a-z][a-z0-9_-]{0,63})\.([a-z][a-z0-9_-]{0,63})$/.exec(name);
   if (match === null) {
     report(path, `profile name \`${name}\` must be group.name`);
-    return;
+    return undefined;
   }
   const profile = declaredProfile(profiles, match[1] ?? "", match[2] ?? "");
   if (profile === undefined) {
     report(path, `profile \`${name}\` is not declared`);
-    return;
   }
-  Object.assign(merged, profile);
+  return profile;
 }
 
 function declaredProfile(
@@ -590,14 +599,28 @@ function readStep(
     ctx.report(at, "a step must be a map");
     return undefined;
   }
-  const merged = mergeStepProfiles(raw, at, profiles, ctx.report);
+  const { merged, origins } = mergeStepProfiles(raw, at, profiles, ctx.report);
+  const stepCtx = { ...ctx, report: reportWithProfile(at, origins, ctx.report) };
   const kind = merged.kind;
   if (kind !== "agent" && kind !== "command" && kind !== "ralph") {
-    ctx.report(`${at}.kind`, "kind is required and must be agent, command or ralph");
+    stepCtx.report(`${at}.kind`, "kind is required and must be agent, command or ralph");
     return undefined;
   }
-  checkFields(merged, kind, at, ctx.report);
-  return readKindStep(merged, kind, at, ctx);
+  checkFields(merged, kind, at, stepCtx.report);
+  return readKindStep(merged, kind, at, stepCtx);
+}
+
+/** Names the profile in an error on a field that the step took from it. */
+function reportWithProfile(
+  at: string,
+  origins: ReadonlyMap<string, string>,
+  report: Report,
+): Report {
+  return (path, message) => {
+    const field = path.startsWith(`${at}.`) ? /^[A-Za-z]+/.exec(path.slice(at.length + 1)) : null;
+    const profile = field === null ? undefined : origins.get(field[0]);
+    report(path, profile === undefined ? message : `${message} (from profile \`${profile}\`)`);
+  };
 }
 
 /** A step of a known kind: the fields every step has, then the ones its kind adds. */
@@ -779,7 +802,7 @@ function checkHarnessFieldExpressions(
     const path = `${at}.${field}`;
     try {
       const expression = parseFieldExpression(value);
-      ctx.fieldExpressions.push({ path, text: value, reads: expression.reads });
+      ctx.fieldExpressions.push({ path, reads: expression.reads, report: ctx.report });
       if (field === "effort") checkFixedEffort(harness, value, expression, at, ctx.report);
     } catch (error) {
       ctx.report(path, error instanceof Error ? error.message : "invalid field expression");
@@ -932,17 +955,13 @@ function checkFieldExpressions(
   fields: readonly FieldExpressionText[],
   steps: readonly Step[],
   inputs: Readonly<Record<string, string>>,
-  report: Report,
 ): void {
   const known = promptKeys(steps, inputs);
   const declared = Object.keys(inputs).join(", ") || "none";
-  const checked = new Set<string>();
   for (const field of fields) {
-    if (checked.has(field.text)) continue;
-    checked.add(field.text);
     for (const name of field.reads) {
       if (!known.has(name)) {
-        report(field.path, `\`{{ ${name} }}\` ${unknownPromptNameMessage(name, declared)}`);
+        field.report(field.path, `\`{{ ${name} }}\` ${unknownPromptNameMessage(name, declared)}`);
       }
     }
   }

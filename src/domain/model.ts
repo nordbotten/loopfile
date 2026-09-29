@@ -51,6 +51,11 @@ export type StepId = string;
 /** One fixed profile name, or the ordered profile names applied to a step. */
 export type ProfileSelection = string | readonly string[];
 
+/** The profiles of a step as one text value, for example `review.base, implement.high`. */
+export function profileText(profile: ProfileSelection): string {
+  return typeof profile === "string" ? profile : profile.join(", ");
+}
+
 /** An outcome a step reports with `loopfile result <outcome>`, matching `NAME_PATTERN`. */
 export type Outcome = string;
 
