@@ -1306,14 +1306,91 @@ test("a filled profile keeps the merged fields of every candidate in the loaded 
       fields.kind,
       "harness" in fields && fields.harness,
       "args" in fields && fields.args,
+      "promptFile" in fields && fields.promptFile,
       fields.timeoutMs,
       fields.declaredLimits?.timeout,
     ]),
     [
-      ["implement.low", "agent", "claude", ["--low"], 1_800_000, "30m"],
-      ["implement.high", "agent", "pi", ["--high"], 600_000, "10m"],
+      [
+        "implement.low",
+        "agent",
+        "claude",
+        ["--low"],
+        "../prompts/work-implement.low.md",
+        1_800_000,
+        "30m",
+      ],
+      [
+        "implement.high",
+        "agent",
+        "pi",
+        ["--high"],
+        "../prompts/work-implement.high.md",
+        600_000,
+        "10m",
+      ],
     ],
   );
+});
+
+test("a mixed fixed and data-picked profile list keeps each merged candidate", () => {
+  const manifest = {
+    formatVersion: 1,
+    inputs: { complexity: "selected profile" },
+    profiles: {
+      base: { common: { harness: "claude", args: ["--base"] } },
+      implement: { low: { model: "sonnet" }, high: { model: "opus" } },
+    },
+    steps: [
+      {
+        id: "work",
+        kind: "agent",
+        profile: ["base.common", `implement.\${input.complexity}`],
+        prompt: "Work.",
+        on: { done: "$success" },
+      },
+    ],
+  };
+  const result = loadWorkflow(manifest, { root: null });
+  assert.equal(result.status, "loaded", JSON.stringify(result));
+  if (result.status !== "loaded") return;
+  assert.deepEqual(
+    result.workflow.steps[0]?.profileCandidates?.map(({ profile, fields }) => [
+      profile,
+      fields.kind === "agent" && fields.harness,
+      fields.kind === "agent" && fields.model,
+      fields.kind === "agent" && fields.args,
+    ]),
+    [
+      [["base.common", "implement.low"], "claude", "sonnet", ["--base"]],
+      [["base.common", "implement.high"], "claude", "opus", ["--base"]],
+    ],
+  );
+});
+
+test("a mixed-type profile list is rejected without trying to parse its non-string item", () => {
+  const manifest = {
+    formatVersion: 1,
+    profiles: { implement: { low: { harness: "claude" } } },
+    steps: [
+      {
+        id: "work",
+        kind: "agent",
+        profile: [4, "implement.low"],
+        harness: "claude",
+        prompt: "Work.",
+        on: { done: "$success" },
+      },
+    ],
+  };
+  const result = loadWorkflow(manifest, { root: null });
+  assert.equal(result.status, "invalid");
+  if (result.status === "invalid") {
+    assert.deepEqual(
+      result.errors.map(({ path }) => path),
+      ["steps[0].profile"],
+    );
+  }
 });
 
 test("a data-picked profile requires a fixed group prefix", () => {
