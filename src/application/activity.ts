@@ -11,7 +11,7 @@
  * appends it.
  */
 
-import type { AttemptEndReason, RunEvent } from "../domain/events.ts";
+import type { CallFields, RunEvent } from "../domain/events.ts";
 import type { AttemptId } from "../domain/model.ts";
 
 /** About how long a line may run before it is cut (ADR 0007: "about 200 characters"). */
@@ -73,10 +73,17 @@ type EventOf<T extends RunEvent["type"]> = Extract<RunEvent, { type: T }>;
 
 /** Each event type ADR 0007 names, and the line it makes. */
 const LINES: { readonly [T in RunEvent["type"]]?: (event: EventOf<T>) => ActivityLine } = {
-  "attempt.started": (event) => ({ attemptId: event.attemptId, text: "step started" }),
+  "attempt.started": (event) => ({
+    attemptId: event.attemptId,
+    text: `step started${formatCallFields(event.fields)}`,
+  }),
+  "iteration.started": (event) => ({
+    attemptId: event.attemptId,
+    text: `iteration ${event.iteration} started${formatCallFields(event.fields)}`,
+  }),
   "attempt.ended": (event) => ({
     attemptId: event.attemptId,
-    text: `step ended ${attemptEndText(event.reason)}`,
+    text: `step ended ${attemptEndText(event)}`,
   }),
   "attempt.interrupted": (event) => ({ attemptId: event.attemptId, text: "step interrupted" }),
   "run.cancelled": () => ({ attemptId: null, text: "run cancelled" }),
@@ -92,8 +99,18 @@ const LINES: { readonly [T in RunEvent["type"]]?: (event: EventOf<T>) => Activit
   }),
 };
 
-function attemptEndText(reason: AttemptEndReason): string {
-  return reason.replaceAll("_", " ");
+function formatCallFields(fields: CallFields | undefined): string {
+  if (fields === undefined) return "";
+  const text = Object.entries(fields)
+    .filter(([, value]) => value !== undefined)
+    .map(([key, value]) => `${key} ${value}`)
+    .join(" ");
+  return text === "" ? "" : ` ${text}`;
+}
+
+function attemptEndText(event: Extract<RunEvent, { type: "attempt.ended" }>): string {
+  if (event.reason !== "bad_field") return event.reason.replaceAll("_", " ");
+  return `bad field${event.field === undefined ? "" : ` ${event.field}`}${event.value === undefined ? "" : ` ${JSON.stringify(event.value)}`}`;
 }
 
 /**

@@ -69,7 +69,7 @@ export async function startAgentStep(
   if (step.model !== undefined && model === undefined) return { kind: "bad-field", field: "model" };
   const effort = await fillEffortForCall(options, step);
   if ("field" in effort) return { kind: "bad-field", ...effort };
-  const fields = callFieldsForCall(step.harness, model, effort.fields);
+  const fields = callFieldsForCall(step.harness, model, effort.fields, step.profile);
   const prompt = await fillPromptForCall(
     options,
     { attemptId: context.attemptId, stepId: context.stepId, startedAt, step, steps, fields },

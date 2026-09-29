@@ -1020,6 +1020,256 @@ test("effort expressions load on agent and Ralph steps", () => {
   assert.equal(result.status, "loaded", JSON.stringify(result));
 });
 
+test("a fixed profile supplies an agent harness, model, effort and args", () => {
+  const manifest = {
+    formatVersion: 1,
+    profiles: {
+      implement: { high: { harness: "pi", model: "opus", effort: "xhigh", args: ["--approve"] } },
+    },
+    steps: [
+      {
+        id: "work",
+        kind: "agent",
+        profile: "implement.high",
+        prompt: "Work.",
+        on: { done: "$success" },
+      },
+    ],
+  };
+  const result = loadWorkflow(manifest, { root: null });
+  assert.equal(result.status, "loaded", JSON.stringify(result));
+  if (result.status !== "loaded") return;
+  const step = result.workflow.steps[0];
+  assert.equal(step?.kind, "agent");
+  if (step?.kind === "agent") {
+    assert.equal(step.profile, "implement.high");
+    assert.equal(step.harness, "pi");
+    assert.equal(step.model, "opus");
+    assert.equal(step.effort, "xhigh");
+    assert.deepEqual(step.args, ["--approve"]);
+  }
+});
+
+test("fixed profiles merge left to right, then step fields replace whole values", () => {
+  const manifest = {
+    formatVersion: 1,
+    profiles: {
+      review: {
+        base: { harness: "claude", model: "base", effort: "low", args: ["--base", "one"] },
+      },
+      implement: { high: { harness: "pi", model: "high", effort: "xhigh", args: ["--profile"] } },
+    },
+    steps: [
+      {
+        id: "work",
+        kind: "agent",
+        profile: ["review.base", "implement.high"],
+        model: "own",
+        args: ["--own"],
+        prompt: "Work.",
+        on: { done: "$success" },
+      },
+    ],
+  };
+  const result = loadWorkflow(manifest, { root: null });
+  assert.equal(result.status, "loaded", JSON.stringify(result));
+  if (result.status !== "loaded") return;
+  const step = result.workflow.steps[0];
+  assert.equal(step?.kind, "agent");
+  if (step?.kind === "agent") {
+    assert.equal(step.harness, "pi");
+    assert.equal(step.model, "own");
+    assert.equal(step.effort, "xhigh");
+    assert.deepEqual(step.args, ["--own"]);
+  }
+});
+
+test("a command profile supplies its run field", () => {
+  const manifest = {
+    formatVersion: 1,
+    profiles: { shell: { check: { run: "echo profiled" } } },
+    steps: [{ id: "check", kind: "command", profile: "shell.check" }],
+  };
+  const result = loadWorkflow(manifest, { root: null });
+  assert.equal(result.status, "loaded", JSON.stringify(result));
+  if (result.status === "loaded") {
+    assert.equal(result.workflow.steps[0]?.kind, "command");
+    if (result.workflow.steps[0]?.kind === "command") {
+      assert.equal(result.workflow.steps[0].run, "echo profiled");
+    }
+  }
+});
+
+test("profile declarations require exactly two named map levels", () => {
+  const cases = [
+    [{ profiles: "bad" }, "profiles"],
+    [{ profiles: { group: "bad" } }, "profiles.group"],
+    [{ profiles: { "Bad group": { name: {} } } }, "profiles.Bad group"],
+    [{ profiles: { group: { "Bad name": {} } } }, "profiles.group.Bad name"],
+    [{ profiles: { group: { name: "bad" } } }, "profiles.group.name"],
+  ] as const;
+  for (const [patch, path] of cases) {
+    const manifest = { ...valid(), ...patch };
+    assert.notEqual(has(manifest, path), "");
+  }
+});
+
+test("profile selectors must be fixed group.name names", () => {
+  for (const [profile, path] of [
+    [1, "steps[0].profile"],
+    [[], "steps[0].profile"],
+    [["bad"], "steps[0].profile[0]"],
+    ["bad", "steps[0].profile"],
+  ] as const) {
+    assert.notEqual(has(withStep(0, { profile }), path), "");
+  }
+});
+
+test("a fixed profile name that is not declared is a load error", () => {
+  for (const profile of ["implement.missing", "implement.constructor", "constructor.prototype"]) {
+    const manifest = withStep(0, { profile });
+    manifest.profiles = { implement: { high: { harness: "claude" } } };
+    assert.match(only(manifest, "steps[0].profile"), /not declared/);
+  }
+});
+
+test("profiles cannot set id or profile", () => {
+  for (const field of ["id", "profile"]) {
+    const manifest = withStep(0, {});
+    manifest.profiles = { implement: { high: { [field]: "bad" } } };
+    assert.match(only(manifest, `profiles.implement.high.${field}`), /cannot set/);
+  }
+});
+
+test("an unused profile with an unknown field or wrong field type is a load error", () => {
+  for (const [value, message] of [
+    [{ surprise: true }, /unknown field/],
+    [{ args: "--x" }, /list of strings/],
+  ] as const) {
+    const manifest = {
+      formatVersion: 1,
+      profiles: { unused: { bad: value } },
+      steps: [{ id: "only", kind: "command", run: "true" }],
+    };
+    const key = "surprise" in value ? "surprise" : "args";
+    assert.match(only(manifest, `profiles.unused.bad.${key}`, { root: null }), message);
+  }
+});
+
+test("unused profiles validate every supported field type", () => {
+  const manifest = {
+    formatVersion: 1,
+    profiles: {
+      unused: {
+        valid: {
+          kind: "command",
+          on: { done: "$success" },
+          onFailure: "$failure",
+          outputs: ["answer"],
+          maxAttempts: 2,
+          maxIterations: 2,
+          timeout: "1m",
+          harness: "claude",
+          model: "opus",
+          effort: "high",
+          prompt: "Work.",
+          promptFile: "prompt.md",
+          run: "true",
+          args: ["--safe"],
+        },
+        map: { outputs: { answer: ["done"] } },
+      },
+    },
+    steps: [{ id: "only", kind: "command", run: "true" }],
+  };
+  assert.equal(loadWorkflow(manifest, { root: null }).status, "loaded");
+
+  for (const [field, value] of [
+    ["kind", "other"],
+    ["on", "done"],
+    ["onFailure", 1],
+    ["outputs", 1],
+    ["maxAttempts", 0],
+    ["maxIterations", 0],
+    ["timeout", "0s"],
+    ["harness", "other"],
+    ["model", 1],
+    ["effort", 1],
+    ["prompt", 1],
+    ["promptFile", 1],
+    ["run", 1],
+    ["args", "--safe"],
+  ] as const) {
+    const invalid = {
+      formatVersion: 1,
+      profiles: { unused: { bad: { [field]: value } } },
+      steps: [{ id: "only", kind: "command", run: "true" }],
+    };
+    assert.notEqual(has(invalid, `profiles.unused.bad.${field}`, { root: null }), "");
+  }
+});
+
+test("a merged profile args list is checked against its harness on the using step", () => {
+  const manifest = withStep(0, { profile: "implement.high" });
+  manifest.profiles = {
+    implement: { high: { harness: "claude", args: ["--model=opus"] } },
+  };
+  const message = only(manifest, "steps[0].args");
+  assert.match(message, /args of step implement has --model/);
+  assert.match(message, /\(from profile `implement.high`\)$/);
+});
+
+test("field expressions inside a profile must read declared Loopfile data keys", () => {
+  const manifest = withStep(2, { profile: "review.base" });
+  manifest.profiles = { review: { base: { model: `\${input.task}` } } };
+  assert.equal(loadWorkflow(manifest, options).status, "loaded");
+
+  const invalid = withStep(2, { profile: "review.base" });
+  invalid.profiles = { review: { base: { model: `\${input.missing}` } } };
+  const message = only(invalid, "steps[2].model");
+  assert.match(message, /neither a declared input nor a step output/);
+  assert.match(message, /\(from profile `review.base`\)$/);
+});
+
+test("a profile that no step uses gets no check of its expressions or effort", () => {
+  const manifest = valid();
+  manifest.profiles = {
+    unused: { lane: { harness: "claude", model: `\${input.nope}`, effort: "xhigh" } },
+  };
+  assert.equal(loadWorkflow(manifest, options).status, "loaded");
+});
+
+test("a profile effort is checked against the harness of the merged step", () => {
+  const manifest = without(2, "effort");
+  const steps = manifest.steps as Record<string, unknown>[];
+  steps[2] = { ...steps[2], profile: "review.base" };
+  manifest.profiles = { review: { base: { harness: "claude", effort: "xhigh" } } };
+  // The step's own harness pi replaces claude, and pi has xhigh.
+  assert.equal(loadWorkflow(manifest, options).status, "loaded");
+
+  steps[2] = { ...steps[2], harness: "claude" };
+  assert.match(only(manifest, "steps[2].effort"), /\(from profile `review.base`\)$/);
+});
+
+test("a bad field of a used profile is reported once, at the profile", () => {
+  const manifest = withStep(2, { profile: "review.base" });
+  manifest.profiles = { review: { base: { surprise: true, args: "--x" } } };
+  assert.deepEqual(
+    errorsOf(manifest).map((error) => error.path),
+    ["profiles.review.base.surprise", "profiles.review.base.args"],
+  );
+});
+
+test("the same unknown name in two steps is reported at each step", () => {
+  const manifest = withStep(0, { model: `\${input.nope}` });
+  const steps = manifest.steps as Record<string, unknown>[];
+  steps[2] = { ...steps[2], model: `\${input.nope}` };
+  assert.deepEqual(
+    errorsOf(manifest).map((error) => error.path),
+    ["steps[0].model", "steps[2].model"],
+  );
+});
+
 test("args on a command step is an error", () => {
   assert.match(
     only(withStep(1, { args: [] }), "steps[1].args"),

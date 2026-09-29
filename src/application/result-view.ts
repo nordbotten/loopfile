@@ -1,6 +1,6 @@
 /** The operator's read-only result view over a run event log (#226). */
 
-import type { RemoteRecord, RunEvent } from "../domain/events.ts";
+import type { CallFields, RemoteRecord, RunEvent } from "../domain/events.ts";
 import type { WorkspaceMode } from "../domain/model.ts";
 import type { RunLifecycle, StatusEndReason, StatusMetrics } from "../domain/status.ts";
 import { formatRemoteLine } from "./remote-view.ts";
@@ -40,6 +40,7 @@ export interface LastOutcome {
   readonly attemptId: string;
   readonly outcome: string;
   readonly message: string | null;
+  readonly fields?: CallFields;
 }
 
 export interface ResultValue {
@@ -152,7 +153,10 @@ export function renderResultView(view: ResultView): string {
 function outcomeText(outcome: LastOutcome | null): string {
   if (outcome === null) return "none";
   const message = outcome.message === null ? "" : `: ${oneLine(outcome.message)}`;
-  return `${outcome.stepId} (${outcome.attemptId}) · ${outcome.outcome}${message}`;
+  const fields = Object.entries(outcome.fields ?? {})
+    .map(([name, value]) => `${name} ${oneLine(value)}`)
+    .join(" ");
+  return `${outcome.stepId} (${outcome.attemptId}) · ${outcome.outcome}${message}${fields ? ` · ${fields}` : ""}`;
 }
 
 function valueLines(
@@ -195,10 +199,16 @@ function lastOutcome(
   const attempt = events.findLast(
     (event) => event.type === "attempt.started" && event.attemptId === outcome.attemptId,
   );
+  const call = events.findLast(
+    (event): event is Extract<RunEvent, { type: "attempt.started" | "iteration.started" }> =>
+      (event.type === "attempt.started" || event.type === "iteration.started") &&
+      event.attemptId === outcome.attemptId,
+  );
   return {
     stepId: attempt?.type === "attempt.started" ? attempt.stepId : "",
     attemptId: outcome.attemptId,
     outcome: outcome.outcome,
     message: outcome.message ?? null,
+    ...(call?.fields === undefined ? {} : { fields: call.fields }),
   };
 }

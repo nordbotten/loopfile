@@ -292,6 +292,66 @@ test("--json carries the format version and one entry per run, with no ANSI", as
   assert.equal(r.output.includes(ESC), false);
 });
 
+test("list does not expose call fields from the event log", async () => {
+  const listHome = join(home, "call-fields-unchanged");
+  const runId = "20260917-160310-abcd";
+  const paths = runPaths(listHome, runId);
+  await mkdir(paths.root, { recursive: true });
+  await writeFile(paths.status, JSON.stringify(statusBody(runId)));
+  await writeFile(
+    paths.events,
+    `${[
+      {
+        type: "run.created",
+        seq: 1,
+        at: "2026-09-17T16:03:00.000Z",
+        runId,
+        eventFormatVersion: 1,
+        modelDigest: "sha256:model",
+        targetFolder: "/repo",
+        inputs: [],
+      },
+      {
+        type: "attempt.started",
+        seq: 2,
+        at: "2026-09-17T16:03:01.000Z",
+        attemptId: "001-review",
+        stepId: "review",
+        processGroupId: 1,
+        fields: { model: "opus", effort: "high" },
+      },
+    ]
+      .map((event) => JSON.stringify(event))
+      .join("\n")}\n`,
+  );
+
+  const json = runner();
+  assert.equal(
+    await listCommand(["list", "--json"], json.out, json.err, { LOOPFILE_HOME: listHome }, false),
+    0,
+  );
+  const run = JSON.parse(json.output).runs[0];
+  assert.deepEqual(Object.keys(run).sort(), [
+    "currentStep",
+    "elapsedMs",
+    "loopId",
+    "loopfileName",
+    "remote",
+    "runId",
+    "startedAt",
+    "state",
+  ]);
+  assert.equal(run.currentStep, "review");
+  assert.doesNotMatch(json.output, /opus|model|effort|fields/);
+
+  const text = runner();
+  assert.equal(
+    await listCommand(["list"], text.out, text.err, { LOOPFILE_HOME: listHome }, false),
+    0,
+  );
+  assert.doesNotMatch(text.output, /opus|model|effort|fields/);
+});
+
 test("--json gives each run its remote record or null", async () => {
   const listHome = join(home, "remote-json");
   const remoteId = "20260917-161010-rmaa";

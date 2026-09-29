@@ -48,6 +48,14 @@ export type AttemptId = string;
 /** A step ID, matching `NAME_PATTERN`. */
 export type StepId = string;
 
+/** One fixed profile name, or the ordered profile names applied to a step. */
+export type ProfileSelection = string | readonly string[];
+
+/** The profiles of a step as one text value, for example `review.base, implement.high`. */
+export function profileText(profile: ProfileSelection): string {
+  return typeof profile === "string" ? profile : profile.join(", ");
+}
+
 /** An outcome a step reports with `loopfile result <outcome>`, matching `NAME_PATTERN`. */
 export type Outcome = string;
 
@@ -74,6 +82,8 @@ export function isEndState(target: Target): target is EndState {
 /** Fields every step kind has. */
 interface StepBase {
   readonly id: StepId;
+  /** The fixed profile name or names whose fields were merged into this step. */
+  readonly profile?: ProfileSelection;
   /**
    * Outcome to target. These keys are the step's only allowed outcomes; any
    * other outcome fails the attempt. Empty only on a command step, which then

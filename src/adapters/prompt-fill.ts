@@ -22,7 +22,15 @@ import {
 import { runFacts } from "../application/run-facts.ts";
 import type { CallFields, RunEvent } from "../domain/events.ts";
 import { isHarnessEffort } from "../domain/harnesses.ts";
-import type { AgentStep, AttemptId, Step, StepId, Workflow } from "../domain/model.ts";
+import type {
+  AgentStep,
+  AttemptId,
+  ProfileSelection,
+  Step,
+  StepId,
+  Workflow,
+} from "../domain/model.ts";
+import { profileText } from "../domain/model.ts";
 import { dataFile } from "./data-store.ts";
 import type { EventLog } from "./event-log.ts";
 
@@ -82,8 +90,14 @@ export function callFieldsForCall(
   harness: CallFields["harness"],
   model: string | undefined,
   effort: Pick<CallFields, "effort">,
+  profile?: ProfileSelection,
 ): CallFields {
-  return { harness, ...(model === undefined ? {} : { model }), ...effort };
+  return {
+    ...(profile === undefined ? {} : { profile: profileText(profile) }),
+    harness,
+    ...(model === undefined ? {} : { model }),
+    ...effort,
+  };
 }
 
 export async function fillEffortForCall(
