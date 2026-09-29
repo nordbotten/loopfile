@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.4.0](https://github.com/nordbotten/loopfile/compare/v0.3.0...v0.4.0) (2026-09-29)
+
+
+### Features
+
+* expose resolved call fields to prompts and status ([#261](https://github.com/nordbotten/loopfile/issues/261)) ([b3074e8](https://github.com/nordbotten/loopfile/commit/b3074e8ad28a1274dd3df2b6a704266985f7407b))
+* fill agent models from workflow data ([#257](https://github.com/nordbotten/loopfile/issues/257)) ([f2e6013](https://github.com/nordbotten/loopfile/commit/f2e6013a90f9275f270c3cd590f5b9fa1efaa231))
+* fill Ralph models before each iteration ([#259](https://github.com/nordbotten/loopfile/issues/259)) ([f46a823](https://github.com/nordbotten/loopfile/commit/f46a823c79731ea2bcdedcf35aa474b1b65180db))
+* fixed profiles for steps ([#264](https://github.com/nordbotten/loopfile/issues/264)) ([d65ab74](https://github.com/nordbotten/loopfile/commit/d65ab74d56afae0e6464802169fb65f1511a0617)), closes [#249](https://github.com/nordbotten/loopfile/issues/249)
+* pick workflow profiles from data ([#267](https://github.com/nordbotten/loopfile/issues/267)) ([ab155a6](https://github.com/nordbotten/loopfile/commit/ab155a6d2ccf8824dbeec01a1520f609e751b347))
+* **result:** show last outcome call fields ([#263](https://github.com/nordbotten/loopfile/issues/263)) ([bc17d4d](https://github.com/nordbotten/loopfile/commit/bc17d4db4e73f20d698b24becf3d30ed93bee554))
+* show fields and profiles in trust prompt ([#268](https://github.com/nordbotten/loopfile/issues/268)) ([27747c9](https://github.com/nordbotten/loopfile/commit/27747c9528e734b13c5aa192d939c6f7738cc742))
+* validate effort expressions before harness calls ([#260](https://github.com/nordbotten/loopfile/issues/260)) ([9ac4318](https://github.com/nordbotten/loopfile/commit/9ac4318055ade1b797962fb6511a8639c666e43e))
+
+
+### Bug Fixes
+
+* **loop-resume:** report an ended loop before the owner ping ([#266](https://github.com/nordbotten/loopfile/issues/266)) ([6e22344](https://github.com/nordbotten/loopfile/commit/6e223446017fabf263865c0ca4693983046c9cfe)), closes [#255](https://github.com/nordbotten/loopfile/issues/255)
+* **tail:** show resolved fields and Ralph iterations ([#262](https://github.com/nordbotten/loopfile/issues/262)) ([9816c6b](https://github.com/nordbotten/loopfile/commit/9816c6b36d79ea3d05ad844d573631009d84cb9d))
+
 ## [0.3.0](https://github.com/nordbotten/loopfile/compare/v0.2.0...v0.3.0) (2026-09-25)
 
 
