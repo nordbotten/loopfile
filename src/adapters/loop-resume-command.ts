@@ -142,6 +142,26 @@ async function checkLoopEvents(
       help: "Inspect events.jsonl before retrying the resume.",
     };
   }
+  const ended = history.events.findLast((event) => event.type === "loop.ended");
+  if (ended?.type === "loop.ended") {
+    if (ended.reason === "internal_error") {
+      if (repeatedLoopInternalError(history.events)) {
+        return {
+          summary:
+            `loop ${loopId} hit the same internal error twice with no progress. ` +
+            "Report it as a bug and start a new loop.",
+          code: "already_ended",
+          help: "Report the repeated internal error as a bug, then start a new loop.",
+        };
+      }
+    } else {
+      return {
+        summary: `loop ${loopId} already ended: ${ended.reason}`,
+        code: "already_ended",
+        help: "Resume is only for a crashed loop: start a new loop instead.",
+      };
+    }
+  }
   if ((await pingOwner(paths.socket, pingTimeoutMs)) === loopId) {
     return {
       summary: `a loop owner is still running loop ${loopId}`,
@@ -149,24 +169,7 @@ async function checkLoopEvents(
       help: "Wait for it to finish, or resume after its owner has stopped.",
     };
   }
-  const ended = history.events.findLast((event) => event.type === "loop.ended");
-  if (ended?.type !== "loop.ended") return undefined;
-  if (ended.reason === "internal_error") {
-    return repeatedLoopInternalError(history.events)
-      ? {
-          summary:
-            `loop ${loopId} hit the same internal error twice with no progress. ` +
-            "Report it as a bug and start a new loop.",
-          code: "already_ended",
-          help: "Report the repeated internal error as a bug, then start a new loop.",
-        }
-      : undefined;
-  }
-  return {
-    summary: `loop ${loopId} already ended: ${ended.reason}`,
-    code: "already_ended",
-    help: "Resume is only for a crashed loop: start a new loop instead.",
-  };
+  return undefined;
 }
 
 async function readLoopHistory(
