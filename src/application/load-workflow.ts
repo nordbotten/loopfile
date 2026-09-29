@@ -28,6 +28,7 @@ import {
   type StepId,
   type Target,
   type Workflow,
+  type WorkflowProfile,
   type WorkspaceMode,
 } from "../domain/model.ts";
 import { durationMillis } from "./duration.ts";
@@ -207,7 +208,7 @@ function buildWorkflow(
   checkPlaceholders(ctx.prompts, built, inputs.descriptions, report);
   checkFieldExpressions(ctx.fieldExpressions, built, inputs.descriptions);
   checkReachable(built, report);
-  return workflowModel(inputs, limits, built, workspaceMode);
+  return workflowModel(inputs, limits, built, workspaceMode, profileSummaries(checkedProfiles));
 }
 
 function workflowModel(
@@ -215,15 +216,36 @@ function workflowModel(
   limits: { maxTransitions?: number; runTimeoutMs?: Millis; declaredRunTimeout?: string },
   steps: readonly Step[],
   workspaceMode: WorkspaceMode | undefined,
+  profiles: readonly WorkflowProfile[],
 ): Workflow {
   return {
     formatVersion: FORMAT_VERSION,
     ...(workspaceMode === undefined ? {} : { workspaceMode }),
     inputs: inputs.descriptions,
     ...optionalInputDefaults(inputs.defaults),
+    ...(profiles.length === 0 ? {} : { profiles }),
     ...limits,
     steps,
   };
+}
+
+function profileSummaries(
+  profiles: Readonly<Record<string, Readonly<Record<string, Raw>>>>,
+): WorkflowProfile[] {
+  return Object.entries(profiles).flatMap(([group, entries]) =>
+    Object.entries(entries).map(([name, fields]) => ({
+      name: `${group}.${name}`,
+      ...(typeof fields.harness === "string" && isHarnessName(fields.harness)
+        ? { harness: fields.harness }
+        : {}),
+      ...(typeof fields.model === "string" ? { model: fields.model } : {}),
+      ...(typeof fields.effort === "string" ? { effort: fields.effort } : {}),
+      ...(Array.isArray(fields.args) && fields.args.every((arg) => typeof arg === "string")
+        ? { args: fields.args }
+        : {}),
+      ...(typeof fields.run === "string" ? { run: fields.run } : {}),
+    })),
+  );
 }
 
 function readWorkspaceMode(manifest: Raw, report: Report): WorkspaceMode | undefined {
