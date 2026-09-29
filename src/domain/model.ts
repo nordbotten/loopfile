@@ -165,6 +165,16 @@ export interface CommandStep extends StepBase {
 
 export type Step = AgentStep | RalphStep | CommandStep;
 
+/** The fields of one declared profile that the Remote Loopfile trust prompt shows. */
+export interface WorkflowProfile {
+  readonly name: string;
+  readonly harness?: HarnessName;
+  readonly model?: string;
+  readonly effort?: string;
+  readonly args?: readonly string[];
+  readonly run?: string;
+}
+
 /** One loaded Loopfile's workflow. */
 export interface Workflow {
   readonly formatVersion: typeof FORMAT_VERSION;
@@ -180,6 +190,8 @@ export interface Workflow {
    * manifests without defaults keep their original model shape.
    */
   readonly inputDefaults?: Readonly<Record<InputName, string>>;
+  /** Profile declarations, retained for the Remote Loopfile trust prompt. */
+  readonly profiles?: readonly WorkflowProfile[];
   /** Transitions allowed in a run. Left out means no limit. */
   readonly maxTransitions?: number;
   /** Run owner time allowed for a run. Left out means no limit. */

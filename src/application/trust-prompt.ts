@@ -1,4 +1,4 @@
-import type { Step, Workflow } from "../domain/model.ts";
+import { profileText, type Step, type Workflow } from "../domain/model.ts";
 
 export interface TrustPromptRemote {
   readonly host: string;
@@ -31,6 +31,7 @@ export function renderTrustPrompt(
     `  Commit   ${remote.sha}  (${remote.ref ?? "default branch"})`,
     `  Steps    ${workflow.steps.length}`,
     ...stepLines(workflow.steps, color),
+    ...profileLines(workflow.profiles, color),
     "",
     `  Full text: ${colorize(`loopfile unpack ${unpackSource(remote, source)} ./look`, color, "2")}`,
   ];
@@ -68,10 +69,45 @@ function stepLines(steps: Workflow["steps"], color: boolean): string[] {
   return lines;
 }
 
+function profileLines(profiles: Workflow["profiles"], color: boolean): string[] {
+  if (profiles === undefined || profiles.length === 0) return [];
+  const lines = ["", "  Profiles"];
+  for (const profile of profiles) {
+    lines.push(
+      `    ${profile.name.padEnd(20)} ${harnessDetails(profile.harness, profile.model, profile.effort)}`,
+    );
+    if (profile.args !== undefined) {
+      lines.push(
+        `    ${"".padEnd(20)} ${"".padEnd(8)} ${colorize("args:", color, "33")} ${profile.args.join(" ")}`,
+      );
+    }
+    if (profile.run !== undefined) {
+      const runLines = profile.run.split(/\r?\n/);
+      lines.push(
+        `    ${"".padEnd(20)} ${"".padEnd(8)} ${colorize("runs:", color, "33")} ${runLines[0]}${runLines.length > 1 ? colorize(" …", color, "2") : ""}`,
+      );
+    }
+  }
+  return lines;
+}
+
+function harnessDetails(
+  harness: string | undefined,
+  model: string | undefined,
+  effort: string | undefined,
+): string {
+  return `${harness ?? "-"} ${model ?? "-"}${effort === undefined ? "" : ` (${effort})`}`;
+}
+
 function stepDescription(step: Step, color: boolean): string {
+  let description: string;
   if (step.kind === "command") {
     const lines = step.run.split(/\r?\n/);
-    return `runs: ${lines[0]}${lines.length > 1 ? colorize(" …", color, "2") : ""}`;
+    description = `runs: ${lines[0]}${lines.length > 1 ? colorize(" …", color, "2") : ""}`;
+  } else {
+    description = harnessDetails(step.harness, step.model, step.effort);
   }
-  return "harness" in step ? `${step.harness} ${step.model ?? "-"}` : "-";
+  return step.profile === undefined
+    ? description
+    : `${description} profile ${profileText(step.profile)}`;
 }
