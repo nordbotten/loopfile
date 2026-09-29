@@ -26,6 +26,7 @@ import {
   callFieldsForCall,
   fillEffortForCall,
   fillFieldForCall,
+  fillProfileForCall,
   fillPromptForCall,
   type PromptFillOptions,
 } from "./prompt-fill.ts";
@@ -34,8 +35,9 @@ export type AgentStepStart =
   | (StartFailure & { readonly reason: "start_failed" })
   | {
       readonly kind: "bad-field";
-      readonly field: "model" | "effort";
+      readonly field: "profile" | "model" | "effort";
       readonly value?: string;
+      readonly profile?: AgentStep["profile"];
     }
   | (Pick<RunningProcess, "kind" | "processGroupId" | "cancel"> & {
       /** Resolved fields used for the harness call. */
@@ -62,14 +64,21 @@ export async function startAgentStep(
   startedAt = new Date().toISOString(),
   steps?: readonly Step[],
 ): Promise<AgentStepStart> {
+  const selection = await fillProfileForCall(options, step);
+  if ("field" in selection) return { kind: "bad-field", ...selection };
+  if (selection.step.kind !== "agent")
+    throw new Error(`profile changed agent step ${step.id} kind`);
+  step = selection.step;
   if (isAbsolute(step.promptFile)) {
     throw new Error(`promptFile is not relative to the Loopfile: ${step.promptFile}`);
   }
   const model = step.model === undefined ? undefined : await fillFieldForCall(options, step.model);
-  if (step.model !== undefined && model === undefined) return { kind: "bad-field", field: "model" };
+  if (step.model !== undefined && model === undefined) {
+    return { kind: "bad-field", field: "model", profile: selection.profile };
+  }
   const effort = await fillEffortForCall(options, step);
-  if ("field" in effort) return { kind: "bad-field", ...effort };
-  const fields = callFieldsForCall(step.harness, model, effort.fields, step.profile);
+  if ("field" in effort) return { kind: "bad-field", ...effort, profile: selection.profile };
+  const fields = callFieldsForCall(step.harness, model, effort.fields, selection.profile);
   const prompt = await fillPromptForCall(
     options,
     { attemptId: context.attemptId, stepId: context.stepId, startedAt, step, steps, fields },

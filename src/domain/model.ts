@@ -51,6 +51,27 @@ export type StepId = string;
 /** One fixed profile name, or the ordered profile names applied to a step. */
 export type ProfileSelection = string | readonly string[];
 
+/** The call-time fields retained for one possible value of a data-picked profile. */
+export type ProfileCandidateFields =
+  | (Pick<
+      AgentStep,
+      "harness" | "model" | "effort" | "args" | "promptFile" | "timeoutMs" | "declaredLimits"
+    > & {
+      readonly kind: "agent";
+    })
+  | (Pick<
+      RalphStep,
+      "harness" | "model" | "effort" | "args" | "promptFile" | "timeoutMs" | "declaredLimits"
+    > & {
+      readonly kind: "ralph";
+    })
+  | (Pick<CommandStep, "run" | "timeoutMs" | "declaredLimits"> & { readonly kind: "command" });
+
+export interface ProfileCandidate {
+  readonly profile: ProfileSelection;
+  readonly fields: ProfileCandidateFields;
+}
+
 /** The profiles of a step as one text value, for example `review.base, implement.high`. */
 export function profileText(profile: ProfileSelection): string {
   return typeof profile === "string" ? profile : profile.join(", ");
@@ -82,8 +103,10 @@ export function isEndState(target: Target): target is EndState {
 /** Fields every step kind has. */
 interface StepBase {
   readonly id: StepId;
-  /** The fixed profile name or names whose fields were merged into this step. */
+  /** The fixed profile name or names, or field expressions, merged into this step. */
   readonly profile?: ProfileSelection;
+  /** Merged call-time fields, one per possible filled profile selection. */
+  readonly profileCandidates?: readonly ProfileCandidate[];
   /**
    * Outcome to target. These keys are the step's only allowed outcomes; any
    * other outcome fails the attempt. Empty only on a command step, which then

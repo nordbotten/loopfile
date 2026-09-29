@@ -1270,6 +1270,205 @@ test("the same unknown name in two steps is reported at each step", () => {
   );
 });
 
+test("a filled profile keeps the merged fields of every candidate in the loaded model", () => {
+  const manifest = {
+    formatVersion: 1,
+    inputs: { complexity: "selected profile" },
+    profiles: {
+      implement: {
+        low: {
+          harness: "claude",
+          model: "sonnet",
+          effort: "medium",
+          args: ["--low"],
+          timeout: "30m",
+        },
+        high: { harness: "pi", model: "opus", effort: "xhigh", args: ["--high"], timeout: "10m" },
+      },
+    },
+    steps: [
+      {
+        id: "work",
+        kind: "agent",
+        profile: `implement.\${input.complexity}`,
+        prompt: "Work.",
+        on: { done: "$success" },
+      },
+    ],
+  };
+  const result = loadWorkflow(manifest, { root: null });
+  assert.equal(result.status, "loaded", JSON.stringify(result));
+  if (result.status !== "loaded") return;
+  const step = result.workflow.steps[0];
+  assert.deepEqual(
+    step?.profileCandidates?.map(({ profile, fields }) => [
+      profile,
+      fields.kind,
+      "harness" in fields && fields.harness,
+      "args" in fields && fields.args,
+      "promptFile" in fields && fields.promptFile,
+      fields.timeoutMs,
+      fields.declaredLimits?.timeout,
+    ]),
+    [
+      [
+        "implement.low",
+        "agent",
+        "claude",
+        ["--low"],
+        "../prompts/work-implement.low.md",
+        1_800_000,
+        "30m",
+      ],
+      [
+        "implement.high",
+        "agent",
+        "pi",
+        ["--high"],
+        "../prompts/work-implement.high.md",
+        600_000,
+        "10m",
+      ],
+    ],
+  );
+});
+
+test("a mixed fixed and data-picked profile list keeps each merged candidate", () => {
+  const manifest = {
+    formatVersion: 1,
+    inputs: { complexity: "selected profile" },
+    profiles: {
+      base: { common: { harness: "claude", args: ["--base"] } },
+      implement: { low: { model: "sonnet" }, high: { model: "opus" } },
+    },
+    steps: [
+      {
+        id: "work",
+        kind: "agent",
+        profile: ["base.common", `implement.\${input.complexity}`],
+        prompt: "Work.",
+        on: { done: "$success" },
+      },
+    ],
+  };
+  const result = loadWorkflow(manifest, { root: null });
+  assert.equal(result.status, "loaded", JSON.stringify(result));
+  if (result.status !== "loaded") return;
+  assert.deepEqual(
+    result.workflow.steps[0]?.profileCandidates?.map(({ profile, fields }) => [
+      profile,
+      fields.kind === "agent" && fields.harness,
+      fields.kind === "agent" && fields.model,
+      fields.kind === "agent" && fields.args,
+    ]),
+    [
+      [["base.common", "implement.low"], "claude", "sonnet", ["--base"]],
+      [["base.common", "implement.high"], "claude", "opus", ["--base"]],
+    ],
+  );
+});
+
+test("a mixed-type profile list is rejected without trying to parse its non-string item", () => {
+  const manifest = {
+    formatVersion: 1,
+    profiles: { implement: { low: { harness: "claude" } } },
+    steps: [
+      {
+        id: "work",
+        kind: "agent",
+        profile: [4, "implement.low"],
+        harness: "claude",
+        prompt: "Work.",
+        on: { done: "$success" },
+      },
+    ],
+  };
+  const result = loadWorkflow(manifest, { root: null });
+  assert.equal(result.status, "invalid");
+  if (result.status === "invalid") {
+    assert.deepEqual(
+      result.errors.map(({ path }) => path),
+      ["steps[0].profile"],
+    );
+  }
+});
+
+test("a data-picked profile requires a fixed group prefix", () => {
+  const manifest = {
+    formatVersion: 1,
+    inputs: { complexity: "selected profile" },
+    profiles: { implement: { low: { harness: "claude" } } },
+    steps: [
+      {
+        id: "work",
+        kind: "agent",
+        profile: `\${input.complexity}`,
+        harness: "claude",
+        prompt: "Work.",
+        on: { done: "$success" },
+      },
+    ],
+  };
+  assert.match(only(manifest, "steps[0].profile"), /fixed group name and dot/);
+});
+
+test("each data-picked profile is fully checked and a bad candidate names its profile", () => {
+  const manifest = {
+    formatVersion: 1,
+    inputs: { complexity: "selected profile" },
+    profiles: {
+      implement: {
+        low: { harness: "claude", effort: "high" },
+        high: { harness: "claude", effort: "xhigh" },
+      },
+    },
+    steps: [
+      {
+        id: "work",
+        kind: "agent",
+        profile: `implement.\${input.complexity}`,
+        prompt: "Work.",
+        on: { done: "$success" },
+      },
+    ],
+  };
+  const message = has(manifest, "steps[0].effort", { root: null });
+  assert.match(message, /from profile `implement.high`/);
+});
+
+test("a profile picked by data cannot set graph fields", () => {
+  for (const field of ["kind", "on", "onFailure", "outputs", "maxAttempts", "maxIterations"]) {
+    const value =
+      field === "kind"
+        ? "agent"
+        : field === "on"
+          ? { done: "$success" }
+          : field === "onFailure"
+            ? "$failure"
+            : field === "outputs"
+              ? ["answer"]
+              : 2;
+    const manifest = {
+      formatVersion: 1,
+      inputs: { complexity: "selected profile" },
+      profiles: { implement: { low: { harness: "claude", [field]: value } } },
+      steps: [
+        {
+          id: "work",
+          kind: "agent",
+          profile: `implement.\${input.complexity}`,
+          prompt: "Work.",
+          on: { done: "$success" },
+        },
+      ],
+    };
+    assert.match(
+      has(manifest, `profiles.implement.low.${field}`, { root: null }),
+      /selected by data cannot set/,
+    );
+  }
+});
+
 test("args on a command step is an error", () => {
   assert.match(
     only(withStep(1, { args: [] }), "steps[1].args"),

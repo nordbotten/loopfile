@@ -92,7 +92,7 @@ which every step can read. The step ID `input` is reserved.
 | --- | --- | --- | --- |
 | `id` | yes | — | Unique in the manifest. `input` is reserved for launch inputs. |
 | `kind` | yes | — | `agent`, `command` or `ralph`. |
-| `profile` | no | none | A fixed profile name or list of names, applied left to right before the step's own fields. |
+| `profile` | no | none | A fixed profile name or list, or a data-picked `group.${...}` item. Profiles apply left to right before the step's own fields. |
 | `on` | agent and ralph | `{}` | A map from outcome to target. Its keys are the step's only allowed outcomes. |
 | `onFailure` | no | `$failure` | Where a failed attempt goes. |
 | `outputs` | no | none | The data keys the step must put. A list, or a map from name to outcomes. |
@@ -117,17 +117,25 @@ profiles:
 ```
 
 A step can use one profile or a list, such as `profile: [review.base,
-implement.high]`. Profiles merge left to right, then the step's own fields
-replace them. Each field is replaced whole, including lists like `args`. A
-profile cannot set `id` or `profile`. Every declared profile is checked for
-known fields and field types, even when no step uses it. That is the only check
-of a profile that no step uses. A step with its profiles merged gets the same
-full checks as a step written inline, so a field expression or an `effort` in a
-profile is checked in the step that uses it, against that step's harness and
-the declared data keys. An error on a field that the step took from a profile
-has its step path and ends with `(from profile <name>)`. Because a field is
-replaced whole, a profile `prompt` and a step `promptFile` together are a load
-error, as they are on one step.
+implement.high]`. A profile item can instead pick from a fixed group with data:
+`profile: implement.${triage.complexity ?? "medium"}`. Every item is filled
+before each call, including every Ralph iteration. A data-picked item must start
+with a literal `group.`; the run owner rejects a filled name that is not in
+that group with `bad_field` on `profile`.
+
+Profiles merge left to right, then the step's own fields replace them. Each
+field is replaced whole, including lists like `args`. A profile cannot set `id`
+or `profile`. Every declared profile is checked for known fields and field
+types, even when no step uses it. For data-picked profiles, the loader checks
+the fully merged step once for every profile in the group and retains each
+candidate's merged call-time fields. These profiles may set only `harness`,
+`model`, `effort`, `args`, `prompt`, `promptFile`, `timeout` and `run`; they
+cannot set graph fields such as `kind`, `on`, `outputs` or step limits. Field
+expressions and effort values are checked against each candidate's harness.
+An error on a field that the step took from a profile has its step path and
+ends with `(from profile <name>)`. Because a field is replaced whole, a profile
+`prompt` and a step `promptFile` together are a load error, as they are on one
+step.
 
 In the `fields` map of events and `$run`, `profile` is one text value: the
 name, or the names of a list joined by `, `, for example
@@ -145,16 +153,17 @@ name, or the names of a list joined by `, `, for example
 | `args` | no | `[]` | A list of strings. The adapter gives each one to the harness as one argument, unchanged: no shell, no templating, no `{{ ... }}` placeholders. The loader rejects an owned flag (see below). On a Ralph step every iteration gets the same `args`. |
 | `maxIterations` | ralph only, no | `10` | An integer of 1 or more, per attempt. |
 
-On an agent or Ralph step, `model` and `effort` are field text written without
-backticks. Either may mix fixed text with `${ <expression> }`, for example
-`model: claude-${triage.size}`, `model: ${triage.model ?? "opus"}` or
-`effort: ${triage.effort}`. Write `\${` for literal `${`. Expressions read
-declared inputs and step outputs; the newest value is used. The run owner fills
-them before each harness call, so each Ralph iteration sees data from earlier
-iterations. A missing value that remains `undefined` fails the attempt with
-`bad_field` and takes `onFailure`. The loader does not check literals inside an
-effort expression; the filled value must be one of the harness's words or the
-attempt fails with `bad_field` before the call. Allowed operators are `!`,
+On an agent or Ralph step, `model`, `effort` and data-picked `profile` items
+are field text written without backticks. `model` and `effort` may mix fixed
+text with `${ <expression> }`, for example `model: claude-${triage.size}`,
+`model: ${triage.model ?? "opus"}` or `effort: ${triage.effort}`. Write `\${`
+for literal `${`. Expressions read declared inputs and step outputs; the newest
+value is used. The run owner fills them before each harness call, so each Ralph
+iteration sees data from earlier iterations. A missing value that remains
+`undefined` fails the attempt with `bad_field` and takes `onFailure`. The loader
+does not check literals inside an effort expression; the filled value must be
+one of the picked harness's words or the attempt fails with `bad_field` before
+the call. Allowed operators are `!`,
 `&&`, `||`, `??`, `==`, `!=`, `===`, `!==`, `<`, `>`, `<=`, `>=`, `+`, `*`,
 `/`, `%` and `?:`, with parentheses. Calls, computed access, `this`, arrays,
 objects, and mixing `??` with `||` are load errors. No JavaScript is evaluated.
@@ -268,7 +277,7 @@ ignores untrusted project `.pi` files. To trust them, add `--approve` to `args`.
 
 | Field | Required | Default | Meaning |
 | --- | --- | --- | --- |
-| `run` | yes | — | One string, run as `sh -e -c <run>`. Empty or whitespace-only is a load error. |
+| `run` | yes | — | One string, run as `sh -e -c <run>`. Empty or whitespace-only is a load error. A data-picked profile can select it at attempt start. |
 
 The working directory is always the workspace root, and the process inherits the
 launch environment after any execution-context variables are removed, plus the

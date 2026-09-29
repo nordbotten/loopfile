@@ -215,6 +215,44 @@ steps:
   }
 });
 
+test("a profile picked from data supplies the selected call fields", async () => {
+  const manifest = `formatVersion: 1
+inputs: { complexity: selected profile }
+profiles:
+  implement:
+    low:
+      harness: claude
+      model: sonnet
+      effort: medium
+      args: [--low]
+    high:
+      harness: pi
+      model: opus
+      effort: xhigh
+      args: [--approve]
+steps:
+  - id: work
+    kind: agent
+    profile: implement.\${input.complexity}
+    prompt: Work.
+    on: { done: $success }
+`;
+  const { ended, calls, events } = await executeFake(
+    manifest,
+    { work: [[{ do: "result", outcome: "done" }]] },
+    { complexity: "high" },
+  );
+  assert.equal(ended.result, "success");
+  assert.deepEqual(calls, [{ harness: "pi", model: "opus", effort: "xhigh", args: ["--approve"] }]);
+  const started = events.find((event) => event.type === "attempt.started");
+  assert.deepEqual(started?.type === "attempt.started" && started.fields, {
+    profile: "implement.high",
+    harness: "pi",
+    model: "opus",
+    effort: "xhigh",
+  });
+});
+
 test("a profile list merges left to right and records the list as one text value", async () => {
   const manifest = `formatVersion: 1
 profiles:
@@ -247,6 +285,197 @@ steps:
     model: "opus",
     effort: "high",
   });
+});
+
+test("Ralph fills a new profile each iteration and can switch harnesses", async () => {
+  const manifest = `formatVersion: 1
+inputs: { complexity: selected profile }
+profiles:
+  implement:
+    low: { harness: claude, model: sonnet }
+    high: { harness: pi, model: opus }
+steps:
+  - id: work
+    kind: ralph
+    profile: implement.\${work.complexity ?? input.complexity}
+    outputs: [complexity]
+    maxIterations: 2
+    prompt: Work.
+    on: { done: $success }
+`;
+  const { ended, calls, events } = await executeFake(
+    manifest,
+    {
+      work: [
+        [{ do: "dataPut", key: "work.complexity", content: "high" }],
+        [{ do: "result", outcome: "done" }],
+      ],
+    },
+    { complexity: "low" },
+  );
+  assert.equal(ended.result, "success");
+  assert.deepEqual(
+    calls.map(({ harness, model }) => [harness, model]),
+    [
+      ["claude", "sonnet"],
+      ["pi", "opus"],
+    ],
+  );
+  assert.deepEqual(
+    events
+      .filter((event) => event.type === "iteration.started")
+      .map((event) =>
+        event.type === "iteration.started" ? [event.fields?.profile, event.fields?.harness] : [],
+      ),
+    [
+      ["implement.low", "claude"],
+      ["implement.high", "pi"],
+    ],
+  );
+});
+
+test("a command profile picked from data runs its run and records only profile", async () => {
+  const manifest = `formatVersion: 1
+inputs: { complexity: selected profile }
+profiles:
+  shell:
+    low: { run: echo low > output.txt }
+    high: { run: echo high > output.txt }
+steps:
+  - id: build
+    kind: command
+    profile: shell.\${input.complexity}
+  - id: verify
+    kind: command
+    run: test "$(cat output.txt)" = high
+`;
+  const { ended, events, paths } = await execute(manifest, undefined, { complexity: "high" });
+  assert.equal(ended.result, "success");
+  assert.equal(await readFile(join(paths.workspace, "output.txt"), "utf8"), "high\n");
+  const started = events.find((event) => event.type === "attempt.started");
+  assert.deepEqual(started?.type === "attempt.started" ? started.fields : undefined, {
+    profile: "shell.high",
+  });
+});
+
+test("an unknown filled profile fails the attempt with bad_field and its name", async () => {
+  const manifest = `formatVersion: 1
+inputs: { complexity: selected profile }
+profiles:
+  implement:
+    low: { harness: claude }
+steps:
+  - id: work
+    kind: agent
+    profile: implement.\${input.complexity}
+    prompt: Work.
+    on: { done: $success }
+    onFailure: fallback
+  - id: fallback
+    kind: command
+    run: 'true'
+`;
+  const { ended, calls, events } = await executeFake(
+    manifest,
+    { work: [], fallback: [] },
+    { complexity: "urgent" },
+  );
+  assert.equal(ended.result, "success");
+  assert.deepEqual(calls, []);
+  const end = events.find(
+    (event) => event.type === "attempt.ended" && event.reason === "bad_field",
+  );
+  assert.equal(end?.type === "attempt.ended" && end.reason, "bad_field");
+  assert.equal(end?.type === "attempt.ended" && end.field, "profile");
+  assert.equal(end?.type === "attempt.ended" && end.value, "implement.urgent");
+});
+
+test("filled effort is checked against the picked profile's harness", async () => {
+  const manifest = `formatVersion: 1
+inputs:
+  complexity: selected profile
+  effort: harness effort
+profiles:
+  implement:
+    low: { harness: claude, effort: '\${input.effort}' }
+    high: { harness: pi, effort: '\${input.effort}' }
+steps:
+  - id: work
+    kind: agent
+    profile: implement.\${input.complexity}
+    prompt: Work.
+    on: { done: $success }
+    onFailure: fallback
+  - id: fallback
+    kind: command
+    run: 'true'
+`;
+  const { ended, calls, events } = await executeFake(
+    manifest,
+    { work: [], fallback: [] },
+    { complexity: "low", effort: "xhigh" },
+  );
+  assert.equal(ended.result, "success");
+  assert.deepEqual(calls, []);
+  const end = events.find(
+    (event) => event.type === "attempt.ended" && event.reason === "bad_field",
+  );
+  assert.equal(end?.type === "attempt.ended" && end.reason, "bad_field");
+  assert.equal(end?.type === "attempt.ended" && end.field, "effort");
+  assert.equal(end?.type === "attempt.ended" && end.value, "xhigh");
+
+  const accepted = await executeFake(
+    manifest,
+    { work: [[{ do: "result", outcome: "done" }]] },
+    { complexity: "high", effort: "xhigh" },
+  );
+  assert.equal(accepted.ended.result, "success");
+  assert.deepEqual(accepted.calls, [{ harness: "pi", effort: "xhigh", args: [] }]);
+});
+
+test("a picked profile sets current.harness in status.json", async () => {
+  const manifest = `formatVersion: 1
+inputs: { complexity: selected profile }
+profiles:
+  implement:
+    low: { harness: claude }
+    high: { harness: pi }
+steps:
+  - id: work
+    kind: agent
+    profile: implement.\${input.complexity}
+    prompt: Work.
+    on: { done: $success }
+`;
+  const { repo, source, home, runId } = await setup(manifest);
+  const paths = runPaths(home, runId);
+  const adapters = fakeHarnessAdapters({
+    work: [
+      [
+        { do: "sleep", ms: 500 },
+        { do: "result", outcome: "done" },
+      ],
+    ],
+  });
+  const running = executeRun({
+    home,
+    runId,
+    source,
+    repository: repo,
+    inputs: { complexity: "high" },
+    executor: localExecutor(),
+    adapters,
+  });
+  let harness: unknown;
+  for (let tries = 0; tries < 100 && harness !== "pi"; tries += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    const text = await readFile(paths.status, "utf8").catch(() => "");
+    if (text === "") continue;
+    const status = JSON.parse(text) as { current?: { harness?: unknown } | null };
+    harness = status.current?.harness;
+  }
+  assert.equal(harness, "pi");
+  await running;
 });
 
 test("a fixed Ralph profile applies its fields to each iteration", async () => {

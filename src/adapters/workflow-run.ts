@@ -30,6 +30,7 @@ import {
 } from "../application/executor.ts";
 import type { HarnessActivity, HarnessAdapters } from "../application/harness.ts";
 import type { LaunchInputs } from "../application/launch-inputs.ts";
+import { inlinePromptFile } from "../application/load-workflow.ts";
 import type { AttemptIdentity } from "../application/owner-protocol.ts";
 import { nextAttemptId, parseEventLog, replay } from "../application/replay.ts";
 import { resumePlan, resumeRefusal } from "../application/resume.ts";
@@ -90,6 +91,7 @@ import type { EventLog, NewEvent } from "./event-log.ts";
 import { harnessActivityRouter } from "./harness-activity-router.ts";
 import { DEFAULT_HARNESS_ADAPTERS } from "./harness-adapters.ts";
 import { groupAlive } from "./local-executor.ts";
+import { fillProfileForCall } from "./prompt-fill.ts";
 import { runRalphStep } from "./ralph-step.ts";
 import { resultHandler } from "./result-handler.ts";
 import { type RunPaths, runPaths } from "./run-directory.ts";
@@ -570,7 +572,7 @@ async function loadRunWorkflow(options: ExecuteRunOptions, paths: RunPaths): Pro
   if (loaded.status !== "loaded") {
     throw new WorkflowRunError(`the Loopfile at ${options.source} did not load: ${loaded.status}`);
   }
-  await writeInlinePrompts(paths);
+  await writeInlinePrompts(paths, loaded.workflow);
   return loaded.workflow;
 }
 
@@ -587,29 +589,44 @@ function materialize(options: ExecuteRunOptions, destination: string): Promise<v
  * paths only, so the text is read from the manifest copy in the run, which the
  * loader has just accepted.
  */
-async function writeInlinePrompts(paths: RunPaths): Promise<void> {
+async function writeInlinePrompts(paths: RunPaths, workflow: Workflow): Promise<void> {
   const manifest = parseDocument(
     await readFile(join(paths.loopfile, MANIFEST_NAME), "utf8"),
   ).toJS();
-  const steps: unknown = manifest?.steps;
-  if (!Array.isArray(steps)) return;
+  const rawSteps: unknown = manifest?.steps;
+  if (!Array.isArray(rawSteps)) return;
   await mkdir(paths.prompts, { recursive: true });
-  for (const step of steps) {
-    const prompt = inlinePromptForStep(step, manifest?.profiles);
-    if (prompt !== undefined) {
-      await writeFile(join(paths.prompts, `${prompt.id}.md`), prompt.text);
-    }
+  for (const step of workflow.steps) {
+    const raw = rawSteps.find((candidate) => isInlineRecord(candidate) && candidate.id === step.id);
+    if (isInlineRecord(raw)) await writeStepInlinePrompts(paths, step, raw, manifest?.profiles);
   }
 }
 
-function inlinePromptForStep(
-  step: unknown,
+async function writeStepInlinePrompts(
+  paths: RunPaths,
+  step: Step,
+  raw: Record<string, unknown>,
   profiles: unknown,
-): { readonly id: string; readonly text: string } | undefined {
-  if (!isInlineRecord(step)) return undefined;
-  const fields = inlinePromptFields(step, profiles);
-  if (typeof step.id !== "string" || typeof fields.prompt !== "string") return undefined;
-  return { id: step.id, text: fields.prompt };
+): Promise<void> {
+  const candidates = step.profileCandidates?.map((candidate) => ({
+    profile: candidate.profile,
+    promptFile:
+      candidate.fields.kind === "agent" || candidate.fields.kind === "ralph"
+        ? candidate.fields.promptFile
+        : undefined,
+  })) ?? [{ profile: step.profile ?? "", promptFile: undefined }];
+  for (const candidate of candidates) {
+    const selected = candidate.profile === "" ? undefined : candidate.profile;
+    const fields = inlinePromptFields(
+      selected === undefined ? raw : { ...raw, profile: selected },
+      profiles,
+    );
+    if (typeof fields.prompt !== "string") continue;
+    await writeFile(
+      join(paths.loopfile, candidate.promptFile ?? inlinePromptFile(step.id)),
+      fields.prompt,
+    );
+  }
 }
 
 function inlinePromptFields(
@@ -769,13 +786,97 @@ async function runStep(
     return await runRalph({ options, adapters, owner, workflow, tracked, start, activity }, step);
   }
 
-  const started = await startProcessStep(options, owner, workflow, tracked, step, start, activity);
-  // A process that never started has no group. 0 is that, since no group has it.
-  const profileFields =
+  return runProcessStep(options, owner, workflow, step, tracked, start, activity);
+}
+
+async function runProcessStep(
+  options: ExecuteRunOptions,
+  owner: RunOwner,
+  workflow: Workflow,
+  step: CommandStep | AgentStep,
+  tracked: Tracked,
+  start: StepStart,
+  activity: (secret: string) => (activity: HarnessActivity) => void,
+): Promise<AttemptEndFields> {
+  let callStep = step;
+  let fields: AttemptFields | undefined =
     step.profile === undefined ? undefined : { profile: profileText(step.profile) };
+  if (step.kind === "command") {
+    const selected = await selectCommandProfile(step, tracked, owner, workflow, start);
+    if ("result" in selected) return selected;
+    callStep = selected.step;
+    fields = selected.fields;
+  }
+  const started = await startProcessStep(
+    options,
+    owner,
+    workflow,
+    tracked,
+    callStep,
+    start,
+    activity,
+  );
+  return finishProcessStep(started, callStep, fields, tracked, start);
+}
+
+async function selectCommandProfile(
+  step: CommandStep,
+  tracked: Tracked,
+  owner: RunOwner,
+  workflow: Workflow,
+  start: StepStart,
+): Promise<{ readonly step: CommandStep; readonly fields?: AttemptFields } | AttemptEndFields> {
+  const selection = await fillProfileForCall(
+    {
+      events: tracked.log,
+      history: () => tracked.history,
+      attemptsFolder: owner.paths.attempts,
+      inputsFolder: owner.paths.inputs,
+      workflow,
+    },
+    step,
+  );
+  if ("field" in selection) {
+    await start.onProcess(0, {
+      ...(step.profile === undefined
+        ? {}
+        : { profile: selection.value ?? profileText(step.profile) }),
+    });
+    return {
+      result: "failure",
+      reason: "bad_field",
+      field: "profile",
+      ...(selection.value === undefined ? {} : { value: selection.value }),
+    };
+  }
+  if (selection.step.kind !== "command") {
+    throw new Error(`profile changed command step ${step.id} kind`);
+  }
+  return {
+    step: selection.step,
+    ...(selection.profile === undefined
+      ? {}
+      : { fields: { profile: profileText(selection.profile) } }),
+  };
+}
+
+async function finishProcessStep(
+  started: Awaited<ReturnType<typeof startProcessStep>>,
+  step: CommandStep | AgentStep,
+  fields: AttemptFields | undefined,
+  tracked: Tracked,
+  start: StepStart,
+): Promise<AttemptEndFields> {
+  if (started.kind === "bad-field") {
+    if (started.field === "profile" && started.value !== undefined) {
+      fields = { profile: started.value };
+    } else if (started.field !== "profile" && started.profile !== undefined) {
+      fields = { profile: profileText(started.profile) };
+    }
+  }
   await start.onProcess(
     started.kind === "running" ? started.processGroupId : 0,
-    started.kind === "running" && "fields" in started ? started.fields : profileFields,
+    processStartedFields(started, fields),
   );
   if (started.kind === "bad-field") {
     return {
@@ -786,7 +887,14 @@ async function runStep(
     };
   }
   if (started.kind !== "running") return START_FAILED_END;
-  return await waitForEnd(started, step, tracked, context.attemptId);
+  return await waitForEnd(started, step, tracked, start.context.attemptId);
+}
+
+function processStartedFields(
+  started: Awaited<ReturnType<typeof startProcessStep>>,
+  fallback: AttemptFields | undefined,
+): AttemptFields | undefined {
+  return started.kind === "running" && "fields" in started ? started.fields : fallback;
 }
 
 /** Starts a command or agent step's process. */
