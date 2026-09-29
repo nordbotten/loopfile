@@ -24,7 +24,7 @@ loader also rejects a duration of zero, which the shape alone allows.
 | `maxTransitions` | no | none | An integer of 1 or more. With no value a run has no transition limit. |
 | `runTimeout` | no | none | A duration. It counts only run owner time, so the gap between a crash and a resume does not count. |
 | `workspace` | no | `isolate` | The workspace mode: `isolate`, `here` or `empty`. `here` runs steps in the launch folder; `empty` starts in a new empty folder. `--workspace <mode>` on launch or `loop` overrides this field. |
-| `profiles` | no | none | A map of groups to profile maps. A profile is a partial step whose fields can be applied to a step with `profile`. |
+| `profiles` | no | none | A map of groups to Profile maps. A Profile is a partial step whose fields can be applied to a step with `profile`. See [Profiles](#profiles). |
 
 There is no `name`, `description` or `start` field in v1.
 
@@ -33,7 +33,7 @@ There is no `name`, `description` or `start` field in v1.
 This is the smallest useful manifest: an agent writes a file, reports an outcome,
 and a command checks the file.
 
-```yaml
+```yaml source
 formatVersion: 1
 steps:
   - id: write
@@ -101,9 +101,13 @@ which every step can read. The step ID `input` is reserved.
 
 ## Profiles
 
-Profiles have exactly two name levels, so each reference is `group.name`:
+A **Profile** is a named part of a step. The manifest declares Profiles in
+`profiles:`. This map has exactly two name levels, so each reference is
+`group.name`. A step can use one Profile or a list. It can also pick a Profile
+from data with a Field expression:
 
-```yaml
+```yaml source
+formatVersion: 1
 profiles:
   review:
     base:
@@ -111,35 +115,53 @@ profiles:
       effort: high
       args: [--settings, '{}']
   implement:
+    medium:
+      effort: medium
     high:
-      model: opus
-      args: [--approve]
+      effort: high
+steps:
+  - id: triage
+    kind: agent
+    harness: claude
+    prompt: |
+      Pick a complexity and model. Put them under triage.complexity and
+      triage.model, then report ready.
+    outputs: [complexity, model]
+    on:
+      ready: implement
+  - id: implement
+    kind: agent
+    profile:
+      - review.base
+      - implement.${triage.complexity ?? "medium"}
+    model: claude-${triage.model ?? "sonnet"}
+    prompt: Implement the request.
+    on:
+      done: $success
 ```
 
-A step can use one profile or a list, such as `profile: [review.base,
-implement.high]`. A profile item can instead pick from a fixed group with data:
-`profile: implement.${triage.complexity ?? "medium"}`. Every item is filled
-before each call, including every Ralph iteration. A data-picked item must start
-with a literal `group.`; the run owner rejects a filled name that is not in
-that group with `bad_field` on `profile`.
+A fixed Profile name must refer to a declared Profile. A data-picked Profile
+must start with a fixed `group.`. The run owner rejects a filled name that is
+not in that group with `bad_field` on `profile`. Profiles merge from left to
+right, then the step's own fields replace them.
+Each field is replaced whole, including lists like `args`. The step cannot
+unset a field from a Profile. A Profile cannot set `id` or `profile`.
 
-Profiles merge left to right, then the step's own fields replace them. Each
-field is replaced whole, including lists like `args`. A profile cannot set `id`
-or `profile`. Every declared profile is checked for known fields and field
-types, even when no step uses it. For data-picked profiles, the loader checks
-the fully merged step once for every profile in the group and retains each
-candidate's merged call-time fields. These profiles may set only `harness`,
-`model`, `effort`, `args`, `prompt`, `promptFile`, `timeout` and `run`; they
-cannot set graph fields such as `kind`, `on`, `outputs` or step limits. Field
-expressions and effort values are checked against each candidate's harness.
-An error on a field that the step took from a profile has its step path and
-ends with `(from profile <name>)`. Because a field is replaced whole, a profile
-`prompt` and a step `promptFile` together are a load error, as they are on one
-step.
+The loader checks each Profile for known fields and field types, even when no
+step uses it. For each step, the loader checks the full step after it merges its
+Profiles. For a data-picked Profile, it checks every Profile in that group and
+keeps each candidate's merged call fields. These Profiles may set only
+`harness`, `model`, `effort`, `args`, `prompt`, `promptFile`, `timeout` and
+`run`; they cannot set graph fields such as `kind`, `on`, `outputs` or step
+limits. When it checks a step, the loader checks each fixed effort against the
+merged step's harness at load. It checks a Field expression inside a Profile
+when a step uses that Profile. An error on a field from a Profile has its step
+path and ends with `(from profile <name>)`. Because each field is replaced
+whole, a Profile `prompt` and a step `promptFile` together are a load error, as
+they are on one step.
 
-In the `fields` map of events and `$run`, `profile` is one text value: the
-name, or the names of a list joined by `, `, for example
-`review.base, implement.high`.
+In an event or `$run` `fields` map, `profile` is one text value: the name, or
+the names of a list joined by `, `, such as `review.base, implement.high`.
 
 ## Agent and Ralph steps
 
@@ -153,20 +175,29 @@ name, or the names of a list joined by `, `, for example
 | `args` | no | `[]` | A list of strings. The adapter gives each one to the harness as one argument, unchanged: no shell, no templating, no `{{ ... }}` placeholders. The loader rejects an owned flag (see below). On a Ralph step every iteration gets the same `args`. |
 | `maxIterations` | ralph only, no | `10` | An integer of 1 or more, per attempt. |
 
-On an agent or Ralph step, `model`, `effort` and data-picked `profile` items
-are field text written without backticks. `model` and `effort` may mix fixed
-text with `${ <expression> }`, for example `model: claude-${triage.size}`,
+A **Field expression** has the form `${ <expression> }`. Write it without
+backticks in `model`, `effort` or a data-picked `profile`. A field can mix fixed
+text and expressions, for example `model: claude-${triage.size}`,
 `model: ${triage.model ?? "opus"}` or `effort: ${triage.effort}`. Write `\${`
-for literal `${`. Expressions read declared inputs and step outputs; the newest
-value is used. The run owner fills them before each harness call, so each Ralph
-iteration sees data from earlier iterations. A missing value that remains
-`undefined` fails the attempt with `bad_field` and takes `onFailure`. The loader
-does not check literals inside an effort expression; the filled value must be
-one of the picked harness's words or the attempt fails with `bad_field` before
-the call. Allowed operators are `!`,
-`&&`, `||`, `??`, `==`, `!=`, `===`, `!==`, `<`, `>`, `<=`, `>=`, `+`, `*`,
-`/`, `%` and `?:`, with parentheses. Calls, computed access, `this`, arrays,
-objects, and mixing `??` with `||` are load errors. No JavaScript is evaluated.
+for literal `${`.
+
+An expression reads only data keys: `input.<name>` or `<step>.<output>`. A name
+reads the newest value. The loader checks the expression and requires each name
+to refer to a declared input or a declared step output. It does not check if the
+step runs after that output is put. A missing value that stays `undefined` fails
+the attempt with `bad_field` and takes `onFailure`; the event records `field` and,
+when present, `value`. Any other result becomes text; an empty string stays
+empty. A fixed `effort` is checked against the harness words at load. An
+`effort` from an expression is checked before each call. A value that is not a
+harness word fails the attempt with `bad_field` and takes `onFailure`.
+
+An expression can use data-key names, text in single or double quotes, numbers,
+`true`, `false`, parentheses, and these operators: `!`, `&&`, `||`, `??`, `==`,
+`!=`, `===`, `!==`, `<`, `>`, `<=`, `>=`, `+`, `*`, `/`, `%` and `?:`. A hyphen
+is part of a name, not an operator. Function calls, `[...]` access, `this`,
+`null`, arrays, objects, and mixing `??` with `||` in one expression are refused
+at load. Quote a ternary expression in YAML, or write it in a `>-` block. No
+JavaScript is evaluated.
 
 ### Claude Code permissions
 
@@ -213,15 +244,14 @@ every earlier attempt, oldest first, not the running one. Each has `stepId`,
 `attemptId`, `number` (the visit number for its step), `result`, `reason`,
 `outcome`, `message`, `startedAt`, `index` (from 1), `newest`, and `fields`.
 `fields` holds the selected `profile` (when set) and the resolved harness, model
-and effort from the last call in that attempt. A command attempt, or an agent
-attempt whose fill failed, has only `profile`. A Ralph attempt with no
-iteration, or an attempt with no profile and no call, has an empty map. A step field it leaves out is
-absent. `$run.attempt` has `id`, `number`, `startedAt`, `maxAttempts`, `timeout`,
-`lastAttempt`, `iteration`, `maxIterations`, `lastIteration`,
-`previousIteration`, and `fields`. Its `fields` map holds the selected `profile` (when set) and resolved values for
-the current call, filled before its prompt; omitted step fields are absent.
-`number` starts at 1 for each step
-visit, and `lastAttempt` is true on its final allowed visit. `maxAttempts` and
+and effort from the last call in that attempt. An attempt with no harness call
+can have only a `profile` value; if it records none, `fields` is empty. A step
+field it leaves out is absent. `$run.attempt` has `id`, `number`, `startedAt`,
+`maxAttempts`, `timeout`, `lastAttempt`, `iteration`, `maxIterations`,
+`lastIteration`, `previousIteration`, and `fields`. Its `fields` map holds the
+selected `profile` (when set) and resolved values for the current call, filled
+before its prompt. Omitted step fields are absent. `number` starts at 1 for each
+step visit, and `lastAttempt` is true on its final allowed visit. `maxAttempts` and
 `timeout` show only limits written in the manifest; either is `""` when omitted.
 On an agent step, `iteration` and `maxIterations` are both `1`, `lastIteration`
 is true, and `previousIteration` is `""`. On a Ralph step, `iteration` starts at
