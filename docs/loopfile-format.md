@@ -17,7 +17,17 @@ starts with the gzip bytes `1f 8b` is a packed `.loop`. Any other file must be
 UTF-8 text with no NUL byte, and it is a thin `.loop`. An empty file is an error.
 
 The fields of the manifest and the workflow model are on the page
-[The v1 manifest](manifest-v1.md). This page does not repeat them.
+[The v1 manifest](manifest-v1.md). This page does not repeat them. The top-level
+`profiles` field declares named Profiles. A step can use a Profile and a Field
+expression. The run owner fills them before each harness call.
+
+Each call records its selected `profile` (when set) and resolved `harness`,
+`model` and `effort` values (when set) in a `fields` map. An agent records it
+on `attempt.started`; a Ralph step records it on each `iteration.started`.
+`$run.attempt.fields` has the current call's map;
+`$run.attempts[].fields` has the last call's map for each earlier attempt. `tail`
+shows these values on step and iteration start lines, and `result --json` shows
+them in `lastOutcome.fields`. See the [runtime page](runtime.md) for details.
 
 ## Source directory
 
@@ -57,6 +67,7 @@ changes a run.
 | `formatVersion` | yes | The integer `1`. |
 | `steps` | yes | The ordered list of steps. |
 | `inputs` | no | The inputs the Loopfile takes. |
+| `profiles` | no | Groups of named partial step fields. See [Profiles](manifest-v1.md#profiles). |
 | `maxTransitions` | no | A limit on transitions. |
 | `runTimeout` | no | A limit on the run's time. |
 

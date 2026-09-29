@@ -20,6 +20,40 @@ Use Loopfile to run a deterministic software-engineering workflow and follow it 
 
 When an agent launches a Remote Loopfile, pass `--trust` only if the user asked for that source.
 
+## Pick a lane from data
+
+Use a Profile to choose a lane. Use a Field expression to set a call field from
+step data. This example lets triage choose the implementation lane and model:
+
+```yaml source
+formatVersion: 1
+profiles:
+  implement:
+    easy:
+      harness: claude
+      effort: low
+    hard:
+      harness: claude
+      effort: high
+steps:
+  - id: triage
+    kind: agent
+    harness: claude
+    prompt: |
+      Put easy or hard in triage.complexity and a model name in triage.model.
+      Report ready.
+    outputs: [complexity, model]
+    on:
+      ready: implement
+  - id: implement
+    kind: agent
+    profile: implement.${triage.complexity ?? "easy"}
+    model: claude-${triage.model ?? "sonnet"}
+    prompt: Implement the request.
+    on:
+      done: $success
+```
+
 ## Claude Code step permissions
 
 For Claude Code Agent and Ralph steps, the adapter loads only project and local

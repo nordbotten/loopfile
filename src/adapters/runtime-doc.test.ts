@@ -21,6 +21,21 @@ test("the document has an example Loopfile", async () => {
   assert.ok((await examples()).length >= 8);
 });
 
+test("the runtime docs explain filled fields, prompt data, tail lines, and result fields", async () => {
+  const text = await readFile(DOC, "utf8");
+  for (const detail of [
+    "Before each harness call",
+    "`$run.attempt.fields`",
+    "`$run.attempts[].fields`",
+    "step started profile",
+    "iteration <n> started",
+    "lastOutcome.fields",
+    "bad_field",
+  ]) {
+    assert.ok(text.includes(detail), `missing runtime detail: ${detail}`);
+  }
+});
+
 test("every example Loopfile loads with the real loader", async () => {
   for (const [index, text] of (await examples()).entries()) {
     const source = join(dir, `example${index}`);

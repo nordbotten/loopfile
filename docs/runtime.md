@@ -71,8 +71,8 @@ A failed attempt is any of these:
 - a timeout
 - an outcome that is not a key of `on`
 - a missing output (see [Handoffs and outputs](#handoffs-and-outputs))
-- an agent or Ralph model expression that evaluates to `undefined`, or effort expression that is
-  `undefined` or not a harness word (`bad_field`)
+- a Field expression that evaluates to `undefined`, a filled effort that is
+  not a harness word, or a filled Profile that is not in its group (`bad_field`)
 - on a Ralph step, `iteration_limit` (see [Ralph steps](#ralph-steps))
 
 An unreachable step is a load error. `onFailure` routes count as reachable.
@@ -153,8 +153,9 @@ end reason. It ends one Ralph attempt.
 
 A Ralph step calls the same prompt in one harness call after another. Each call is
 an iteration and starts with fresh context. Changes in the workspace and data
-puts stay between iterations. The run owner fills `model` before every call, so a
-later iteration sees values put by an earlier one.
+puts stay between iterations. Before every call, the run owner fills each Field
+expression and data-picked Profile, so a later iteration sees values put by an
+earlier one.
 
 - An iteration that reports an outcome and exits 0 ends the attempt with that
   outcome.
@@ -182,6 +183,44 @@ steps:
       all_green: $success
     onFailure: $failure
 ```
+
+## Call fields and results
+
+Before each harness call, the run owner fills Field expressions and any
+Profile picked from data. It fills them before it fills the prompt. A Ralph step
+repeats this order for every iteration. Each iteration can therefore use data
+from earlier iterations.
+
+The run owner records the resolved values in a `fields` map. An agent's
+`attempt.started` event has this map. A Ralph attempt's `attempt.started` event
+does not; each `iteration.started` event has its map. The map has the selected
+`profile` name, when the step uses a Profile, and the resolved `harness`,
+`model` and `effort` values when the step sets them. A step field it leaves out
+is absent. A profile list is one `profile` value, with names joined by `, `.
+
+The current prompt can read the map at `$run.attempt.fields`. The map at
+`$run.attempts[].fields` holds the last call's values for each earlier attempt,
+oldest first. A command attempt or an attempt with no call has an empty map,
+unless it has a Profile name to record.
+
+`tail` shows the same values in its activity lines. An agent line uses
+`step started`; a Ralph line uses `iteration <n> started`. For example:
+
+```
+12:00:00 001-implement step started profile implement.high harness claude model opus effort high
+12:00:01 001-grind iteration 2 started harness claude model sonnet effort low
+12:00:02 001-implement step ended bad field effort "hgih"
+12:00:03 001-implement step ended bad field model
+```
+
+An expression that has no value, an effort that is not a word for the harness,
+or a Profile name that is not in its group fails with `bad_field` before the
+call. The run takes `onFailure`. The activity line names the field and includes
+the value when one exists.
+
+`loopfile result <runid> --json` includes `lastOutcome.fields`, the map for the
+call that reported the last outcome. The plain result prints these values on its
+`last outcome` line too.
 
 ## Execution context
 
@@ -333,13 +372,15 @@ with empty `attemptId` and `outcome`. `$run` gives `runId`, `loopfileName`,
 `$run.attempts` lists every earlier attempt, oldest first, without the running
 one. Its entries have `stepId`, `attemptId`, `number` (the visit number for its
 step), `result`, `reason`, `outcome`, `message`, `startedAt`, `index` (from 1),
-`newest`, and `fields`. `fields` holds the resolved harness, model and effort
-from the last call in that attempt, or an empty map if no call started. A step
-field it leaves out is absent. `$run.attempt` gives the current visit's `id`,
+`newest`, and `fields`. `fields` holds the selected profile (when set) and the
+resolved harness, model and effort from the last call in that attempt. It is
+empty when no call or Profile was recorded. A step field it leaves out is absent.
+`$run.attempt` gives the current visit's `id`,
 `number`, `startedAt`, `maxAttempts`, `timeout`, `lastAttempt`, `iteration`,
 `maxIterations`, `lastIteration`, `previousIteration`, and `fields`. Its
-`fields` map holds the resolved values for the current call, filled before its
-prompt; omitted step fields are absent. `number` starts at 1 for each step,
+`fields` map holds the selected profile (when set) and resolved values for the
+current call, filled before the prompt. Omitted step fields are absent. `number`
+starts at 1 for each step,
 and `lastAttempt` is true on its final
 allowed visit. `maxAttempts` and `timeout` are `""` when the manifest omits
 that limit. On an agent step, `iteration` and `maxIterations` are both `1`,

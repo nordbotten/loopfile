@@ -24,6 +24,19 @@ test("the document has a source example and a thin example", async () => {
   assert.equal((await examples("thin")).length, 1);
 });
 
+test("the format docs list Profiles and link to call-time details", async () => {
+  const text = await readFile(DOC, "utf8");
+  assert.match(text, /`profiles`/);
+  assert.match(text, /Field\s+expression/);
+  assert.match(text, /fills them before each harness call/);
+  assert.match(text, /`fields` map/);
+  assert.match(text, /tail/);
+  assert.match(text, /step and iteration start lines/);
+  assert.match(text, /\$run\.attempt\.fields/);
+  assert.match(text, /\$run\.attempts\[\]\.fields/);
+  assert.match(text, /`lastOutcome\.fields`/);
+});
+
 test("every thin example loads with the real loader", async () => {
   for (const [index, text] of (await examples("thin")).entries()) {
     const file = join(dir, `thin${index}.loop`);
