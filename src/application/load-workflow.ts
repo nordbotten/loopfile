@@ -19,7 +19,10 @@ import {
   NAME_PATTERN,
   type Outcome,
   type OutputName,
+  type ProfileCandidate,
+  type ProfileCandidateFields,
   type ProfileSelection,
+  profileText,
   RESERVED_STEP_IDS,
   type Step,
   type StepId,
@@ -65,8 +68,9 @@ export type LoadResult =
  * next to `loopfile/` (ADR 0002, #81). A manifest `promptFile` cannot leave
  * the Loopfile, so it can never name this path.
  */
-export function inlinePromptFile(stepId: StepId): string {
-  return `../prompts/${stepId}.md`;
+export function inlinePromptFile(stepId: StepId, profile?: ProfileSelection): string {
+  const suffix = profile === undefined ? "" : `-${encodeURIComponent(profileText(profile))}`;
+  return `../prompts/${stepId}${suffix}.md`;
 }
 
 const TOP_FIELDS = [
@@ -132,6 +136,7 @@ interface Context {
   readonly stepIds: ReadonlySet<StepId>;
   readonly prompts: PromptText[];
   readonly fieldExpressions: FieldExpressionText[];
+  readonly inlineProfile?: ProfileSelection;
 }
 
 function isRecord(value: unknown): value is Raw {
@@ -523,59 +528,215 @@ function checkProfileArgs(value: unknown, path: string, ctx: Context): void {
   }
 }
 
-/** The step with its profiles merged, and the profile that set each field the step does not set. */
-function mergeStepProfiles(
+interface ProfileItem {
+  readonly dynamic: boolean;
+  readonly names: readonly string[];
+}
+
+interface ProfileVariant {
+  readonly names: readonly string[];
+  readonly merged: Raw;
+  readonly origins: ReadonlyMap<string, string>;
+}
+
+const DATA_PROFILE_FORBIDDEN = new Set([
+  "kind",
+  "on",
+  "onFailure",
+  "outputs",
+  "maxAttempts",
+  "maxIterations",
+]);
+
+/** Enumerates the profiles a filled selector can choose, and merges each candidate. */
+function profileVariants(
   raw: Raw,
   at: string,
   profiles: Readonly<Record<string, Readonly<Record<string, Raw>>>>,
-  report: Report,
-): { readonly merged: Raw; readonly origins: ReadonlyMap<string, string> } {
-  const origins = new Map<string, string>();
-  const names = readProfileSelection(raw.profile, at, report);
-  if (names === undefined) return { merged: raw, origins };
-  const merged: Record<string, unknown> = {};
-  names.forEach((name, index) => {
-    const profile = mergeProfile(name, index, Array.isArray(raw.profile), at, profiles, report);
-    for (const field of Object.keys(profile ?? {})) origins.set(field, name);
-    Object.assign(merged, profile);
-  });
-  for (const field of Object.keys(raw)) origins.delete(field);
-  return { merged: { ...merged, ...raw }, origins };
-}
-
-function readProfileSelection(
-  value: unknown,
-  at: string,
-  report: Report,
-): readonly string[] | undefined {
-  if (value === undefined) return undefined;
-  const names = typeof value === "string" ? [value] : value;
-  if (Array.isArray(names) && names.length > 0 && names.every((name) => typeof name === "string")) {
-    return names;
+  ctx: Context,
+): { readonly variants: readonly ProfileVariant[]; readonly dynamic: boolean } {
+  const selection = raw.profile;
+  if (selection === undefined)
+    return { variants: [mergeVariant(raw, [], profiles)], dynamic: false };
+  const list = Array.isArray(selection);
+  const values = typeof selection === "string" ? [selection] : selection;
+  if (
+    !Array.isArray(values) ||
+    values.length === 0 ||
+    !values.every((item) => typeof item === "string")
+  ) {
+    ctx.report(`${at}.profile`, "profile must be a name or a non-empty list of names");
+    return { variants: [mergeVariant(raw, [], profiles)], dynamic: false };
   }
-  report(`${at}.profile`, "profile must be a name or a non-empty list of names");
-  return undefined;
+
+  const items = values.map((source, index) =>
+    readProfileItem(source, index, list, at, profiles, ctx),
+  );
+  if (items.some((item) => item === undefined)) {
+    return {
+      variants: [mergeVariant(raw, [], profiles)],
+      dynamic: items.some((item) => item?.dynamic),
+    };
+  }
+  const parsed = items as ProfileItem[];
+  const dynamic = parsed.some((item) => item.dynamic);
+  if (!dynamic) {
+    return {
+      variants: [
+        mergeVariant(
+          raw,
+          parsed.map((item) => item.names[0] ?? ""),
+          profiles,
+        ),
+      ],
+      dynamic: false,
+    };
+  }
+  const combinations = parsed.reduce<readonly (readonly string[])[]>(
+    (all, item) => all.flatMap((prefix) => item.names.map((name) => [...prefix, name])),
+    [[]],
+  );
+  // ponytail: combinations grow multiplicatively with each data-picked list item; split the step if this becomes material.
+  return {
+    variants: combinations.map((names) => mergeVariant(raw, names, profiles)),
+    dynamic: true,
+  };
 }
 
-function mergeProfile(
-  name: string,
+function readProfileItem(
+  source: string,
   index: number,
   list: boolean,
   at: string,
   profiles: Readonly<Record<string, Readonly<Record<string, Raw>>>>,
-  report: Report,
-): Raw | undefined {
+  ctx: Context,
+): ProfileItem | undefined {
   const path = `${at}.profile${list ? `[${index}]` : ""}`;
+  return source.includes("${")
+    ? readDataProfileItem(source, path, profiles, ctx)
+    : readFixedProfileItem(source, path, profiles, ctx);
+}
+
+function readFixedProfileItem(
+  name: string,
+  path: string,
+  profiles: Readonly<Record<string, Readonly<Record<string, Raw>>>>,
+  ctx: Context,
+): ProfileItem | undefined {
   const match = /^([a-z][a-z0-9_-]{0,63})\.([a-z][a-z0-9_-]{0,63})$/.exec(name);
   if (match === null) {
-    report(path, `profile name \`${name}\` must be group.name`);
+    ctx.report(path, `profile name \`${name}\` must be group.name`);
     return undefined;
   }
-  const profile = declaredProfile(profiles, match[1] ?? "", match[2] ?? "");
-  if (profile === undefined) {
-    report(path, `profile \`${name}\` is not declared`);
+  if (declaredProfile(profiles, match[1] ?? "", match[2] ?? "") === undefined) {
+    ctx.report(path, `profile \`${name}\` is not declared`);
+    return undefined;
   }
-  return profile;
+  return { dynamic: false, names: [name] };
+}
+
+function readDataProfileItem(
+  source: string,
+  path: string,
+  profiles: Readonly<Record<string, Readonly<Record<string, Raw>>>>,
+  ctx: Context,
+): ProfileItem | undefined {
+  try {
+    const expression = parseFieldExpression(source);
+    const group = /^([a-z][a-z0-9_-]{0,63})\./.exec(source)?.[1];
+    if (group === undefined) {
+      ctx.report(path, "a data-picked profile must start with a fixed group name and dot");
+      return undefined;
+    }
+    ctx.fieldExpressions.push({ path, reads: expression.reads, report: ctx.report });
+    const names = dataProfileNames(group, path, profiles, ctx);
+    return names === undefined ? undefined : { dynamic: true, names };
+  } catch (error) {
+    ctx.report(path, error instanceof Error ? error.message : "invalid field expression");
+    return undefined;
+  }
+}
+
+function dataProfileNames(
+  group: string,
+  path: string,
+  profiles: Readonly<Record<string, Readonly<Record<string, Raw>>>>,
+  ctx: Context,
+): readonly string[] | undefined {
+  const entries = profiles[group];
+  if (entries === undefined) {
+    ctx.report(path, `profile group \`${group}\` is not declared`);
+    return undefined;
+  }
+  const names = Object.keys(entries).map((name) => `${group}.${name}`);
+  if (names.length === 0) {
+    ctx.report(path, `profile group \`${group}\` has no profiles`);
+    return undefined;
+  }
+  checkDataProfileFields(group, names, entries, ctx);
+  return names;
+}
+
+function checkDataProfileFields(
+  group: string,
+  names: readonly string[],
+  profiles: Readonly<Record<string, Raw>>,
+  ctx: Context,
+): void {
+  for (const name of names) {
+    const profile = profiles[name.slice(group.length + 1)];
+    for (const field of Object.keys(profile ?? {})) {
+      if (DATA_PROFILE_FORBIDDEN.has(field)) {
+        ctx.report(
+          `profiles.${name}.${field}`,
+          `profile ${name} selected by data cannot set \`${field}\``,
+        );
+      }
+    }
+  }
+}
+
+function mergeVariant(
+  raw: Raw,
+  names: readonly string[],
+  profiles: Readonly<Record<string, Readonly<Record<string, Raw>>>>,
+): ProfileVariant {
+  const origins = new Map<string, string>();
+  const merged: Record<string, unknown> = {};
+  for (const name of names) {
+    const [group, profileName] = name.split(".");
+    const profile = declaredProfile(profiles, group ?? "", profileName ?? "");
+    for (const field of Object.keys(profile ?? {})) origins.set(field, name);
+    Object.assign(merged, profile);
+  }
+  for (const field of Object.keys(raw)) origins.delete(field);
+  return { names, merged: { ...merged, ...raw }, origins };
+}
+
+function selectedProfile(names: readonly string[], list: boolean): ProfileSelection {
+  return list ? names : (names[0] ?? "");
+}
+
+function candidateFields(step: Step): ProfileCandidateFields {
+  if (step.kind === "command") {
+    return {
+      kind: "command",
+      run: step.run,
+      timeoutMs: step.timeoutMs,
+      ...(step.declaredLimits === undefined ? {} : { declaredLimits: step.declaredLimits }),
+    };
+  }
+  const fields = {
+    kind: step.kind,
+    harness: step.harness,
+    ...(step.model === undefined ? {} : { model: step.model }),
+    ...(step.effort === undefined ? {} : { effort: step.effort }),
+    args: step.args,
+    promptFile: step.promptFile,
+    timeoutMs: step.timeoutMs,
+    ...(step.declaredLimits === undefined ? {} : { declaredLimits: step.declaredLimits }),
+  };
+  return step.kind === "agent" ? fields : { ...fields, kind: "ralph" };
 }
 
 function declaredProfile(
@@ -599,15 +760,41 @@ function readStep(
     ctx.report(at, "a step must be a map");
     return undefined;
   }
-  const { merged, origins } = mergeStepProfiles(raw, at, profiles, ctx.report);
-  const stepCtx = { ...ctx, report: reportWithProfile(at, origins, ctx.report) };
-  const kind = merged.kind;
-  if (kind !== "agent" && kind !== "command" && kind !== "ralph") {
-    stepCtx.report(`${at}.kind`, "kind is required and must be agent, command or ralph");
-    return undefined;
-  }
-  checkFields(merged, kind, at, stepCtx.report);
-  return readKindStep(merged, kind, at, stepCtx);
+  const resolved = profileVariants(raw, at, profiles, ctx);
+  const list = Array.isArray(raw.profile);
+  const built = resolved.variants.map((variant) => {
+    const variantProfile = selectedProfile(variant.names, list);
+    const stepCtx = {
+      ...ctx,
+      report: reportWithProfile(at, variant.origins, ctx.report),
+      ...(resolved.dynamic ? { inlineProfile: variantProfile } : {}),
+    };
+    const kind = variant.merged.kind;
+    if (kind !== "agent" && kind !== "command" && kind !== "ralph") {
+      stepCtx.report(`${at}.kind`, "kind is required and must be agent, command or ralph");
+      return undefined;
+    }
+    checkFields(variant.merged, kind, at, stepCtx.report);
+    return readKindStep(variant.merged, kind, at, stepCtx);
+  });
+  const first = built[0];
+  if (first === undefined || !resolved.dynamic) return first;
+  const candidates = built.flatMap((step, candidateIndex): ProfileCandidate[] => {
+    const variant = resolved.variants[candidateIndex];
+    return step === undefined || variant === undefined
+      ? []
+      : [
+          {
+            profile: selectedProfile(variant.names, list),
+            fields: candidateFields(step),
+          },
+        ];
+  });
+  return {
+    ...first,
+    profile: raw.profile as ProfileSelection,
+    profileCandidates: candidates,
+  };
 }
 
 /** Names the profile in an error on a field that the step took from it. */
@@ -894,12 +1081,13 @@ function readPrompt(raw: Raw, id: StepId, at: string, ctx: Context): string {
     return "";
   }
   if (prompt === undefined) return readPromptFile(promptFile, `${at}.promptFile`, ctx);
+  const file = inlinePromptFile(id, ctx.inlineProfile);
   if (typeof prompt === "string" && prompt.trim() !== "") {
-    ctx.prompts.push({ path: `${at}.prompt`, file: inlinePromptFile(id), text: prompt });
+    ctx.prompts.push({ path: `${at}.prompt`, file, text: prompt });
   } else {
     ctx.report(`${at}.prompt`, "prompt must be a string that is not empty");
   }
-  return inlinePromptFile(id);
+  return file;
 }
 
 /** Resolves a relative path inside the root, or `undefined` when it leaves the root. */

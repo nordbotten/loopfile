@@ -25,6 +25,7 @@ import { isHarnessEffort } from "../domain/harnesses.ts";
 import type {
   AgentStep,
   AttemptId,
+  ProfileCandidate,
   ProfileSelection,
   Step,
   StepId,
@@ -85,6 +86,65 @@ export async function fillFieldForCall(
 export type EffortFieldFill =
   | { readonly fields: { readonly effort?: string } }
   | { readonly field: "effort"; readonly value?: string };
+
+export type ProfileFieldFill =
+  | { readonly step: Step; readonly profile?: ProfileSelection }
+  | { readonly field: "profile"; readonly value?: string };
+
+/** Fills every profile item and applies its prevalidated merged candidate. */
+export async function fillProfileForCall(
+  options: PromptFillOptions,
+  step: Step,
+): Promise<ProfileFieldFill> {
+  if (step.profile === undefined) return { step };
+  const items = typeof step.profile === "string" ? [step.profile] : step.profile;
+  const names: string[] = [];
+  for (const [index, item] of items.entries()) {
+    const name = await fillProfileItem(options, step, item, index);
+    if (typeof name !== "string") return name;
+    names.push(name);
+  }
+  const profile = typeof step.profile === "string" ? (names[0] ?? "") : names;
+  const candidate = step.profileCandidates?.find(
+    (option) => profileText(option.profile) === profileText(profile),
+  );
+  if (candidate === undefined) return { step, profile };
+  return { step: applyProfileCandidate(step, candidate), profile };
+}
+
+async function fillProfileItem(
+  options: PromptFillOptions,
+  step: Step,
+  item: string,
+  index: number,
+): Promise<string | { readonly field: "profile"; readonly value?: string }> {
+  if (!item.includes("${")) return item;
+  const value = await fillFieldForCall(options, item);
+  if (value === undefined) return { field: "profile" };
+  const group = /^([a-z][a-z0-9_-]{0,63})\./.exec(item)?.[1];
+  const belongsToGroup = group !== undefined && value.startsWith(`${group}.`);
+  const isCandidate = (step.profileCandidates ?? []).some(
+    (candidate) => profileNames(candidate.profile)[index] === value,
+  );
+  return belongsToGroup && isCandidate ? value : { field: "profile", value };
+}
+
+function profileNames(profile: ProfileSelection): readonly string[] {
+  return typeof profile === "string" ? [profile] : profile;
+}
+
+function applyProfileCandidate(step: Step, candidate: ProfileCandidate): Step {
+  if (candidate.fields.kind === "command" && step.kind === "command") {
+    return { ...step, ...candidate.fields, profile: candidate.profile };
+  }
+  if (candidate.fields.kind === "agent" && step.kind === "agent") {
+    return { ...step, ...candidate.fields, profile: candidate.profile };
+  }
+  if (candidate.fields.kind === "ralph" && step.kind === "ralph") {
+    return { ...step, ...candidate.fields, profile: candidate.profile };
+  }
+  throw new Error(`profile candidate kind does not match step ${step.id}`);
+}
 
 export function callFieldsForCall(
   harness: CallFields["harness"],

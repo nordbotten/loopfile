@@ -29,6 +29,7 @@ import {
   callFieldsForCall,
   fillEffortForCall,
   fillFieldForCall,
+  fillProfileForCall,
   fillPromptForCall,
   type PromptFillOptions,
 } from "./prompt-fill.ts";
@@ -74,9 +75,6 @@ export async function runRalphStep(
   if (isAbsolute(step.promptFile)) {
     throw new Error(`promptFile is not relative to the Loopfile: ${step.promptFile}`);
   }
-  const template = await readFile(join(options.loopfileRoot, step.promptFile), "utf8");
-  const adapter = options.adapters[step.harness];
-
   for (let iteration = 1; iteration <= step.maxIterations; iteration++) {
     const result = await runRalphIteration(
       options,
@@ -85,8 +83,6 @@ export async function runRalphStep(
       attempt,
       startedAt,
       steps,
-      template,
-      adapter,
       iteration,
     );
     if (result !== undefined) return result;
@@ -101,8 +97,6 @@ async function runRalphIteration(
   attempt: AttemptPaths,
   startedAt: string,
   steps: readonly Step[] | undefined,
-  template: string,
-  adapter: HarnessAdapters[typeof step.harness],
   iteration: number,
 ): Promise<RalphStepResult | undefined> {
   const { attemptId } = context;
@@ -114,15 +108,10 @@ async function runRalphIteration(
       iterations: iteration,
     };
   }
-  const model = step.model === undefined ? undefined : await fillFieldForCall(options, step.model);
-  if (step.model !== undefined && model === undefined) {
-    return { result: "failure", reason: "bad_field", field: "model", iterations: iteration - 1 };
-  }
-  const effort = await fillEffortForCall(options, step);
-  if ("field" in effort) {
-    return { result: "failure", reason: "bad_field", ...effort, iterations: iteration - 1 };
-  }
-  const fields = callFieldsForCall(step.harness, model, effort.fields, step.profile);
+  const prepared = await prepareRalphCall(options, step);
+  if ("result" in prepared) return { ...prepared, iterations: iteration - 1 };
+  step = prepared.step;
+  const { adapter, model, effort, fields, template } = prepared;
   const paths = await createIterationDirectory(attempt, iteration);
   const secret = options.newSecret();
   const prompt = await fillPromptForCall(
@@ -137,7 +126,7 @@ async function runRalphIteration(
       context: { ...context, attemptSecret: secret, iteration },
       prompt,
       ...(model === undefined ? {} : { model }),
-      ...effort.fields,
+      ...effort,
       args: step.args,
       wiringFolder: paths.wiring,
     },
@@ -165,6 +154,50 @@ async function runRalphIteration(
     return { ...checkedEnd(options, step, attemptId, outcome), iterations: iteration };
   }
   return undefined;
+}
+
+type PreparedRalphCall = {
+  readonly step: RalphStep;
+  readonly adapter: HarnessAdapters[RalphStep["harness"]];
+  readonly template: string;
+  readonly model?: string;
+  readonly effort: { readonly effort?: string };
+  readonly fields: ReturnType<typeof callFieldsForCall>;
+};
+
+type RalphCallFailure = {
+  readonly result: "failure";
+  readonly reason: "bad_field";
+  readonly field: "profile" | "model" | "effort";
+  readonly value?: string;
+};
+
+async function prepareRalphCall(
+  options: RalphStepOptions,
+  original: RalphStep,
+): Promise<PreparedRalphCall | RalphCallFailure> {
+  const selection = await fillProfileForCall(options, original);
+  if ("field" in selection) return { result: "failure", reason: "bad_field", ...selection };
+  if (selection.step.kind !== "ralph")
+    throw new Error(`profile changed Ralph step ${original.id} kind`);
+  const step = selection.step;
+  if (isAbsolute(step.promptFile)) {
+    throw new Error(`promptFile is not relative to the Loopfile: ${step.promptFile}`);
+  }
+  const model = step.model === undefined ? undefined : await fillFieldForCall(options, step.model);
+  if (step.model !== undefined && model === undefined) {
+    return { result: "failure", reason: "bad_field", field: "model" };
+  }
+  const effort = await fillEffortForCall(options, step);
+  if ("field" in effort) return { result: "failure", reason: "bad_field", ...effort };
+  return {
+    step,
+    adapter: options.adapters[step.harness],
+    template: await readFile(join(options.loopfileRoot, step.promptFile), "utf8"),
+    ...(model === undefined ? {} : { model }),
+    effort: effort.fields,
+    fields: callFieldsForCall(step.harness, model, effort.fields, selection.profile),
+  };
 }
 
 async function waitForIteration(
