@@ -16,7 +16,7 @@
  * it itself with one pass over the same events.
  */
 
-import type { CallFields, RunEvent, Timestamp } from "../domain/events.ts";
+import type { AttemptFields, RunEvent, Timestamp } from "../domain/events.ts";
 import { isHarnessName } from "../domain/harnesses.ts";
 import type { Step, StepId, Workflow } from "../domain/model.ts";
 import {
@@ -155,7 +155,7 @@ interface OpenAttempt {
   /** This step's attempt count so far, including this one (`current.attempt`). */
   readonly attempt: number;
   readonly iteration: number;
-  readonly fields?: CallFields;
+  readonly fields?: AttemptFields;
 }
 
 /** `openAttempt`'s running state as it scans the events, one event at a time. */
@@ -250,7 +250,7 @@ function statusStepKind(step: Step | undefined): StatusStepKind {
   return step?.kind ?? "command";
 }
 
-function harnessFromFields(fields: CallFields | undefined) {
+function harnessFromFields(fields: AttemptFields | undefined) {
   return fields?.harness !== undefined && isHarnessName(fields.harness) ? fields.harness : null;
 }
 

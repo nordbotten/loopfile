@@ -122,7 +122,7 @@ async function runRalphIteration(
   if ("field" in effort) {
     return { result: "failure", reason: "bad_field", ...effort, iterations: iteration - 1 };
   }
-  const fields = callFieldsForCall(step.harness, model, effort.fields);
+  const fields = callFieldsForCall(step.harness, model, effort.fields, step.profile);
   const paths = await createIterationDirectory(attempt, iteration);
   const secret = options.newSecret();
   const prompt = await fillPromptForCall(

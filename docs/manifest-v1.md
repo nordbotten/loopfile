@@ -24,6 +24,7 @@ loader also rejects a duration of zero, which the shape alone allows.
 | `maxTransitions` | no | none | An integer of 1 or more. With no value a run has no transition limit. |
 | `runTimeout` | no | none | A duration. It counts only run owner time, so the gap between a crash and a resume does not count. |
 | `workspace` | no | `isolate` | The workspace mode: `isolate`, `here` or `empty`. `here` runs steps in the launch folder; `empty` starts in a new empty folder. `--workspace <mode>` on launch or `loop` overrides this field. |
+| `profiles` | no | none | A map of groups to profile maps. A profile is a partial step whose fields can be applied to a step with `profile`. |
 
 There is no `name`, `description` or `start` field in v1.
 
@@ -91,11 +92,46 @@ which every step can read. The step ID `input` is reserved.
 | --- | --- | --- | --- |
 | `id` | yes | — | Unique in the manifest. `input` is reserved for launch inputs. |
 | `kind` | yes | — | `agent`, `command` or `ralph`. |
+| `profile` | no | none | A fixed profile name or list of names, applied left to right before the step's own fields. |
 | `on` | agent and ralph | `{}` | A map from outcome to target. Its keys are the step's only allowed outcomes. |
 | `onFailure` | no | `$failure` | Where a failed attempt goes. |
 | `outputs` | no | none | The data keys the step must put. A list, or a map from name to outcomes. |
 | `maxAttempts` | no | `5` | An integer of 1 or more. Every visit counts, including `onFailure` and cycles. |
 | `timeout` | no | `1h` | A duration, per attempt. On a Ralph step it limits each iteration. |
+
+## Profiles
+
+Profiles have exactly two name levels, so each reference is `group.name`:
+
+```yaml
+profiles:
+  review:
+    base:
+      harness: claude
+      effort: high
+      args: [--settings, '{}']
+  implement:
+    high:
+      model: opus
+      args: [--approve]
+```
+
+A step can use one profile or a list, such as `profile: [review.base,
+implement.high]`. Profiles merge left to right, then the step's own fields
+replace them. Each field is replaced whole, including lists like `args`. A
+profile cannot set `id` or `profile`. Every declared profile is checked for
+known fields and field types, even when no step uses it. That is the only check
+of a profile that no step uses. A step with its profiles merged gets the same
+full checks as a step written inline, so a field expression or an `effort` in a
+profile is checked in the step that uses it, against that step's harness and
+the declared data keys. An error on a field that the step took from a profile
+has its step path and ends with `(from profile <name>)`. Because a field is
+replaced whole, a profile `prompt` and a step `promptFile` together are a load
+error, as they are on one step.
+
+In the `fields` map of events and `$run`, `profile` is one text value: the
+name, or the names of a list joined by `, `, for example
+`review.base, implement.high`.
 
 ## Agent and Ralph steps
 
@@ -167,11 +203,13 @@ omitted. In `empty` mode, `$run.targetFolder` is omitted. `$run.attempts` has
 every earlier attempt, oldest first, not the running one. Each has `stepId`,
 `attemptId`, `number` (the visit number for its step), `result`, `reason`,
 `outcome`, `message`, `startedAt`, `index` (from 1), `newest`, and `fields`.
-`fields` holds the resolved harness, model and effort from the last call in that
-attempt, or an empty map if no call started. A step field it leaves out is
+`fields` holds the selected `profile` (when set) and the resolved harness, model
+and effort from the last call in that attempt. A command attempt, or an agent
+attempt whose fill failed, has only `profile`. A Ralph attempt with no
+iteration, or an attempt with no profile and no call, has an empty map. A step field it leaves out is
 absent. `$run.attempt` has `id`, `number`, `startedAt`, `maxAttempts`, `timeout`,
 `lastAttempt`, `iteration`, `maxIterations`, `lastIteration`,
-`previousIteration`, and `fields`. Its `fields` map holds the resolved values for
+`previousIteration`, and `fields`. Its `fields` map holds the selected `profile` (when set) and resolved values for
 the current call, filled before its prompt; omitted step fields are absent.
 `number` starts at 1 for each step
 visit, and `lastAttempt` is true on its final allowed visit. `maxAttempts` and

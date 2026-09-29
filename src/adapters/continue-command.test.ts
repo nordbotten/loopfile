@@ -153,6 +153,30 @@ steps:
   assert.equal(all.filter((event) => event.type === "run.continued").length, 1);
 });
 
+test("continue refuses a run after its selected profile changes", async () => {
+  const manifest = `formatVersion: 1
+profiles:
+  shell:
+    check:
+      run: 'exit 1'
+steps:
+  - id: check
+    kind: command
+    profile: shell.check
+`;
+  const testCase = await launch(manifest);
+  const stopped = await waitForEnd(testCase.paths);
+  assert.equal(stopped.type, "run.ended");
+  await writeFile(
+    join(testCase.paths.loopfile, "manifest.yaml"),
+    manifest.replace("run: 'exit 1'", "run: 'true'"),
+  );
+  const result = await continueRun(testCase.runId, testCase.env);
+  assert.equal(result.code, 2);
+  assert.match(result.err, /Materialized Loopfile of run .* no longer builds the model/);
+  assert.match(result.err, /code: format_mismatch/);
+});
+
 test("continue replaces a cancelled attempt even when its prior attempt limit was reached", async () => {
   const manifest = `formatVersion: 1
 steps:

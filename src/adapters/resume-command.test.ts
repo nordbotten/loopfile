@@ -507,6 +507,28 @@ test("a changed Materialized Loopfile stops resume with both digests shown", asy
   assert.match(result.err, new RegExp(`model digest now: +${now}`));
 });
 
+test("a changed profile stops resume with a model digest mismatch", async () => {
+  const manifest = `formatVersion: 1
+profiles:
+  shell:
+    check:
+      run: 'exit 1'
+steps:
+  - id: check
+    kind: command
+    profile: shell.check
+`;
+  const { env, runId, paths } = await crashedRun([], undefined, manifest);
+  await writeFile(
+    join(paths.loopfile, "manifest.yaml"),
+    manifest.replace("run: 'exit 1'", "run: 'true'"),
+  );
+  const result = await resume([runId], env);
+  assert.equal(result.code, 2);
+  assert.match(result.err, /Materialized Loopfile of run .* no longer builds the model/);
+  assert.match(result.err, /code: format_mismatch/);
+});
+
 test("a broken middle line in events.jsonl stops resume", async () => {
   const { env, runId, paths } = await crashedRun();
   const text = await readFile(paths.events, "utf8");
