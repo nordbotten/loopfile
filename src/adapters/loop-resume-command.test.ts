@@ -280,13 +280,36 @@ steps:
       ),
     "child command to run",
   );
+  const attempt = await until(async () => {
+    const event = (await runEvents(setupResult.home, first.runId)).find(
+      (item) => item.type === "attempt.started",
+    );
+    return event?.type === "attempt.started" ? event : undefined;
+  }, "child attempt to start");
   const loopOwner = (await events(setupResult.home, loopId)).find(
     (event) => event.type === "owner.started",
   );
   assert.equal(loopOwner?.type, "owner.started");
   if (loopOwner?.type === "owner.started") process.kill(loopOwner.pid, "SIGKILL");
   process.kill(runOwner.pid, "SIGKILL");
-  await new Promise((resolve) => setTimeout(resolve, 500));
+  await until(
+    async () =>
+      (await pingOwner(loopPaths(setupResult.home, loopId).socket, 20)) === undefined
+        ? true
+        : undefined,
+    "loop owner to stop",
+  );
+  await until(
+    async () =>
+      (await pingOwner(runPaths(setupResult.home, first.runId).socket, 20)) === undefined
+        ? true
+        : undefined,
+    "child owner to stop",
+  );
+  await until(
+    async () => (!groupAlive(attempt.processGroupId) ? true : undefined),
+    "orphaned child process group to stop",
+  );
 
   const childPaths = runPaths(setupResult.home, first.runId);
   const childLog = await openEventLog<RunEvent>(childPaths.events);
@@ -818,6 +841,13 @@ test("loop resume refuses live, ended, missing and invalid loops with the requir
   );
   const { loopId: endedId } = await startLoop(endedSetup, ["--times", "1", "-d"]);
   await waitForEnd(endedSetup.home, endedId);
+  await until(
+    async () =>
+      (await pingOwner(loopPaths(endedSetup.home, endedId).socket, 20)) === undefined
+        ? true
+        : undefined,
+    "ended loop owner to stop",
+  );
   const ended = await resume([endedId, "--kill-leftovers"], endedSetup.env);
   assert.equal(ended.code, 2);
   assert.match(ended.err, /code: already_ended/);

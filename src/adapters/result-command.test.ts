@@ -143,6 +143,41 @@ async function makeRun(
   await writeFile(paths.status, JSON.stringify(status(runId, !ended, end, remote)));
 }
 
+async function makeRunWithCallEvents(
+  runId: string,
+  callEvents: readonly Record<string, unknown>[],
+): Promise<void> {
+  const paths = runPaths(home, runId);
+  await mkdir(paths.root, { recursive: true });
+  const events = [
+    {
+      seq: 1,
+      at: "2026-09-21T14:00:00.000Z",
+      type: "run.created",
+      runId,
+      eventFormatVersion: 1,
+      modelDigest: "sha256:model",
+      targetFolder: "/repo",
+      workspacePath: `${home}/runs/${runId}/workspace`,
+      workspaceMode: "isolate",
+      isolateKind: "worktree",
+      branch: `loopfile/${runId}`,
+      baseCommit: "abc123",
+      inputs: [],
+    },
+    ...callEvents,
+    {
+      seq: callEvents.length + 2,
+      at: "2026-09-21T14:01:00.000Z",
+      type: "run.ended",
+      result: "success",
+      reason: "end_state",
+    },
+  ];
+  await writeFile(paths.events, `${events.map((event) => JSON.stringify(event)).join("\n")}\n`);
+  await writeFile(paths.status, JSON.stringify(status(runId, false, "success")));
+}
+
 test("a finished run prints all operator facts as JSON and exits 0", async () => {
   const runId = "20260921-140000-aaaa";
   await makeRun(runId, true);
@@ -184,6 +219,141 @@ test("a finished run prints all operator facts as JSON and exits 0", async () =>
     outputs: {},
   });
   assert.equal(output.errors, "");
+});
+
+test("result JSON shows the fields of the last call that reported the outcome", async () => {
+  const runId = "20260921-140000-last-call";
+  await makeRunWithCallEvents(runId, [
+    {
+      seq: 2,
+      at: "2026-09-21T14:00:10.000Z",
+      type: "attempt.started",
+      attemptId: "001-review",
+      stepId: "review",
+      processGroupId: 1,
+    },
+    {
+      seq: 3,
+      at: "2026-09-21T14:00:20.000Z",
+      type: "iteration.started",
+      attemptId: "001-review",
+      iteration: 1,
+      processGroupId: 2,
+      fields: { model: "sonnet", effort: "low" },
+    },
+    {
+      seq: 4,
+      at: "2026-09-21T14:00:30.000Z",
+      type: "iteration.ended",
+      attemptId: "001-review",
+      iteration: 1,
+      reason: "no_outcome",
+    },
+    {
+      seq: 5,
+      at: "2026-09-21T14:00:40.000Z",
+      type: "iteration.started",
+      attemptId: "001-review",
+      iteration: 2,
+      processGroupId: 3,
+      fields: { model: "opus", effort: "high" },
+    },
+    {
+      seq: 6,
+      at: "2026-09-21T14:00:50.000Z",
+      type: "outcome.reported",
+      attemptId: "001-review",
+      iteration: 2,
+      outcome: "changes_requested",
+    },
+  ]);
+
+  const output = capture();
+  assert.equal(await resultCommand(["result", runId, "--json"], output.out, output.err, env), 0);
+  assert.deepEqual(JSON.parse(output.output).lastOutcome.fields, {
+    model: "opus",
+    effort: "high",
+  });
+});
+
+test("result JSON omits fields when the last call did not record a map", async () => {
+  const runId = "20260921-140000-no-call-fields";
+  await makeRunWithCallEvents(runId, [
+    {
+      seq: 2,
+      at: "2026-09-21T14:00:10.000Z",
+      type: "attempt.started",
+      attemptId: "001-review",
+      stepId: "review",
+      processGroupId: 1,
+    },
+    {
+      seq: 3,
+      at: "2026-09-21T14:00:20.000Z",
+      type: "iteration.started",
+      attemptId: "001-review",
+      iteration: 1,
+      processGroupId: 2,
+      fields: { model: "sonnet" },
+    },
+    {
+      seq: 4,
+      at: "2026-09-21T14:00:30.000Z",
+      type: "iteration.ended",
+      attemptId: "001-review",
+      iteration: 1,
+      reason: "no_outcome",
+    },
+    {
+      seq: 5,
+      at: "2026-09-21T14:00:40.000Z",
+      type: "iteration.started",
+      attemptId: "001-review",
+      iteration: 2,
+      processGroupId: 3,
+    },
+    {
+      seq: 6,
+      at: "2026-09-21T14:00:50.000Z",
+      type: "outcome.reported",
+      attemptId: "001-review",
+      iteration: 2,
+      outcome: "changes_requested",
+    },
+  ]);
+
+  const output = capture();
+  assert.equal(await resultCommand(["result", runId, "--json"], output.out, output.err, env), 0);
+  assert.equal(Object.hasOwn(JSON.parse(output.output).lastOutcome, "fields"), false);
+});
+
+test("the plain result adds the last outcome call fields", async () => {
+  const runId = "20260921-140000-human-fields";
+  await makeRunWithCallEvents(runId, [
+    {
+      seq: 2,
+      at: "2026-09-21T14:00:10.000Z",
+      type: "attempt.started",
+      attemptId: "001-review",
+      stepId: "review",
+      processGroupId: 1,
+      fields: { model: "opus", effort: "high" },
+    },
+    {
+      seq: 3,
+      at: "2026-09-21T14:00:20.000Z",
+      type: "outcome.reported",
+      attemptId: "001-review",
+      outcome: "changes_requested",
+    },
+  ]);
+
+  const output = capture();
+  assert.equal(await resultCommand(["result", runId], output.out, output.err, env), 0);
+  assert.match(
+    output.output,
+    /^last outcome +review \(001-review\) · changes_requested · model opus effort high$/m,
+  );
 });
 
 test("the human result prints the target and workspace", async () => {
