@@ -545,6 +545,12 @@ steps:
       ),
     "child command to run",
   );
+  await until(async () => {
+    const event = (await runEvents(setupResult.home, first.runId)).find(
+      (item) => item.type === "attempt.started",
+    );
+    return event?.type === "attempt.started" ? event : undefined;
+  }, "child attempt to start");
   const loopOwner = (await events(setupResult.home, loopId)).find(
     (event) => event.type === "owner.started",
   );
