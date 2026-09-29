@@ -55,7 +55,7 @@ import {
 } from "../application/workflow-run.ts";
 import { selectWorkspaceMode } from "../application/workspace-mode.ts";
 import {
-  type CallFields,
+  type AttemptFields,
   EVENT_FORMAT_VERSION,
   type LaunchInputRecord,
   type RemoteRecord,
@@ -594,9 +594,50 @@ async function writeInlinePrompts(paths: RunPaths): Promise<void> {
   if (!Array.isArray(steps)) return;
   await mkdir(paths.prompts, { recursive: true });
   for (const step of steps) {
-    if (typeof step?.prompt !== "string") continue;
-    await writeFile(join(paths.prompts, `${step.id}.md`), step.prompt);
+    const prompt = inlinePromptForStep(step, manifest?.profiles);
+    if (prompt !== undefined) {
+      await writeFile(join(paths.prompts, `${prompt.id}.md`), prompt.text);
+    }
   }
+}
+
+function inlinePromptForStep(
+  step: unknown,
+  profiles: unknown,
+): { readonly id: string; readonly text: string } | undefined {
+  if (!isInlineRecord(step)) return undefined;
+  const fields = inlinePromptFields(step, profiles);
+  if (typeof step.id !== "string" || typeof fields.prompt !== "string") return undefined;
+  return { id: step.id, text: fields.prompt };
+}
+
+function inlinePromptFields(
+  step: Record<string, unknown>,
+  profiles: unknown,
+): Record<string, unknown> {
+  const fields: Record<string, unknown> = {};
+  const names = typeof step.profile === "string" ? [step.profile] : step.profile;
+  if (Array.isArray(names)) {
+    for (const name of names) {
+      if (typeof name !== "string") continue;
+      const profile = inlineProfile(profiles, name);
+      if (profile !== undefined) Object.assign(fields, profile);
+    }
+  }
+  return Object.assign(fields, step);
+}
+
+function inlineProfile(profiles: unknown, name: string): Record<string, unknown> | undefined {
+  if (!isInlineRecord(profiles)) return undefined;
+  const [group, profile] = name.split(".");
+  const groupProfiles = profiles[group ?? ""];
+  if (!isInlineRecord(groupProfiles)) return undefined;
+  const fields = groupProfiles[profile ?? ""];
+  return isInlineRecord(fields) ? fields : undefined;
+}
+
+function isInlineRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 /** How one visit finished: an attempt end to route on, or a run timeout that cut it short. */
@@ -708,7 +749,7 @@ interface StepStart {
   readonly stopSignal: AbortSignal;
   setCurrent(identity: AttemptIdentity | undefined): void;
   /** Records `attempt.started`. 0 is a process that never started, since no group has it. */
-  onProcess(processGroupId: number, fields?: CallFields): Promise<unknown>;
+  onProcess(processGroupId: number, fields?: AttemptFields): Promise<unknown>;
 }
 
 /** Starts the step by its kind and waits for the attempt end. */
@@ -729,9 +770,10 @@ async function runStep(
 
   const started = await startProcessStep(options, owner, workflow, tracked, step, start, activity);
   // A process that never started has no group. 0 is that, since no group has it.
+  const profileFields = step.profile === undefined ? undefined : { profile: step.profile };
   await start.onProcess(
     started.kind === "running" ? started.processGroupId : 0,
-    started.kind === "running" && "fields" in started ? started.fields : undefined,
+    started.kind === "running" && "fields" in started ? started.fields : profileFields,
   );
   if (started.kind === "bad-field") {
     return {
@@ -835,7 +877,7 @@ async function runRalph(run: RalphRun, step: RalphStep): Promise<AttemptEndField
   const { start, tracked } = run;
   let latest = start.context.attemptSecret;
   // The iterations start their own processes, so no one group is the attempt's.
-  await start.onProcess(0);
+  await start.onProcess(0, step.profile === undefined ? undefined : { profile: step.profile });
   const result = await runRalphStep(
     {
       executor: run.options.executor,

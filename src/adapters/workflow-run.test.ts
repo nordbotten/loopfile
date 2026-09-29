@@ -181,6 +181,133 @@ steps:
     run: ${test}
 `;
 
+test("a fixed agent profile supplies harness, model, effort and args in order", async () => {
+  const manifest = `formatVersion: 1
+profiles:
+  implement:
+    high:
+      harness: pi
+      model: opus
+      effort: xhigh
+      args: [--approve]
+steps:
+  - id: work
+    kind: agent
+    profile: implement.high
+    prompt: Work.
+    on: { done: $success }
+`;
+  const { ended, calls, events } = await executeFake(manifest, {
+    work: [[{ do: "result", outcome: "done" }]],
+  });
+  assert.equal(ended.result, "success");
+  assert.deepEqual(calls, [{ harness: "pi", model: "opus", effort: "xhigh", args: ["--approve"] }]);
+  const started = events.find((event) => event.type === "attempt.started");
+  assert.equal(started?.type, "attempt.started");
+  if (started?.type === "attempt.started") {
+    assert.deepEqual(started.fields, {
+      profile: "implement.high",
+      harness: "pi",
+      model: "opus",
+      effort: "xhigh",
+    });
+    assert.deepEqual(Object.keys(started.fields ?? {}), ["profile", "harness", "model", "effort"]);
+  }
+});
+
+test("a fixed Ralph profile applies its fields to each iteration", async () => {
+  const manifest = `formatVersion: 1
+profiles:
+  implement:
+    high:
+      harness: claude
+      model: sonnet
+      effort: high
+      args: [--settings, '{}']
+steps:
+  - id: work
+    kind: ralph
+    profile: implement.high
+    maxIterations: 1
+    prompt: Work.
+    on: { done: $success }
+`;
+  const { ended, calls, events } = await executeFake(manifest, {
+    work: [[{ do: "result", outcome: "done" }]],
+  });
+  assert.equal(ended.result, "success");
+  assert.deepEqual(calls, [
+    { harness: "claude", model: "sonnet", effort: "high", args: ["--settings", "{}"] },
+  ]);
+  const started = events.find((event) => event.type === "attempt.started");
+  assert.equal(started?.type === "attempt.started" && started.fields?.profile, "implement.high");
+  const iteration = events.find((event) => event.type === "iteration.started");
+  assert.equal(iteration?.type === "iteration.started", true);
+  if (iteration?.type === "iteration.started") {
+    assert.deepEqual(Object.keys(iteration.fields ?? {}), [
+      "profile",
+      "harness",
+      "model",
+      "effort",
+    ]);
+    assert.equal(iteration.fields?.profile, "implement.high");
+  }
+});
+
+test("a profile inline prompt is materialized for its using step", async () => {
+  const manifest = `formatVersion: 1
+profiles:
+  review:
+    base:
+      harness: claude
+      prompt: |
+        Profile prompt.
+        loopfile result done
+steps:
+  - id: work
+    kind: agent
+    profile: review.base
+    on: { done: $success }
+`;
+  const { ended, paths } = await executeFake(manifest, {
+    work: [
+      [
+        { do: "savePrompt", path: "profile-prompt.txt" },
+        { do: "result", outcome: "done" },
+      ],
+    ],
+  });
+  assert.equal(ended.result, "success");
+  assert.equal(
+    await readFile(join(paths.workspace, "profile-prompt.txt"), "utf8"),
+    "Profile prompt.\nloopfile result done\n",
+  );
+});
+
+test("a command profile runs its inherited run and records its profile", async () => {
+  const manifest = `formatVersion: 1
+profiles:
+  shell:
+    build:
+      run: echo profiled > output.txt
+steps:
+  - id: build
+    kind: command
+    profile: shell.build
+  - id: verify
+    kind: command
+    run: test "$(cat output.txt)" = profiled
+`;
+  const { ended, events, paths } = await execute(manifest);
+  assert.equal(ended.result, "success");
+  assert.equal(await readFile(join(paths.workspace, "output.txt"), "utf8"), "profiled\n");
+  const started = events.find((event) => event.type === "attempt.started");
+  assert.equal(started?.type === "attempt.started" && started.fields?.profile, "shell.build");
+  assert.deepEqual(started?.type === "attempt.started" ? Object.keys(started.fields ?? {}) : [], [
+    "profile",
+  ]);
+});
+
 test("a straight-line workflow runs every step in the workspace and ends in success", async () => {
   const { ended, events, paths } = await execute(
     STRAIGHT("grep -q built out.txt && pwd > cwd.txt"),
